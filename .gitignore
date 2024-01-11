@@ -1,0 +1,6 @@
+.DS_Store
+.venv
+.venv/*
+# Direct DL of osm files for testing
+state.yaml
+*.osm*
