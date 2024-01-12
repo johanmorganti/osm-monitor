@@ -21,60 +21,67 @@ COLUMNS_MAPPING = {
     "comments_count": "comments_count"
 }
 
-def process_sequences(seq_start: int, seq_end: int):
+def process_sequence(sequence_number):
 
-    for sequence_number in range(seq_start, seq_end):
-        sequence_number_adjusted = str(sequence_number).rjust(9, "0")
-        url_sequence = "https://planet.osm.org/replication/changesets/" + sequence_number_adjusted[0:3] + "/" + sequence_number_adjusted[3:6] + "/" + sequence_number_adjusted[6:9] + ".osm.gz"
-        request_sequence = requests.get(url_sequence, stream=True)
-        xml_sequence = ET.fromstring(gzip.decompress(request_sequence.raw.read()))
+    sequence_number_adjusted = str(sequence_number).rjust(9, "0")
+    url_sequence = "https://planet.osm.org/replication/changesets/" + sequence_number_adjusted[0:3] + "/" + sequence_number_adjusted[3:6] + "/" + sequence_number_adjusted[6:9] + ".osm.gz"
+    request_sequence = requests.get(url_sequence, stream=True)
+    xml_sequence = ET.fromstring(gzip.decompress(request_sequence.raw.read()))
 
-        for changeset in xml_sequence:
-            """
-            Changeset overview :
-                <changeset [...] attribute_key="attribute_value" [...]>
-                    [...]
-                    # list of elements, in OSM there is moslty tag elements, with k/v attributes for key/values
-                    <tag k="key" v="value"/>
-                    [...]
-                </changeset>
-            """
-            """ 
-            <osm>
-            <changeset id="113928427" created_at="2021-11-18T06:17:42Z" open="false" comments_count="0" changes_count="6" closed_at="2021-11-18T06:17:44Z" min_lat="15.3384649" min_lon="-91.8697209" max_lat="15.3386183" max_lon="-91.8694203" uid="12026398" user="<redacted>">
-            <tag k="changesets_count" v="73"/>
-            [...] # More k,v tags
+    changesets_processed = []
+
+    for changeset in xml_sequence:
+        """
+        Changeset overview :
+            <changeset [...] attribute_key="attribute_value" [...]>
+                [...]
+                # list of elements, in OSM there is moslty tag elements, with k/v attributes for key/values
+                <tag k="key" v="value"/>
+                [...]
             </changeset>
-            <changeset id="113928426" created_at="2021-11-18T06:17:42Z" open="false" comments_count="0" changes_count="11" closed_at="2021-11-18T06:17:43Z" min_lat="-23.6402734" min_lon="47.3068178" max_lat="-23.6387451" max_lon="47.3096663" uid="13571396" user="<redated>">
-            <tag k="changesets_count" v="2200"/>
-            [...] # More k,v tags
-            </changeset>
-            [...] # more changesets
-            </osm>
-            """
-            changeset_to_add = {}
-            changeset_to_add["tags"] = {}
+        """
+        """ 
+        <osm>
+        <changeset id="113928427" created_at="2021-11-18T06:17:42Z" open="false" comments_count="0" changes_count="6" closed_at="2021-11-18T06:17:44Z" min_lat="15.3384649" min_lon="-91.8697209" max_lat="15.3386183" max_lon="-91.8694203" uid="12026398" user="<redacted>">
+        <tag k="changesets_count" v="73"/>
+        [...] # More k,v tags
+        </changeset>
+        <changeset id="113928426" created_at="2021-11-18T06:17:42Z" open="false" comments_count="0" changes_count="11" closed_at="2021-11-18T06:17:43Z" min_lat="-23.6402734" min_lon="47.3068178" max_lat="-23.6387451" max_lon="47.3096663" uid="13571396" user="<redated>">
+        <tag k="changesets_count" v="2200"/>
+        [...] # More k,v tags
+        </changeset>
+        [...] # more changesets
+        </osm>
+        """
+        changeset_to_add = {}
+        changeset_to_add["tags"] = {}
 
-            for attribute in changeset.attrib:
-                if attribute in COLUMNS_MAPPING:
-                    changeset_to_add[COLUMNS_MAPPING[attribute]]=changeset.attrib[attribute]
-                        
-                else :
-                    print("Sequence number : " + sequence_number)
-                    print("Changeset " + changeset.attrib["id"])
-                    print("Changeset attribute not known : " + attribute)
-                        
-            for element in changeset:
+        for attribute in changeset.attrib:
+            if attribute in COLUMNS_MAPPING:
+                changeset_to_add[COLUMNS_MAPPING[attribute]]=changeset.attrib[attribute]
+                    
+            else :
+                print("Sequence number : " + sequence_number)
+                print("Changeset " + changeset.attrib["id"])
+                print("Changeset attribute not known : " + attribute)
+                    
+        for element in changeset:
+            if 'tag' in element.tag:
                 if 'k' in element.attrib:
                     changeset_to_add["tags"][element.attrib["k"]] = element.attrib["v"]
-                elif 'discussion' in element.tag:
-                    ## TODO : implement
-                    continue
-                else:
-                    print("Sequence number : " + str(sequence_number))
-                    print("Changeset : " + changeset.attrib["id"])
-                    print("Element of XML not being a <tag> : " + element.tag)
-        
+            elif 'discussion' in element.tag:
+                ## TODO : implement
+                continue
+            else:
+                print("Sequence number : " + str(sequence_number))
+                print("Changeset : " + changeset.attrib["id"])
+                print("Element of XML not being a <tag> nor <discussion> : " + element.tag)
+
+        changesets_processed.append(changeset_to_add)
+
+    # return changesets_processed
+    print("Processed " + str(sequence_number))
+    
 
 
 def main(argv):
@@ -113,7 +120,8 @@ def main(argv):
     if arg_seq_start > arg_seq_end:
         arg_seq_start, arg_seq_end = arg_seq_end, arg_seq_start
 
-    process_sequences(arg_seq_start, arg_seq_end)
+    for sequence_number in range(arg_seq_start, arg_seq_end):
+        process_sequence(sequence_number)
 
 if __name__ == '__main__':
     main(sys.argv)
