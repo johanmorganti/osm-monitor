@@ -4,3 +4,7 @@
 # Direct DL of osm files for testing
 state.yaml
 *.osm*
+dist/
+docs/.observablehq/cache/
+node_modules/
+yarn-error.log
