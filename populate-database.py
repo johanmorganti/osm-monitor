@@ -3,6 +3,7 @@ import requests
 import xml.etree.ElementTree as ET
 import gzip
 import sys, getopt
+import json
 
 # Mapping XML into more readable collumns names
 
@@ -22,11 +23,18 @@ COLUMNS_MAPPING = {
 }
 
 def process_sequence(sequence_number):
-
-    sequence_number_adjusted = str(sequence_number).rjust(9, "0")
-    url_sequence = "https://planet.osm.org/replication/changesets/" + sequence_number_adjusted[0:3] + "/" + sequence_number_adjusted[3:6] + "/" + sequence_number_adjusted[6:9] + ".osm.gz"
-    request_sequence = requests.get(url_sequence, stream=True)
-    xml_sequence = ET.fromstring(gzip.decompress(request_sequence.raw.read()))
+    
+    sequence_path = "./source/" + str(sequence_number) + ".osm.gz"
+    if not path.isfile(sequence_path):
+        sequence_number_adjusted = str(sequence_number).rjust(9, "0")
+        url_sequence = "https://planet.osm.org/replication/changesets/" + sequence_number_adjusted[0:3] + "/" + sequence_number_adjusted[3:6] + "/" + sequence_number_adjusted[6:9] + ".osm.gz"
+        xml_sequence_request = requests.get(url_sequence, stream=True).raw.read()
+        xml_sequence = ET.fromstring(gzip.decompress(xml_sequence_request))
+        with open(sequence_path, 'wb') as sequence_file:
+            sequence_file.write(xml_sequence_request)
+    else:
+        with open(sequence_path, 'rb') as sequence_file:
+            xml_sequence = ET.fromstring(gzip.decompress(sequence_file.read()))
 
     changesets_processed = []
 
@@ -79,8 +87,9 @@ def process_sequence(sequence_number):
 
         changesets_processed.append(changeset_to_add)
 
-    # return changesets_processed
     print("Processed " + str(sequence_number))
+    return changesets_processed
+
     
 
 
@@ -120,8 +129,20 @@ def main(argv):
     if arg_seq_start > arg_seq_end:
         arg_seq_start, arg_seq_end = arg_seq_end, arg_seq_start
 
-    for sequence_number in range(arg_seq_start, arg_seq_end):
-        process_sequence(sequence_number)
+    for sequence_number in range(arg_seq_start, arg_seq_end + 1):
+
+        # For now outputing in a json file
+        ## TODO: inplement DB import
+        output_path = "./output/" + str(sequence_number) + ".jsonl"
+        if not path.isfile(output_path):
+            output_changesets = process_sequence(sequence_number)
+            with open(output_path, 'w') as output_file:
+                for output_changeset in output_changesets:
+                    json.dump(output_changeset, output_file)
+                    output_file.write('\n')
+        else:
+            print("Sequence " + str(sequence_number) + " already processed.")
+        
 
 if __name__ == '__main__':
     main(sys.argv)
