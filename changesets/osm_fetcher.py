@@ -44,7 +44,7 @@ def get_sequence_min_max_changeset_id(sequence_number, locally=False):
     return min(xml_sequence, key=lambda x: x.attrib['id']).attrib['id'], max(xml_sequence, key=lambda x: x.attrib['id']).attrib['id']
 
 
-def process_sequence(sequence_number, save_db=True):
+def process_sequence(sequence_number):
     
     sequence_path = "./source/" + str(sequence_number) + ".osm.gz"
     if not path.isfile(sequence_path):
@@ -59,7 +59,7 @@ def process_sequence(sequence_number, save_db=True):
         with open(sequence_path, 'rb') as sequence_file:
             xml_sequence = ET.fromstring(gzip.decompress(sequence_file.read()))
 
-    changesets_processed = []
+    changesets_to_create = []
 
     for changeset in xml_sequence:
         """
@@ -87,6 +87,17 @@ def process_sequence(sequence_number, save_db=True):
 
         changeset_id = int(changeset.attrib['id'])
 
+        # Check for duplicates and compare changes_count
+        existing_changeset = Changeset.objects.filter(changeset_id=changeset_id).first()
+        if existing_changeset:
+            new_changes_count = int(changeset.attrib.get('num_changes', 0))
+            if existing_changeset.changes_count >= new_changes_count:
+                print(f"Changeset {changeset_id} already exists in database with higher or equal changes_count ({existing_changeset.changes_count} >= {new_changes_count}), skipping...")
+                continue
+            else:
+                print(f"Changeset {changeset_id} exists but has lower changes_count ({existing_changeset.changes_count} < {new_changes_count}), updating...")
+                existing_changeset.delete()  # Delete the old version to allow creation of new one
+
         for attribute, value in changeset.attrib.items():
             if attribute in COLUMNS_MAPPING:
                 if attribute == "open":
@@ -95,13 +106,12 @@ def process_sequence(sequence_number, save_db=True):
                     value = int(value)
                 elif attribute in ["min_lat", "max_lat", "min_lon", "max_lon"]:
                     value = float(value)
-                elif attribute in ["created_at", "closed_at"] and save_db: # when save_db = False, don't convert to datetime object
+                elif attribute in ["created_at", "closed_at"]:
                     naive_datetime = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
                     value = timezone.make_aware(naive_datetime, timezone.utc) # prevents from RuntimeWarning about time zone
 
                 changeset_to_add[COLUMNS_MAPPING[attribute]] = value
-
-            else :
+            else:
                 print("Sequence number : " + sequence_number)
                 print("Changeset " + changeset.attrib["id"])
                 print("Changeset attribute not known : " + attribute)
@@ -109,7 +119,82 @@ def process_sequence(sequence_number, save_db=True):
         for element in changeset:
             if 'tag' in element.tag:
                 if 'k' in element.attrib:
-                    changeset_to_add["tags"][element.attrib["k"]] = element.attrib["v"]
+                    tag_key = element.attrib["k"]
+                    tag_value = element.attrib["v"]
+                    
+                    # Store in tags JSON field
+                    changeset_to_add["tags"][tag_key] = tag_value
+                    
+                    # Populate dedicated columns for common tags
+                    if tag_key == 'created_by':
+                        changeset_to_add['created_by'] = tag_value
+                        # Extract family name with specific rules
+                        if tag_value:
+                            family = None
+                            # Handle special cases first
+                            if 'JOSM' in tag_value:
+                                family = 'JOSM'
+                            elif tag_value.startswith('Go Map!!'):
+                                family = 'Go Map!!'
+                            elif tag_value.startswith('OsmAnd'):
+                                family = 'OsmAnd'
+                            elif tag_value.startswith('StreetComplete'):
+                                family = 'StreetComplete'
+                            elif tag_value.startswith('Osm Go!'):
+                                family = 'Osm Go!'
+                            elif tag_value.startswith('https://'):
+                                family = tag_value
+                            else:
+                                # For other cases, take up to first space, slash, or parenthesis
+                                family = tag_value.split(' ')[0].split('/')[0].split('(')[0].strip()
+                                
+                                # Special case adjustments
+                                if family == 'AED':
+                                    family = 'AED Map'
+                                elif family == 'Abakus':
+                                    family = 'StrazakOSM'
+                                elif family == 'Every':
+                                    family = 'Every Door'
+                                elif family == 'Organic':
+                                    family == 'Organic Maps'
+                                elif family == 'Votre':
+                                    family = 'Ubiflow'
+                                elif family == None:
+                                    family = 'Other'
+                                
+                            changeset_to_add['created_by_family'] = family
+                        else:
+                            changeset_to_add['created_by_family'] = 'Other'
+                    elif tag_key == 'comment':
+                        changeset_to_add['comment'] = tag_value
+                    elif tag_key == 'locale':
+                        changeset_to_add['locale'] = tag_value
+                    elif tag_key == 'source':
+                        changeset_to_add['source'] = tag_value
+                    elif tag_key == 'imagery_used':
+                        # Split imageries into array and strip whitespace
+                        imageries = [img.strip() for img in tag_value.split(';') if img.strip()]
+                        changeset_to_add['imagery_used'] = imageries  # Store as Python list
+                    elif tag_key == 'host':
+                        changeset_to_add['host'] = tag_value
+                    elif tag_key == 'changesets_count':
+                        try:
+                            changeset_to_add['changesets_count'] = int(tag_value)
+                        except ValueError:
+                            changeset_to_add['changesets_count'] = None
+                    elif tag_key == 'hashtags':
+                        # Split hashtags into array and remove # symbol
+                        hashtags = [tag.lstrip('#') for tag in tag_value.split(';') if tag]
+                        changeset_to_add['hashtags'] = hashtags  # Store as Python list
+                    elif tag_key == 'StreetComplete:quest_type':
+                        changeset_to_add['streetcomplete_quest_type'] = tag_value
+                    elif tag_key == 'review_requested':
+                        changeset_to_add['review_requested'] = tag_value.lower() == 'yes'
+                    else:
+                        # Store in remaining_tags if not in dedicated columns
+                        if 'remaining_tags' not in changeset_to_add:
+                            changeset_to_add['remaining_tags'] = {}
+                        changeset_to_add['remaining_tags'][tag_key] = tag_value
             elif 'discussion' in element.tag:
                 ## TODO : implement
                 continue
@@ -118,54 +203,67 @@ def process_sequence(sequence_number, save_db=True):
                 print("Changeset : " + changeset.attrib["id"])
                 print("Element of XML not being a <tag> nor <discussion> : " + element.tag)
 
-        if save_db and not Changeset.objects.filter(changeset_id=changeset_id).exists():
-            Changeset.objects.create(**changeset_to_add)
+        # No need to convert to JSON string - Django's JSONField handles that
+        changesets_to_create.append(changeset_to_add)
 
-        changesets_processed.append(changeset_to_add)
+    if changesets_to_create:
+        try:
+            Changeset.objects.bulk_create(
+                [Changeset(**changeset) for changeset in changesets_to_create],
+                ignore_conflicts=True  # This will skip any duplicates that somehow made it through
+            )
+            print(f"Successfully created {len(changesets_to_create)} changesets")
+        except Exception as e:
+            print(f"Error during bulk creation: {str(e)}")
+            # Fallback to individual creation if bulk create fails
+            for changeset in changesets_to_create:
+                try:
+                    Changeset.objects.create(**changeset)
+                except Exception as e:
+                    print(f"Error creating changeset {changeset.get('changeset_id')}: {str(e)}")
 
     if sequence_was_fetched:
         print("Processed " + str(sequence_number) + ", data fetched from planet.osm.org")
     else:
-        print("Processed " + str(sequence_number) + ", data fetched locally")
-    
-    return changesets_processed
+        print("Processed " + str(sequence_number) + ", data fetched from cache")
 
 
-def fetch_and_process_changesets(seq_start, seq_end, save_locally=False):
-
+def fetch_and_process_changesets(seq_start, seq_end):
     if seq_start > seq_end:
         seq_start, seq_end = seq_end, seq_start
 
-    for i, sequence_number in enumerate(range(seq_start, seq_end + 1)):
-        if save_locally:
-            output_path = "./output/" + str(sequence_number) + ".jsonl"
-            if not path.isfile(output_path):
-                output_changesets = process_sequence(sequence_number, save_db=False) # if user saves locally, don't save in db
-                with open(output_path, 'w') as output_file:
-                    for output_changeset in output_changesets:
-                        json.dump(output_changeset, output_file)
-                        output_file.write('\n')
-            else:
-                print("Sequence " + str(sequence_number) + " already processed.")
-                
-        
-        else:
-            # If user doesn't want to save locally, save in db
-            output_changesets = process_sequence(sequence_number, save_db=True)
+    for sequence_number in range(seq_end, seq_start - 1, -1):
+        process_sequence(sequence_number)
 
     # get min and max values of changeset ids
-    min_changesets = get_sequence_min_max_changeset_id(seq_start, locally=save_locally)[0]
-    max_changesets = get_sequence_min_max_changeset_id(seq_end, locally=save_locally)[1]
+    min_changesets = get_sequence_min_max_changeset_id(seq_start)[0]
+    max_changesets = get_sequence_min_max_changeset_id(seq_end)[1]
             
     return min_changesets, max_changesets
-
-
 
 
 ###### TESTING ######
 # this is for debugging/testing
 def duration_info(sequence_number):
-    data = process_sequence(sequence_number, False)
+    sequence_path = "./source/" + str(sequence_number) + ".osm.gz"
+    if not path.isfile(sequence_path):
+        url_sequence = urlized_sequence_number(sequence_number)
+        xml_sequence_request = requests.get(url_sequence, stream=True).raw.read()
+        xml_sequence = ET.fromstring(gzip.decompress(xml_sequence_request))
+        with open(sequence_path, 'wb') as sequence_file:
+            sequence_file.write(xml_sequence_request)
+    else:
+        with open(sequence_path, 'rb') as sequence_file:
+            xml_sequence = ET.fromstring(gzip.decompress(sequence_file.read()))
+
+    data = []
+    for changeset in xml_sequence:
+        changeset_data = {}
+        for attribute, value in changeset.attrib.items():
+            if attribute == "created_at":
+                changeset_data['created_at'] = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+        data.append(changeset_data)
+
     min_created_at = min(data, key=lambda x: x['created_at'])['created_at']
     max_created_at = max(data, key=lambda x: x['created_at'])['created_at']
     duration = max_created_at - min_created_at

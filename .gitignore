@@ -7,3 +7,7 @@ output/
 tailwind*
 tailwind.config.js
 input.css
+venv/
+__pycache__/
+*.pyc
+source/
