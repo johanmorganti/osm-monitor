@@ -12,10 +12,42 @@
         <h1 class="text-4xl font-bold text-center mt-4">Welcome to the Changeset API</h1>
         <p class="text-lg text-center mt-2">This is the API for accessing changeset data from OpenStreetMap.</p>
         
+        <!-- Batch progress panel -->
         <div class="max-w-xl mx-auto bg-white p-6 mt-6 rounded-lg shadow-lg">
-            <h2 class="text-2xl font-bold mb-4">Usage</h2>
-            <p class="text-lg mb-4">To fetch changesets in a range, use the form below:</p>
-            
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold">Current batch</h2>
+                <span id="bp-updated" class="text-xs text-gray-400"></span>
+            </div>
+            <div id="bp-idle" class="text-center text-gray-500 py-4 hidden">Poller idle — no batch running.</div>
+            <div id="bp-running">
+                <div class="flex justify-between text-sm text-gray-500 mb-1">
+                    <span id="bp-seq">—</span>
+                    <span id="bp-pct">—</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-4 mb-4">
+                    <div id="bp-bar" class="bg-blue-500 h-4 rounded-full transition-all duration-500" style="width:0%"></div>
+                </div>
+                <div class="grid grid-cols-3 gap-4 text-center text-sm">
+                    <div class="bg-gray-50 rounded p-3">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Start</div>
+                        <div id="bp-start" class="font-bold text-gray-700">—</div>
+                    </div>
+                    <div class="bg-gray-50 rounded p-3">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Current</div>
+                        <div id="bp-last" class="font-bold text-blue-600">—</div>
+                    </div>
+                    <div class="bg-gray-50 rounded p-3">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Target</div>
+                        <div id="bp-target" class="font-bold text-gray-700">—</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="max-w-xl mx-auto bg-white p-6 mt-6 rounded-lg shadow-lg">
+            <h2 class="text-2xl font-bold mb-4">Import sequences</h2>
+            <p class="text-lg mb-4">Fetch changesets for a sequence range:</p>
+
             <form id="changesetForm" class="space-y-4">
                 <div>
                     <label for="seq_start" class="block text-lg font-medium text-gray-700">Sequence Start</label>
@@ -26,26 +58,121 @@
                     <input type="number" id="seq_end" name="seq_end" class="mt-1 block w-full border border-gray-300 rounded-md p-2" required>
                 </div>
                 <div class="text-center">
-                    <button type="submit" class="w-full bg-blue-500 text-white p-2 rounded-md">Get Changesets</button>
+                    <button type="submit" id="submitBtn" class="w-full bg-blue-500 text-white p-2 rounded-md hover:bg-blue-600">Start Import</button>
                 </div>
             </form>
 
-            <h2 class="text-2xl font-bold mb-4 mt-4">The last sequence number is:</h2>
+            <!-- Import progress -->
+            <div id="importProgress" class="mt-6 hidden">
+                <div class="text-sm text-gray-500 mb-1">
+                    <span id="imp-seq">—</span>
+                </div>
+                <div class="text-sm text-gray-500 text-right mb-1">
+                    <span id="imp-pct">—</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-4 mb-3">
+                    <div id="imp-bar" class="bg-blue-500 h-4 rounded-full transition-all duration-300" style="width:0%"></div>
+                </div>
+                <div id="imp-status" class="text-center text-sm text-gray-600"></div>
+            </div>
+
+            <h2 class="text-2xl font-bold mb-4 mt-6">Latest sequence on planet:</h2>
             <button id="last_changeset_btn" class="flex w-fit mx-auto text-xl font-bold bg-green-700 text-white text-center px-4 py-2 rounded">{{ last_changeset_id }}</button>
         </div>
     </div>
 
     <script>
+        function refreshBatchProgress() {
+            fetch('/api/batch-progress/')
+                .then(r => r.json())
+                .then(d => {
+                    document.getElementById('bp-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+                    if (!d.running) {
+                        document.getElementById('bp-idle').classList.remove('hidden');
+                        document.getElementById('bp-running').classList.add('hidden');
+                    } else {
+                        document.getElementById('bp-idle').classList.add('hidden');
+                        document.getElementById('bp-running').classList.remove('hidden');
+                        document.getElementById('bp-start').textContent  = d.batch_start;
+                        document.getElementById('bp-last').textContent   = d.last_sequence;
+                        document.getElementById('bp-target').textContent = d.batch_target;
+                        document.getElementById('bp-pct').textContent    = d.pct + '%';
+                        document.getElementById('bp-seq').textContent    = `Sequence ${d.done} / ${d.total}`;
+                        document.getElementById('bp-bar').style.width    = d.pct + '%';
+                    }
+                })
+                .catch(() => {});
+        }
+        refreshBatchProgress();
+        setInterval(refreshBatchProgress, 2000);
+
+        let pollTimer = null;
+
+        function pollJob(jobId) {
+            fetch(`/api/import-job/${jobId}/`)
+                .then(r => r.json())
+                .then(d => {
+                    const bar    = document.getElementById('imp-bar');
+                    const pct    = document.getElementById('imp-pct');
+                    const seq    = document.getElementById('imp-seq');
+                    const st     = document.getElementById('imp-status');
+                    const btn    = document.getElementById('submitBtn');
+
+                    bar.style.width = d.pct + '%';
+                    pct.textContent = d.pct + '%';
+                    seq.textContent = `Sequence ${d.done} / ${d.total}`;
+
+                    if (d.status === 'done') {
+                        bar.classList.replace('bg-blue-500', 'bg-green-500');
+                        st.textContent = `Done — imported sequences ${d.seq_start} to ${d.seq_end}.`;
+                        btn.disabled = false;
+                        btn.textContent = 'Start Import';
+                        clearInterval(pollTimer);
+                    } else if (d.status === 'error') {
+                        bar.classList.replace('bg-blue-500', 'bg-red-500');
+                        st.textContent = `Error: ${d.error}`;
+                        btn.disabled = false;
+                        btn.textContent = 'Start Import';
+                        clearInterval(pollTimer);
+                    } else {
+                        st.textContent = d.current_seq ? `Processing sequence ${d.current_seq}…` : 'Starting…';
+                    }
+                });
+        }
+
         document.getElementById('changesetForm').addEventListener('submit', function(event) {
             event.preventDefault();
             const seqStart = document.getElementById('seq_start').value;
-            const seqEnd = document.getElementById('seq_end').value;
-            window.location.href = `/api/sequence/${seqStart}/${seqEnd}/`;
+            const seqEnd   = document.getElementById('seq_end').value;
+            const btn      = document.getElementById('submitBtn');
+
+            btn.disabled = true;
+            btn.textContent = 'Importing…';
+
+            const bar = document.getElementById('imp-bar');
+            bar.className = 'bg-blue-500 h-4 rounded-full transition-all duration-300';
+            bar.style.width = '0%';
+            document.getElementById('imp-pct').textContent = '0%';
+            document.getElementById('imp-seq').textContent = '—';
+            document.getElementById('imp-status').textContent = 'Starting…';
+            document.getElementById('importProgress').classList.remove('hidden');
+
+            fetch(`/api/sequence/${seqStart}/${seqEnd}/`)
+                .then(r => r.json())
+                .then(d => {
+                    if (d.error) {
+                        document.getElementById('imp-status').textContent = `Error: ${d.error}`;
+                        btn.disabled = false;
+                        btn.textContent = 'Start Import';
+                        return;
+                    }
+                    if (pollTimer) clearInterval(pollTimer);
+                    pollTimer = setInterval(() => pollJob(d.job_id), 1500);
+                });
         });
 
         document.getElementById('last_changeset_btn').addEventListener('click', function() {
-            var lastChangesetId = this.innerHTML;
-            document.getElementById('seq_end').value = lastChangesetId;
+            document.getElementById('seq_end').value = this.textContent;
         });
     </script>
 </html>

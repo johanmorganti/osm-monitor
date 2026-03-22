@@ -1,6 +1,43 @@
 from django.db import models
 import json
 
+class SequenceState(models.Model):
+    last_sequence = models.IntegerField()
+    updated_at = models.DateTimeField(auto_now=True)
+    batch_start = models.IntegerField(null=True, blank=True)
+    batch_target = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        app_label = 'changesets'
+
+    @classmethod
+    def get_last(cls):
+        obj = cls.objects.first()
+        return obj.last_sequence if obj else None
+
+
+class ImportJob(models.Model):
+    seq_start   = models.IntegerField()
+    seq_end     = models.IntegerField()
+    current_seq = models.IntegerField(null=True, blank=True)
+    total       = models.IntegerField()
+    status      = models.CharField(max_length=20, default='pending')  # pending, running, done, error
+    error       = models.TextField(null=True, blank=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def done(self):
+        if self.current_seq is None:
+            return 0
+        return self.current_seq - self.seq_start + 1
+
+    @property
+    def pct(self):
+        if self.total == 0:
+            return 0
+        return round(self.done / self.total * 100, 1)
+
+
 class Changeset(models.Model):
     changeset_id = models.BigIntegerField(unique=True)
     created_at = models.DateTimeField(null=True)
@@ -23,6 +60,7 @@ class Changeset(models.Model):
     locale = models.CharField(max_length=50, null=True, blank=True)
     source = models.CharField(max_length=255, null=True, blank=True)
     imagery_used = models.JSONField(null=True, blank=True)  # Store as array of strings
+    imagery_family = models.CharField(max_length=255, null=True, blank=True)
     host = models.CharField(max_length=255, null=True, blank=True)
     changesets_count = models.IntegerField(null=True, blank=True)
     hashtags = models.JSONField(null=True, blank=True)  # Store as array of strings

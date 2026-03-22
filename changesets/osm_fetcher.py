@@ -175,6 +175,14 @@ def process_sequence(sequence_number):
                         # Split imageries into array and strip whitespace
                         imageries = [img.strip() for img in tag_value.split(';') if img.strip()]
                         changeset_to_add['imagery_used'] = imageries  # Store as Python list
+                        if imageries:
+                            raw = imageries[0]
+                            if raw.startswith('http'):
+                                from urllib.parse import urlparse
+                                family = urlparse(raw).netloc or raw
+                            else:
+                                family = raw.split(' ')[0].split('/')[0].split('(')[0].strip()
+                            changeset_to_add['imagery_family'] = family or None
                     elif tag_key == 'host':
                         changeset_to_add['host'] = tag_value
                     elif tag_key == 'changesets_count':
@@ -228,17 +236,19 @@ def process_sequence(sequence_number):
         print("Processed " + str(sequence_number) + ", data fetched from cache")
 
 
-def fetch_and_process_changesets(seq_start, seq_end):
+def fetch_and_process_changesets(seq_start, seq_end, on_progress=None):
     if seq_start > seq_end:
         seq_start, seq_end = seq_end, seq_start
 
-    for sequence_number in range(seq_end, seq_start - 1, -1):
+    for sequence_number in range(seq_start, seq_end + 1):
         process_sequence(sequence_number)
+        if on_progress:
+            on_progress(sequence_number)
 
     # get min and max values of changeset ids
     min_changesets = get_sequence_min_max_changeset_id(seq_start)[0]
     max_changesets = get_sequence_min_max_changeset_id(seq_end)[1]
-            
+
     return min_changesets, max_changesets
 
 

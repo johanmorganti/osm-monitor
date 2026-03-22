@@ -7,7 +7,7 @@
     <!-- Time Range Picker -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
         <h2 class="text-xl font-semibold mb-4">Select Time Range</h2>
-        <form method="get" class="flex gap-4">
+        <form method="get" class="flex flex-wrap gap-4">
             <div>
                 <label for="start_date" class="block text-sm font-medium text-gray-700">Start Date</label>
                 <input type="date" name="start_date" id="start_date" value="{{ start_date }}"
@@ -17,6 +17,27 @@
                 <label for="end_date" class="block text-sm font-medium text-gray-700">End Date</label>
                 <input type="date" name="end_date" id="end_date" value="{{ end_date }}"
                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+                <label for="contributor" class="block text-sm font-medium text-gray-700">Contributor</label>
+                <input type="text" name="contributor" id="contributor" value="{{ contributor }}"
+                       list="contributor-list" autocomplete="off" placeholder="Search contributor…"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <datalist id="contributor-list"></datalist>
+            </div>
+            <div>
+                <label for="editor" class="block text-sm font-medium text-gray-700">Editor</label>
+                <input type="text" name="editor" id="editor" value="{{ editor }}"
+                       list="editor-list" autocomplete="off" placeholder="Search editor…"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <datalist id="editor-list"></datalist>
+            </div>
+            <div>
+                <label for="imagery" class="block text-sm font-medium text-gray-700">Imagery provider</label>
+                <input type="text" name="imagery" id="imagery" value="{{ imagery }}"
+                       list="imagery-list" autocomplete="off" placeholder="Search imagery…"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <datalist id="imagery-list"></datalist>
             </div>
             <div class="flex items-end">
                 <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600">
@@ -77,259 +98,33 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-    // Changesets Over Time Chart
-    const ctx = document.getElementById('changesetChart').getContext('2d');
-    const dailyData = JSON.parse('{{ daily_counts_json|safe|escapejs }}');
-    if (!dailyData || dailyData.length === 0) {
-        console.error('No data available for the changeset chart');
-    } else {
-        const data = {
-            labels: dailyData.map(item => new Date(item.date).toLocaleDateString()),
-            datasets: [{
-                label: 'Changesets per Day',
-                data: dailyData.map(item => item.count),
-                borderColor: 'rgba(54, 162, 235, 1)',  // Blue
-                backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                tension: 0.1
-            }]
-        };
-
-        new Chart(ctx, {
-            type: 'line',
-            data: data,
-            options: {
-                responsive: true,
-                scales: {
-                    y: {
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-    }
-
-    // Top Contributors Chart
-    const topContributorsCtx = document.getElementById('topContributorsChart').getContext('2d');
-    const topContributorsData = JSON.parse('{{ top_contributors_json|safe|escapejs }}');
-    
-    if (!topContributorsData || topContributorsData.length === 0) {
-        console.error('No data available for the top contributors chart');
-    } else {
-        const topContributorsChartData = {
-            labels: topContributorsData.map(item => item.user),
-            datasets: [{
-                label: 'Changesets',
-                data: topContributorsData.map(item => item.count),
-                backgroundColor: 'rgba(255, 99, 132, 0.8)',  // Pink
-                borderColor: 'rgba(255, 99, 132, 1)',
-                borderWidth: 1
-            }]
-        };
-
-        new Chart(topContributorsCtx, {
-            type: 'bar',
-            data: topContributorsChartData,
-            options: {
-                responsive: true,
-                scales: {
-                    y: {
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-    }
-
-    // Top Imageries Chart
-    const topImageriesCtx = document.getElementById('topImageriesChart').getContext('2d');
-    const topImageriesData = JSON.parse('{{ top_imageries_json|safe|escapejs }}');
-    
-    if (!topImageriesData || topImageriesData.length === 0) {
-        console.error('No data available for the top imageries chart');
-    } else {
-        const topImageriesChartData = {
-            labels: topImageriesData.map(item => item.imagery),
-            datasets: [{
-                label: 'Changesets',
-                data: topImageriesData.map(item => item.count),
-                backgroundColor: 'rgba(75, 192, 192, 0.8)',  // Teal
-                borderColor: 'rgba(75, 192, 192, 1)',
-                borderWidth: 1
-            }]
-        };
-
-        new Chart(topImageriesCtx, {
-            type: 'bar',
-            data: topImageriesChartData,
-            options: {
-                responsive: true,
-                scales: {
-                    y: {
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-    }
-
-    // Top Editors Chart
-    const topEditorsCtx = document.getElementById('topEditorsChart').getContext('2d');
-    const topEditorsData = JSON.parse('{{ top_editors_json|safe|escapejs }}');
-    
-    if (!topEditorsData || topEditorsData.length === 0) {
-        console.error('No data available for the top editors chart');
-    } else {
-        const modernPalette = [
-            'rgba(54, 162, 235, 0.8)',  // Blue
-            'rgba(255, 99, 132, 0.8)',  // Pink
-            'rgba(75, 192, 192, 0.8)',  // Teal
-            'rgba(255, 206, 86, 0.8)',  // Yellow
-            'rgba(153, 102, 255, 0.8)', // Purple
-            'rgba(255, 159, 64, 0.8)',  // Orange
-            'rgba(76, 175, 80, 0.8)',   // Green
-            'rgba(233, 30, 99, 0.8)'    // Red
-        ];
-
-        const topEditorsChartData = {
-            labels: topEditorsData.map(item => item.editor),
-            datasets: [{
-                label: 'Changesets',
-                data: topEditorsData.map(item => item.count),
-                backgroundColor: modernPalette,
-                borderColor: modernPalette.map(color => color.replace('0.8', '1')),
-                borderWidth: 1
-            }]
-        };
-
-        new Chart(topEditorsCtx, {
-            type: 'doughnut',
-            data: topEditorsChartData,
-            options: {
-                responsive: true,
-                scales: {
-                    y: {
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-    }
-
-    // Top Contributors Time Chart
-    const topContributorsTimeCtx = document.getElementById('topContributorsTimeChart').getContext('2d');
-    const topContributorsTimeData = JSON.parse('{{ top_contributors_time_json|safe|escapejs }}');
-    
-    if (topContributorsTimeData && topContributorsTimeData.users && topContributorsTimeData.users.length > 0) {
-        const topContributorsTimeChartData = {
-            labels: topContributorsTimeData.dates,
-            datasets: topContributorsTimeData.users.map((user, index) => ({
-                label: user.name,
-                data: user.counts,
-                backgroundColor: `rgba(255, 99, 132, ${0.8 - (index * 0.1)})`,
-                borderColor: 'rgba(255, 99, 132, 1)',
-                borderWidth: 1
-            }))
-        };
-
-        new Chart(topContributorsTimeCtx, {
-            type: 'bar',
-            data: topContributorsTimeChartData,
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                },
-                scales: {
-                    x: {
-                        stacked: true
-                    },
-                    y: {
-                        stacked: true,
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-    }
-
-    // Top Imageries Time Chart
-    const topImageriesTimeCtx = document.getElementById('topImageriesTimeChart').getContext('2d');
-    const topImageriesTimeData = JSON.parse('{{ top_imageries_time_json|safe|escapejs }}');
-    
-    if (topImageriesTimeData && topImageriesTimeData.imageries && topImageriesTimeData.imageries.length > 0) {
-        const topImageriesTimeChartData = {
-            labels: topImageriesTimeData.dates,
-            datasets: topImageriesTimeData.imageries.map((imagery, index) => ({
-                label: imagery.name,
-                data: imagery.counts,
-                backgroundColor: `rgba(75, 192, 192, ${0.8 - (index * 0.1)})`,
-                borderColor: 'rgba(75, 192, 192, 1)',
-                borderWidth: 1
-            }))
-        };
-
-        new Chart(topImageriesTimeCtx, {
-            type: 'bar',
-            data: topImageriesTimeChartData,
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                },
-                scales: {
-                    x: {
-                        stacked: true
-                    },
-                    y: {
-                        stacked: true,
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-    }
-
-    // Top Editors Time Chart
-    const topEditorsTimeCtx = document.getElementById('topEditorsTimeChart').getContext('2d');
-    const topEditorsTimeData = JSON.parse('{{ top_editors_time_json|safe|escapejs }}');
-    
-    if (topEditorsTimeData && topEditorsTimeData.editors && topEditorsTimeData.editors.length > 0) {
-        const topEditorsTimeChartData = {
-            labels: topEditorsTimeData.dates,
-            datasets: topEditorsTimeData.editors.map((editor, index) => ({
-                label: editor.name,
-                data: editor.counts,
-                backgroundColor: modernPalette[index % modernPalette.length],
-                borderColor: modernPalette[index % modernPalette.length].replace('0.8', '1'),
-                borderWidth: 1
-            }))
-        };
-
-        new Chart(topEditorsTimeCtx, {
-            type: 'bar',
-            data: topEditorsTimeChartData,
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                },
-                scales: {
-                    x: {
-                        stacked: true
-                    },
-                    y: {
-                        stacked: true,
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-    }
+window.dashboardData = {
+    dailyCounts:         {{ daily_counts_json|safe }},
+    topContributors:     {{ top_contributors_json|safe }},
+    topEditors:          {{ top_editors_json|safe }},
+    topImageries:        {{ top_imageries_json|safe }},
+    topContributorsTime: {{ top_contributors_time_json|safe }},
+    topEditorsTime:      {{ top_editors_time_json|safe }},
+    topImageriesTime:    {{ top_imageries_time_json|safe }},
+};
+</script>
+{% load static %}
+<script src="{% static 'js/dashboard.js' %}"></script>
+<script>
+function wireAutocomplete(inputId, datalistId, field) {
+    document.getElementById(inputId).addEventListener('input', function () {
+        const q = this.value;
+        if (q.length < 1) return;
+        fetch(`/api/autocomplete/?field=${field}&q=${encodeURIComponent(q)}`)
+            .then(r => r.json())
+            .then(values => {
+                const dl = document.getElementById(datalistId);
+                dl.innerHTML = values.map(v => `<option value="${v}"></option>`).join('');
+            });
+    });
+}
+wireAutocomplete('contributor', 'contributor-list', 'contributor');
+wireAutocomplete('editor',      'editor-list',      'editor');
+wireAutocomplete('imagery',     'imagery-list',     'imagery');
 </script>
 {% endblock %} 
