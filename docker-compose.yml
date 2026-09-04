@@ -1,0 +1,38 @@
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+      DD_SERVICE: osm-monitor
+      DD_ENV: production
+      DD_TRACE_AGENT_URL: unix:///var/run/datadog/apm.socket
+      DD_DOGSTATSD_URL: unix:///var/run/datadog/dsd.socket
+      DD_LOGS_INJECTION: "true"
+      DD_VERSION: ${GIT_VERSION:-unknown}
+    ports:
+      - "5006:8000"
+    volumes:
+      - sqlite-data:/data
+      - /var/run/datadog:/var/run/datadog:ro
+
+  poller:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+      DD_SERVICE: osm-monitor-poller
+      DD_ENV: production
+      DD_TRACE_AGENT_URL: unix:///var/run/datadog/apm.socket
+      DD_DOGSTATSD_URL: unix:///var/run/datadog/dsd.socket
+      DD_LOGS_INJECTION: "true"
+      DD_VERSION: ${GIT_VERSION:-unknown}
+    volumes:
+      - sqlite-data:/data
+      - /var/run/datadog:/var/run/datadog:ro
+    command: python manage.py poll_sequences --interval 60
+
+volumes:
+  sqlite-data:

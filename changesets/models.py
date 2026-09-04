@@ -6,6 +6,10 @@ class SequenceState(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     batch_start = models.IntegerField(null=True, blank=True)
     batch_target = models.IntegerField(null=True, blank=True)
+    # Backfill walks backward in time from where live polling started, so recent
+    # data is available immediately while older history fills in behind it.
+    backfill_sequence = models.IntegerField(null=True, blank=True)
+    backfill_floor = models.IntegerField(null=True, blank=True)
 
     class Meta:
         app_label = 'changesets'

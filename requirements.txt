@@ -13,3 +13,5 @@ urllib3==2.2.2
 python-dotenv==1.0.1
 dj-database-url==2.2.0
 gunicorn==22.0.0
+whitenoise==6.7.0
+ddtrace==4.14.0

@@ -1,0 +1,11 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+.env
+db.sqlite3
+staticfiles/
+output/
+*.osm.gz
+.DS_Store

@@ -1,3 +1,4 @@
+import logging
 import os
 from os import path
 import requests
@@ -6,8 +7,11 @@ import gzip
 from .models import Changeset
 from datetime import datetime
 from django.utils import timezone
+from ddtrace import tracer
 import json
 import copy
+
+logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 30  # seconds; avoid hanging forever on a stalled connection
 
@@ -48,6 +52,18 @@ def get_sequence_min_max_changeset_id(sequence_number, locally=False):
 
 
 def process_sequence(sequence_number):
+    span = tracer.trace("osm.process_sequence", service="osm-monitor", resource="process_sequence")
+    span.set_tag("osm.sequence_number", sequence_number)
+    try:
+        _process_sequence_traced(sequence_number, span)
+    except Exception:
+        span.set_traceback()
+        raise
+    finally:
+        span.finish()
+
+
+def _process_sequence_traced(sequence_number, span):
 
     sequence_path = "./source/" + str(sequence_number) + ".osm.gz"
     if not path.isfile(sequence_path):
@@ -64,6 +80,8 @@ def process_sequence(sequence_number):
             xml_sequence = ET.fromstring(gzip.decompress(sequence_file.read()))
 
     changesets_to_create = []
+    skipped_count = 0
+    updated_count = 0
 
     for changeset in xml_sequence:
         """
@@ -96,11 +114,29 @@ def process_sequence(sequence_number):
         if existing_changeset:
             new_changes_count = int(changeset.attrib.get('num_changes', 0))
             if existing_changeset.changes_count >= new_changes_count:
-                print(f"Changeset {changeset_id} already exists in database with higher or equal changes_count ({existing_changeset.changes_count} >= {new_changes_count}), skipping...")
+                logger.debug(
+                    "Changeset already up to date, skipping",
+                    extra={
+                        'osm.sequence_number': sequence_number,
+                        'osm.changeset_id': changeset_id,
+                        'osm.changes_count.existing': existing_changeset.changes_count,
+                        'osm.changes_count.incoming': new_changes_count,
+                    },
+                )
+                skipped_count += 1
                 continue
             else:
-                print(f"Changeset {changeset_id} exists but has lower changes_count ({existing_changeset.changes_count} < {new_changes_count}), updating...")
+                logger.debug(
+                    "Changeset has grown, updating",
+                    extra={
+                        'osm.sequence_number': sequence_number,
+                        'osm.changeset_id': changeset_id,
+                        'osm.changes_count.existing': existing_changeset.changes_count,
+                        'osm.changes_count.incoming': new_changes_count,
+                    },
+                )
                 existing_changeset.delete()  # Delete the old version to allow creation of new one
+                updated_count += 1
 
         for attribute, value in changeset.attrib.items():
             if attribute in COLUMNS_MAPPING:
@@ -116,9 +152,14 @@ def process_sequence(sequence_number):
 
                 changeset_to_add[COLUMNS_MAPPING[attribute]] = value
             else:
-                print("Sequence number : " + sequence_number)
-                print("Changeset " + changeset.attrib["id"])
-                print("Changeset attribute not known : " + attribute)
+                logger.warning(
+                    "Unknown changeset attribute",
+                    extra={
+                        'osm.sequence_number': sequence_number,
+                        'osm.changeset_id': changeset.attrib["id"],
+                        'osm.attribute': attribute,
+                    },
+                )
                     
         for element in changeset:
             if 'tag' in element.tag:
@@ -213,9 +254,14 @@ def process_sequence(sequence_number):
                 ## TODO : implement
                 continue
             else:
-                print("Sequence number : " + str(sequence_number))
-                print("Changeset : " + changeset.attrib["id"])
-                print("Element of XML not being a <tag> nor <discussion> : " + element.tag)
+                logger.warning(
+                    "Unexpected XML element under changeset",
+                    extra={
+                        'osm.sequence_number': sequence_number,
+                        'osm.changeset_id': changeset.attrib["id"],
+                        'osm.element_tag': element.tag,
+                    },
+                )
 
         # No need to convert to JSON string - Django's JSONField handles that
         changesets_to_create.append(changeset_to_add)
@@ -226,20 +272,40 @@ def process_sequence(sequence_number):
                 [Changeset(**changeset) for changeset in changesets_to_create],
                 ignore_conflicts=True  # This will skip any duplicates that somehow made it through
             )
-            print(f"Successfully created {len(changesets_to_create)} changesets")
-        except Exception as e:
-            print(f"Error during bulk creation: {str(e)}")
+        except Exception:
+            logger.exception(
+                "Bulk creation failed, falling back to individual creation",
+                extra={'osm.sequence_number': sequence_number},
+            )
             # Fallback to individual creation if bulk create fails
             for changeset in changesets_to_create:
                 try:
                     Changeset.objects.create(**changeset)
-                except Exception as e:
-                    print(f"Error creating changeset {changeset.get('changeset_id')}: {str(e)}")
+                except Exception:
+                    logger.exception(
+                        "Error creating changeset",
+                        extra={
+                            'osm.sequence_number': sequence_number,
+                            'osm.changeset_id': changeset.get('changeset_id'),
+                        },
+                    )
 
-    if sequence_was_fetched:
-        print("Processed " + str(sequence_number) + ", data fetched from planet.osm.org")
-    else:
-        print("Processed " + str(sequence_number) + ", data fetched from cache")
+    source = "network" if sequence_was_fetched else "cache"
+    logger.info(
+        "Processed sequence",
+        extra={
+            'osm.sequence_number': sequence_number,
+            'osm.source': source,
+            'osm.changesets.created': len(changesets_to_create),
+            'osm.changesets.skipped': skipped_count,
+            'osm.changesets.updated': updated_count,
+        },
+    )
+
+    span.set_tag("osm.source", source)
+    span.set_metric("osm.changesets.created", len(changesets_to_create))
+    span.set_metric("osm.changesets.skipped", skipped_count)
+    span.set_metric("osm.changesets.updated", updated_count)
 
 
 def fetch_and_process_changesets(seq_start, seq_end, on_progress=None):
