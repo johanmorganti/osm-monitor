@@ -11,7 +11,7 @@ PLANET_STATE_URL = 'https://planet.osm.org/replication/changesets/state.yaml'
 
 
 def fetch_latest_sequence():
-    response = requests.get(PLANET_STATE_URL, stream=True)
+    response = requests.get(PLANET_STATE_URL, stream=True, timeout=30)
     response.raise_for_status()
     data = yaml.safe_load(response.raw.read())
     return int(data['sequence'])

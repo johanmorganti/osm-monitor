@@ -1,3 +1,4 @@
+import os
 from os import path
 import requests
 import xml.etree.ElementTree as ET
@@ -7,6 +8,8 @@ from datetime import datetime
 from django.utils import timezone
 import json
 import copy
+
+REQUEST_TIMEOUT = 30  # seconds; avoid hanging forever on a stalled connection
 
 COLUMNS_MAPPING = {
     "id": "changeset_id",
@@ -39,19 +42,20 @@ def get_sequence_min_max_changeset_id(sequence_number, locally=False):
             xml_sequence = ET.fromstring(gzip.decompress(sequence_file.read()))
     else:
         url_sequence = urlized_sequence_number(sequence_number)
-        xml_sequence_request = requests.get(url_sequence, stream=True).raw.read()
+        xml_sequence_request = requests.get(url_sequence, stream=True, timeout=REQUEST_TIMEOUT).raw.read()
         xml_sequence = ET.fromstring(gzip.decompress(xml_sequence_request))
     return min(xml_sequence, key=lambda x: x.attrib['id']).attrib['id'], max(xml_sequence, key=lambda x: x.attrib['id']).attrib['id']
 
 
 def process_sequence(sequence_number):
-    
+
     sequence_path = "./source/" + str(sequence_number) + ".osm.gz"
     if not path.isfile(sequence_path):
         sequence_was_fetched = True
         url_sequence = urlized_sequence_number(sequence_number)
-        xml_sequence_request = requests.get(url_sequence, stream=True).raw.read()
+        xml_sequence_request = requests.get(url_sequence, stream=True, timeout=REQUEST_TIMEOUT).raw.read()
         xml_sequence = ET.fromstring(gzip.decompress(xml_sequence_request))
+        os.makedirs(path.dirname(sequence_path), exist_ok=True)
         with open(sequence_path, 'wb') as sequence_file:
             sequence_file.write(xml_sequence_request)
     else:
@@ -260,7 +264,7 @@ def duration_info(sequence_number):
     sequence_path = "./source/" + str(sequence_number) + ".osm.gz"
     if not path.isfile(sequence_path):
         url_sequence = urlized_sequence_number(sequence_number)
-        xml_sequence_request = requests.get(url_sequence, stream=True).raw.read()
+        xml_sequence_request = requests.get(url_sequence, stream=True, timeout=REQUEST_TIMEOUT).raw.read()
         xml_sequence = ET.fromstring(gzip.decompress(xml_sequence_request))
         with open(sequence_path, 'wb') as sequence_file:
             sequence_file.write(xml_sequence_request)
