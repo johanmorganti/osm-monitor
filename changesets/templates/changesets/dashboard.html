@@ -3,10 +3,10 @@
 {% block content %}
 <div class="container mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold mb-8">OSM Changeset Dashboard</h1>
-    
-    <!-- Time Range Picker -->
+
+    <!-- Filters -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
-        <h2 class="text-xl font-semibold mb-4">Select Time Range</h2>
+        <h2 class="text-xl font-semibold mb-4">Filters</h2>
         <form method="get" class="flex flex-wrap gap-4">
             <div>
                 <label for="start_date" class="block text-sm font-medium text-gray-700">Start Date</label>
@@ -47,51 +47,72 @@
         </form>
     </div>
 
-    <!-- First Part: Total Changesets and Changesets Over Time -->
+    <!-- ══ Part 1: Changeset activity ══════════════════════════════════════ -->
+    <h2 class="text-2xl font-semibold mb-4">Part 1 — Changeset activity</h2>
+
+    <!-- KPI + time series -->
     <div class="grid grid-cols-6 gap-8 mb-8">
-        <!-- Total Changesets (1/6) -->
-        <div class="col-span-1 bg-white rounded-lg shadow-lg p-6">
-            <h2 class="text-xl font-semibold mb-4">Total Changesets</h2>
+        <div class="col-span-1 bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Total Changesets</h3>
             <div class="text-4xl font-bold text-blue-600">{{ total_changesets }}</div>
         </div>
-
-        <!-- Changesets Over Time (5/6) -->
         <div class="col-span-5 bg-white rounded-lg shadow-lg p-6">
-            <h2 class="text-xl font-semibold mb-4">Changesets Over Time</h2>
+            <h3 class="text-lg font-semibold mb-4">Changesets Over Time</h3>
             <canvas id="changesetChart"></canvas>
         </div>
     </div>
 
-    <!-- Second Part: Three Columns -->
-    <div class="grid grid-cols-3 gap-8">
-        <!-- Top Contributors -->
+    <!-- 3 breakdown groups -->
+    <div class="grid grid-cols-3 gap-8 mb-12">
+        <!-- Editors -->
         <div class="bg-white rounded-lg shadow-lg p-6">
-            <h2 class="text-xl font-semibold mb-4">Top Contributors</h2>
-            <canvas id="topContributorsChart"></canvas>
-            <div class="mt-4">
-                <h3 class="text-lg font-medium mb-2">Contributions Over Time</h3>
-                <canvas id="topContributorsTimeChart"></canvas>
-            </div>
-        </div>
-
-        <!-- Top Imageries -->
-        <div class="bg-white rounded-lg shadow-lg p-6">
-            <h2 class="text-xl font-semibold mb-4">Top Imageries</h2>
-            <canvas id="topImageriesChart"></canvas>
-            <div class="mt-4">
-                <h3 class="text-lg font-medium mb-2">Usage Over Time</h3>
-                <canvas id="topImageriesTimeChart"></canvas>
-            </div>
-        </div>
-
-        <!-- Top Editors -->
-        <div class="bg-white rounded-lg shadow-lg p-6">
-            <h2 class="text-xl font-semibold mb-4">Top Editors</h2>
+            <h3 class="text-lg font-semibold mb-4">Top 20 Editors</h3>
             <canvas id="topEditorsChart"></canvas>
-            <div class="mt-4">
-                <h3 class="text-lg font-medium mb-2">Usage Over Time</h3>
-                <canvas id="topEditorsTimeChart"></canvas>
-            </div>
+            <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time</h4>
+            <canvas id="topEditorsTimeChart"></canvas>
+        </div>
+
+        <!-- Imagery -->
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-4">Top 20 Imagery Providers</h3>
+            <canvas id="topImageriesChart"></canvas>
+            <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time</h4>
+            <canvas id="topImageriesTimeChart"></canvas>
+        </div>
+
+        <!-- Language -->
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-4">Top 20 Languages</h3>
+            <canvas id="topLocalesChart"></canvas>
+            <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time</h4>
+            <canvas id="topLocalesTimeChart"></canvas>
+        </div>
+    </div>
+
+    <!-- ══ Part 2: Objects changed ══════════════════════════════════════════ -->
+    <h2 class="text-2xl font-semibold mb-4">Part 2 — Objects changed</h2>
+
+    <!-- KPIs -->
+    <div class="grid grid-cols-2 gap-8 mb-8">
+        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Total Objects Changed</h3>
+            <div class="text-4xl font-bold text-blue-600">{{ total_objects_json|safe }}</div>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Avg Objects per Changeset</h3>
+            <div class="text-4xl font-bold text-blue-600">{{ avg_objects_json|safe }}</div>
+        </div>
+    </div>
+
+    <!-- Top 20 by objects -->
+    <div class="grid grid-cols-2 gap-8 mb-12">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-4">Top 20 Contributors by Objects Changed</h3>
+            <canvas id="topContributorsByObjectsChart"></canvas>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-4">Top 20 Editors by Objects Changed</h3>
+            <canvas id="topEditorsByObjectsChart"></canvas>
         </div>
     </div>
 </div>
@@ -99,13 +120,15 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 window.dashboardData = {
-    dailyCounts:         {{ daily_counts_json|safe }},
-    topContributors:     {{ top_contributors_json|safe }},
-    topEditors:          {{ top_editors_json|safe }},
-    topImageries:        {{ top_imageries_json|safe }},
-    topContributorsTime: {{ top_contributors_time_json|safe }},
-    topEditorsTime:      {{ top_editors_time_json|safe }},
-    topImageriesTime:    {{ top_imageries_time_json|safe }},
+    dailyCounts:              {{ daily_counts_json|safe }},
+    topEditors:               {{ top_editors_json|safe }},
+    topEditorsTime:           {{ top_editors_time_json|safe }},
+    topImageries:             {{ top_imageries_json|safe }},
+    topImageriesTime:         {{ top_imageries_time_json|safe }},
+    topLocales:               {{ top_locales_json|safe }},
+    topLocalesTime:           {{ top_locales_time_json|safe }},
+    topContributorsByObjects: {{ top_contributors_by_objects_json|safe }},
+    topEditorsByObjects:      {{ top_editors_by_objects_json|safe }},
 };
 </script>
 {% load static %}
@@ -127,4 +150,4 @@ wireAutocomplete('contributor', 'contributor-list', 'contributor');
 wireAutocomplete('editor',      'editor-list',      'editor');
 wireAutocomplete('imagery',     'imagery-list',     'imagery');
 </script>
-{% endblock %} 
+{% endblock %}

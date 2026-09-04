@@ -169,6 +169,8 @@ def process_sequence(sequence_number):
                         changeset_to_add['comment'] = tag_value
                     elif tag_key == 'locale':
                         changeset_to_add['locale'] = tag_value
+                        if tag_value:
+                            changeset_to_add['locale_family'] = tag_value.replace('_', '-').split('-')[0].upper() or None
                     elif tag_key == 'source':
                         changeset_to_add['source'] = tag_value
                     elif tag_key == 'imagery_used':

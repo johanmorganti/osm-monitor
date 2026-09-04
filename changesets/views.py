@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.views.generic import TemplateView
-from django.db.models import Count, Value, CharField
+from django.db.models import Count, Value, CharField, Sum, Avg
 from django.db.models.functions import TruncDate, ExtractHour, Concat
 from .models import Changeset, SequenceState, ImportJob
 from .serializers import ChangesetSerializer
@@ -29,7 +29,8 @@ class ChangesetQueryView(APIView):
         user = request.query_params.get('user')
         editor = request.query_params.get('editor')
         hashtag = request.query_params.get('hashtag')
-        imagery = request.query_params.get('imagery')
+        imagery_raw = request.query_params.get('imagery_raw')
+        imagery_family = request.query_params.get('imagery_family')
         bbox = request.query_params.get('bbox')
 
         if start_date:
@@ -44,8 +45,10 @@ class ChangesetQueryView(APIView):
             qs = qs.filter(created_by_family=editor)
         if hashtag:
             qs = qs.filter(hashtags__contains=[hashtag])
-        if imagery:
-            qs = qs.filter(imagery_used__contains=[imagery])
+        if imagery_raw:
+            qs = qs.filter(imagery_used__contains=[imagery_raw])
+        if imagery_family:
+            qs = qs.filter(imagery_family__iexact=imagery_family)
         if bbox:
             try:
                 min_lon, min_lat, max_lon, max_lat = [float(v) for v in bbox.split(',')]
@@ -163,7 +166,8 @@ class DashboardView(TemplateView):
         if imagery:
             changesets = changesets.filter(imagery_family__iexact=imagery)
         
-        # Get daily changeset counts
+        # ── Part 1: Changeset activity ────────────────────────────────────────
+
         daily_counts = changesets.annotate(
             date=Concat(
                 TruncDate('created_at'),
@@ -172,149 +176,99 @@ class DashboardView(TemplateView):
                 Value(':00'),
                 output_field=CharField()
             )
-        ).values('date').annotate(
-            count=Count('id')
-        ).order_by('date')[:360]
-        
-        # Get top contributors
-        top_contributors = Changeset.objects.filter(
-            created_at__gte=start_date,
-            created_at__lte=end_date
-        ).values('user').annotate(
-            count=Count('id')
-        ).order_by('-count')[:10]
+        ).values('date').annotate(count=Count('id')).order_by('date')[:360]
 
-        # Get top editors (by created_by_family)
-        top_editors = Changeset.objects.filter(
-            created_at__gte=start_date,
-            created_at__lte=end_date,
-            created_by_family__isnull=False
-        ).values('created_by_family').annotate(
-            count=Count('id')
-        ).order_by('-count')[:10]
+        unique_dates = sorted({item['date'] for item in daily_counts})
 
-        # Get top imageries - modified for SQLite
-        top_imageries = Changeset.objects.filter(
-            created_at__gte=start_date,
-            created_at__lte=end_date,
-            imagery_used__isnull=False
-        ).values('imagery_used').annotate(
-            count=Count('id')
-        ).order_by('-count')[:10]
+        def time_series(qs_filter, field):
+            """Return [{name, counts}] aligned to unique_dates."""
+            rows = (
+                changesets.filter(**{field: qs_filter})
+                .annotate(date=TruncDate('created_at'))
+                .values('date').annotate(count=Count('id')).order_by('date')
+            )
+            date_map = {item['date'].isoformat() if hasattr(item['date'], 'isoformat') else str(item['date']): item['count'] for item in rows}
+            return [date_map.get(d.split(' ')[0] if ' ' in d else d, 0) for d in unique_dates]
 
-        # Get time series data for top contributors
-        top_contributors_time = []
-        for contrib_item in top_contributors:
-            user_data = changesets.filter(user=contrib_item['user']).annotate(
-                date=TruncDate('created_at')
-            ).values('date').annotate(
-                count=Count('id')
-            ).order_by('date')
-
-            top_contributors_time.append({
-                'name': contrib_item['user'],
-                'counts': [item['count'] for item in user_data]
-            })
-
-        # Get time series data for top imageries - modified for SQLite
-        top_imageries_time = []
-        for imagery_item in top_imageries:
-            # For SQLite, we'll need to process the JSON in Python
-            imagery_data = changesets.filter(
-                created_at__gte=start_date,
-                created_at__lte=end_date,
-                imagery_used__isnull=False
-            ).annotate(
-                date=TruncDate('created_at')
-            ).values('date', 'imagery_used').annotate(
-                count=Count('id')
-            ).order_by('date')
-
-            # Filter in Python for the specific imagery
-            filtered_data = [
-                item for item in imagery_data
-                if item['imagery_used'] and imagery_item['imagery_used'] in item['imagery_used']
-            ]
-
-            top_imageries_time.append({
-                'name': imagery_item['imagery_used'],
-                'counts': [item['count'] for item in filtered_data]
-            })
-
-        # Get time series data for top editors
-        top_editors_time = []
-        for editor_item in top_editors:
-            editor_data = changesets.filter(created_by_family=editor_item['created_by_family']).annotate(
-                date=TruncDate('created_at')
-            ).values('date').annotate(
-                count=Count('id')
-            ).order_by('date')
-
-            top_editors_time.append({
-                'name': editor_item['created_by_family'],
-                'counts': [item['count'] for item in editor_data]
-            })
-
-        # Get unique dates for time series
-        unique_dates = sorted(list(set(
-            item['date'] for item in daily_counts
-        )))
-
-        # Convert dates to strings and properly serialize for JavaScript
-        daily_counts_list = [
-            {
-                'date': item['date'],
-                'count': item['count']
-            }
-            for item in daily_counts
+        # Top 20 editors
+        top_editors = (
+            changesets.filter(created_by_family__isnull=False)
+            .values('created_by_family').annotate(count=Count('id'))
+            .order_by('-count')[:20]
+        )
+        top_editors_time = [
+            {'name': e['created_by_family'], 'counts': time_series(e['created_by_family'], 'created_by_family')}
+            for e in top_editors
         ]
 
-        # Convert data to format suitable for JavaScript
-        top_contributors_list = [
-            {
-                'user': item['user'],
-                'count': item['count']
-            }
-            for item in top_contributors
+        # Top 20 imagery families
+        top_imageries = (
+            changesets.filter(imagery_family__isnull=False)
+            .values('imagery_family').annotate(count=Count('id'))
+            .order_by('-count')[:20]
+        )
+        top_imageries_time = [
+            {'name': i['imagery_family'], 'counts': time_series(i['imagery_family'], 'imagery_family')}
+            for i in top_imageries
         ]
 
-        top_editors_list = [
-            {
-                'editor': item['created_by_family'],
-                'count': item['count']
-            }
-            for item in top_editors
+        # Top 20 locale families
+        top_locales = (
+            changesets.filter(locale_family__isnull=False)
+            .values('locale_family').annotate(count=Count('id'))
+            .order_by('-count')[:20]
+        )
+        top_locales_time = [
+            {'name': l['locale_family'], 'counts': time_series(l['locale_family'], 'locale_family')}
+            for l in top_locales
         ]
 
-        top_imageries_list = [
-            {
-                'imagery': item['imagery_used'],
-                'count': item['count']
-            }
-            for item in top_imageries
-        ]
-        
-        context['daily_counts_json'] = json.dumps(daily_counts_list, cls=DjangoJSONEncoder)
-        context['top_contributors_json'] = json.dumps(top_contributors_list, cls=DjangoJSONEncoder)
-        context['top_editors_json'] = json.dumps(top_editors_list, cls=DjangoJSONEncoder)
-        context['top_imageries_json'] = json.dumps(top_imageries_list, cls=DjangoJSONEncoder)
-        
-        # Add time series data - dates are already in the correct format from daily_counts
-        context['top_contributors_time_json'] = json.dumps({
-            'dates': unique_dates,
-            'users': top_contributors_time
-        }, cls=DjangoJSONEncoder)
-        
-        context['top_imageries_time_json'] = json.dumps({
-            'dates': unique_dates,
-            'imageries': top_imageries_time
-        }, cls=DjangoJSONEncoder)
-        
-        context['top_editors_time_json'] = json.dumps({
-            'dates': unique_dates,
-            'editors': top_editors_time
-        }, cls=DjangoJSONEncoder)
-        
+        # ── Part 2: Objects changed ───────────────────────────────────────────
+
+        totals = changesets.aggregate(total=Sum('changes_count'), avg=Avg('changes_count'))
+        total_objects = totals['total'] or 0
+        avg_objects   = round(totals['avg'] or 0, 1)
+
+        top_contributors_by_objects = list(
+            changesets.filter(user__isnull=False)
+            .values('user').annotate(total=Sum('changes_count'))
+            .order_by('-total')[:20]
+        )
+        top_editors_by_objects = list(
+            changesets.filter(created_by_family__isnull=False)
+            .values('created_by_family').annotate(total=Sum('changes_count'))
+            .order_by('-total')[:20]
+        )
+
+        # ── Serialise to context ──────────────────────────────────────────────
+
+        context['daily_counts_json'] = json.dumps(
+            [{'date': i['date'], 'count': i['count']} for i in daily_counts],
+            cls=DjangoJSONEncoder)
+        context['top_editors_json'] = json.dumps(
+            [{'editor': e['created_by_family'], 'count': e['count']} for e in top_editors],
+            cls=DjangoJSONEncoder)
+        context['top_editors_time_json'] = json.dumps(
+            {'dates': unique_dates, 'editors': top_editors_time}, cls=DjangoJSONEncoder)
+        context['top_imageries_json'] = json.dumps(
+            [{'imagery': i['imagery_family'], 'count': i['count']} for i in top_imageries],
+            cls=DjangoJSONEncoder)
+        context['top_imageries_time_json'] = json.dumps(
+            {'dates': unique_dates, 'imageries': top_imageries_time}, cls=DjangoJSONEncoder)
+        context['top_locales_json'] = json.dumps(
+            [{'locale': l['locale_family'], 'count': l['count']} for l in top_locales],
+            cls=DjangoJSONEncoder)
+        context['top_locales_time_json'] = json.dumps(
+            {'dates': unique_dates, 'locales': top_locales_time}, cls=DjangoJSONEncoder)
+        context['total_objects_json']              = json.dumps(total_objects, cls=DjangoJSONEncoder)
+        context['avg_objects_json']                = json.dumps(avg_objects, cls=DjangoJSONEncoder)
+        context['top_contributors_by_objects_json'] = json.dumps(
+            [{'user': r['user'], 'total': r['total']} for r in top_contributors_by_objects],
+            cls=DjangoJSONEncoder)
+        context['top_editors_by_objects_json'] = json.dumps(
+            [{'editor': r['created_by_family'], 'total': r['total']} for r in top_editors_by_objects],
+            cls=DjangoJSONEncoder)
+
         context['total_changesets'] = changesets.count()
         context['start_date'] = start_date
         context['end_date'] = end_date
@@ -323,6 +277,39 @@ class DashboardView(TemplateView):
         context['imagery'] = imagery
 
         return context
+
+class ImageryAuditView(APIView):
+    """
+    Returns distinct (raw first imagery entry → imagery_family) mappings,
+    grouped by family with up to 5 raw sample values each.
+    Useful for auditing the family normalisation logic.
+    """
+    def get(self, request):
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT imagery_family,
+                       json_extract(imagery_used, '$[0]') AS raw_first,
+                       COUNT(*) AS cnt
+                FROM changesets_changeset
+                WHERE imagery_family IS NOT NULL
+                  AND imagery_used IS NOT NULL
+                GROUP BY imagery_family, raw_first
+                ORDER BY imagery_family, cnt DESC
+            """)
+            rows = cursor.fetchall()
+
+        grouped = {}
+        for family, raw, cnt in rows:
+            if family not in grouped:
+                grouped[family] = {'family': family, 'total': 0, 'samples': []}
+            grouped[family]['total'] += cnt
+            if len(grouped[family]['samples']) < 5:
+                grouped[family]['samples'].append({'raw': raw, 'count': cnt})
+
+        result = sorted(grouped.values(), key=lambda x: -x['total'])
+        return Response(result)
+
 
 class BatchProgressView(APIView):
     def get(self, request):

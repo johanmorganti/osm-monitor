@@ -58,6 +58,7 @@ class Changeset(models.Model):
     created_by_family = models.CharField(max_length=255, null=True, blank=True)  # Base name of created_by (e.g., "StreetComplete")
     comment = models.TextField(null=True, blank=True)
     locale = models.CharField(max_length=50, null=True, blank=True)
+    locale_family = models.CharField(max_length=10, null=True, blank=True)  # language code only, e.g. "FR"
     source = models.CharField(max_length=255, null=True, blank=True)
     imagery_used = models.JSONField(null=True, blank=True)  # Store as array of strings
     imagery_family = models.CharField(max_length=255, null=True, blank=True)
