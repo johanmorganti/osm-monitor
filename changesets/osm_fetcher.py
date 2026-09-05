@@ -79,11 +79,24 @@ def _process_sequence_traced(sequence_number, span):
         with open(sequence_path, 'rb') as sequence_file:
             xml_sequence = ET.fromstring(gzip.decompress(sequence_file.read()))
 
+    changeset_elements = list(xml_sequence)
+
+    # One query for the whole batch instead of one per changeset — the
+    # ids/deletes loop below used to hit the DB per changeset (up to ~60
+    # round-trips per sequence), which is fine on same-process SQLite but
+    # costly once the DB is a separate networked Postgres instance.
+    existing_changes_count_by_id = dict(
+        Changeset.objects.filter(
+            changeset_id__in=[int(c.attrib['id']) for c in changeset_elements]
+        ).values_list('changeset_id', 'changes_count')
+    )
+
     changesets_to_create = []
+    changeset_ids_to_delete = []
     skipped_count = 0
     updated_count = 0
 
-    for changeset in xml_sequence:
+    for changeset in changeset_elements:
         """
         Changeset overview :
             <changeset [...] attribute_key="attribute_value" [...]>
@@ -110,16 +123,16 @@ def _process_sequence_traced(sequence_number, span):
         changeset_id = int(changeset.attrib['id'])
 
         # Check for duplicates and compare changes_count
-        existing_changeset = Changeset.objects.filter(changeset_id=changeset_id).first()
-        if existing_changeset:
+        existing_changes_count = existing_changes_count_by_id.get(changeset_id)
+        if existing_changes_count is not None:
             new_changes_count = int(changeset.attrib.get('num_changes', 0))
-            if existing_changeset.changes_count >= new_changes_count:
+            if existing_changes_count >= new_changes_count:
                 logger.debug(
                     "Changeset already up to date, skipping",
                     extra={
                         'osm.sequence_number': sequence_number,
                         'osm.changeset_id': changeset_id,
-                        'osm.changes_count.existing': existing_changeset.changes_count,
+                        'osm.changes_count.existing': existing_changes_count,
                         'osm.changes_count.incoming': new_changes_count,
                     },
                 )
@@ -131,11 +144,11 @@ def _process_sequence_traced(sequence_number, span):
                     extra={
                         'osm.sequence_number': sequence_number,
                         'osm.changeset_id': changeset_id,
-                        'osm.changes_count.existing': existing_changeset.changes_count,
+                        'osm.changes_count.existing': existing_changes_count,
                         'osm.changes_count.incoming': new_changes_count,
                     },
                 )
-                existing_changeset.delete()  # Delete the old version to allow creation of new one
+                changeset_ids_to_delete.append(changeset_id)  # deleted in one batch below
                 updated_count += 1
 
         for attribute, value in changeset.attrib.items():
@@ -265,6 +278,9 @@ def _process_sequence_traced(sequence_number, span):
 
         # No need to convert to JSON string - Django's JSONField handles that
         changesets_to_create.append(changeset_to_add)
+
+    if changeset_ids_to_delete:
+        Changeset.objects.filter(changeset_id__in=changeset_ids_to_delete).delete()
 
     if changesets_to_create:
         try:
