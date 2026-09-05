@@ -20,6 +20,16 @@ class SequenceState(models.Model):
         return obj.last_sequence if obj else None
 
 
+class RollupState(models.Model):
+    """Singleton watermark for refresh_rollups_incremental() (see
+    changesets.rollups): the highest Changeset.id already merged into the
+    DailyVolume/DailyBreakdown rollup tables."""
+    last_id = models.IntegerField(default=0)
+
+    class Meta:
+        app_label = 'changesets'
+
+
 class ImportJob(models.Model):
     seq_start   = models.IntegerField()
     seq_end     = models.IntegerField()
@@ -48,7 +58,7 @@ class Changeset(models.Model):
     closed_at = models.DateTimeField(null=True, blank=True)
     open = models.BooleanField(null=True)
     changes_count = models.IntegerField(null=True)
-    user = models.CharField(max_length=100, null=True, db_index=True)
+    user = models.CharField(max_length=255, null=True, db_index=True)
     user_id = models.IntegerField(null=True)
     min_lat = models.FloatField(null=True)
     max_lat = models.FloatField(null=True)

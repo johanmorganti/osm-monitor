@@ -6,7 +6,7 @@ import yaml
 from django.core.management.base import BaseCommand, CommandError
 from changesets.models import SequenceState
 from changesets.osm_fetcher import process_sequence
-from changesets.rollups import refresh_rollups
+from changesets.rollups import refresh_rollups, refresh_rollups_incremental
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,12 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--rollup-interval', type=int, default=120,
-            help='Minimum seconds between dashboard rollup rebuilds (default: 120)'
+            help='Minimum seconds between incremental rollup merges (default: 120)'
+        )
+        parser.add_argument(
+            '--rollup-full-interval', type=int, default=3600,
+            help='Minimum seconds between full rollup rebuilds, which correct any drift the '
+                 'incremental merge leaves behind (default: 3600)'
         )
         parser.add_argument(
             '--reset', action='store_true',
@@ -73,6 +78,7 @@ class Command(BaseCommand):
         sequences_per_day = options['sequences_per_day']
         backfill_batch_size = options['backfill_batch_size']
         rollup_interval = options['rollup_interval']
+        rollup_full_interval = options['rollup_full_interval']
 
         if options['reset']:
             self._reset(start_arg, backfill_days, sequences_per_day)
@@ -81,6 +87,7 @@ class Command(BaseCommand):
         logger.info("Starting sequence poller")
 
         last_rollup_refresh = 0.0
+        last_rollup_full_refresh = 0.0
 
         while True:
             try:
@@ -167,12 +174,20 @@ class Command(BaseCommand):
                     state.backfill_floor = None
                     state.save()
 
-                if time.monotonic() - last_rollup_refresh >= rollup_interval:
+                if time.monotonic() - last_rollup_full_refresh >= rollup_full_interval:
                     refresh_start = time.monotonic()
                     refresh_rollups()
+                    last_rollup_refresh = last_rollup_full_refresh = time.monotonic()
+                    logger.info(
+                        "Rollups refreshed (full)",
+                        extra={'osm.rollup_refresh_seconds': round(last_rollup_refresh - refresh_start, 2)},
+                    )
+                elif time.monotonic() - last_rollup_refresh >= rollup_interval:
+                    refresh_start = time.monotonic()
+                    refresh_rollups_incremental()
                     last_rollup_refresh = time.monotonic()
                     logger.info(
-                        "Rollups refreshed",
+                        "Rollups refreshed (incremental)",
                         extra={'osm.rollup_refresh_seconds': round(last_rollup_refresh - refresh_start, 2)},
                     )
 
