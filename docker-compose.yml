@@ -12,6 +12,23 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    labels:
+      com.datadoghq.ad.checks: |
+        {
+          "postgres": {
+            "instances": [
+              {
+                "host": "%%host%%",
+                "port": 5432,
+                "username": "datadog",
+                "password": "${DD_POSTGRES_PASSWORD}",
+                "dbname": "${POSTGRES_DB}",
+                "reported_hostname": "osm-monitor-db",
+                "tags": ["service:osm-monitor-db", "env:production"]
+              }
+            ]
+          }
+        }
 
   web:
     build: .
