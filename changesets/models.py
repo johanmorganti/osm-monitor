@@ -44,11 +44,11 @@ class ImportJob(models.Model):
 
 class Changeset(models.Model):
     changeset_id = models.BigIntegerField(unique=True)
-    created_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(null=True, db_index=True)
     closed_at = models.DateTimeField(null=True, blank=True)
     open = models.BooleanField(null=True)
     changes_count = models.IntegerField(null=True)
-    user = models.CharField(max_length=100, null=True)
+    user = models.CharField(max_length=100, null=True, db_index=True)
     user_id = models.IntegerField(null=True)
     min_lat = models.FloatField(null=True)
     max_lat = models.FloatField(null=True)
@@ -59,13 +59,13 @@ class Changeset(models.Model):
     
     # New dedicated columns for common tags
     created_by = models.CharField(max_length=255, null=True, blank=True)
-    created_by_family = models.CharField(max_length=255, null=True, blank=True)  # Base name of created_by (e.g., "StreetComplete")
+    created_by_family = models.CharField(max_length=255, null=True, blank=True, db_index=True)  # Base name of created_by (e.g., "StreetComplete")
     comment = models.TextField(null=True, blank=True)
     locale = models.CharField(max_length=50, null=True, blank=True)
-    locale_family = models.CharField(max_length=10, null=True, blank=True)  # language code only, e.g. "FR"
+    locale_family = models.CharField(max_length=10, null=True, blank=True, db_index=True)  # language code only, e.g. "FR"
     source = models.CharField(max_length=255, null=True, blank=True)
     imagery_used = models.JSONField(null=True, blank=True)  # Store as array of strings
-    imagery_family = models.CharField(max_length=255, null=True, blank=True)
+    imagery_family = models.CharField(max_length=255, null=True, blank=True, db_index=True)
     host = models.CharField(max_length=255, null=True, blank=True)
     changesets_count = models.IntegerField(null=True, blank=True)
     hashtags = models.JSONField(null=True, blank=True)  # Store as array of strings
@@ -92,3 +92,41 @@ class Changeset(models.Model):
     def tags_dict(self):
         """Returns a dictionary of all tags"""
         return self.tags or {}
+
+
+class DailyVolume(models.Model):
+    """Daily/hourly changeset volume, precomputed so the dashboard's unfiltered
+    view doesn't rescan the whole Changeset table on every load. Rebuilt in
+    full periodically (see changesets.rollups) rather than updated in place —
+    always correct by construction, at the cost of a small staleness window."""
+    date = models.DateField()
+    hour = models.IntegerField()
+    count = models.IntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        unique_together = [('date', 'hour')]
+
+
+class DailyBreakdown(models.Model):
+    """Per-day counts by editor/imagery/locale/contributor, precomputed for
+    the same reason as DailyVolume. Only covers the *unfiltered* dashboard
+    view — a contributor/editor/imagery filter isn't a dimension every row
+    here carries, so those queries fall back to the raw Changeset table."""
+    CATEGORY_CHOICES = [
+        ('editor', 'Editor'),
+        ('imagery', 'Imagery'),
+        ('locale', 'Locale'),
+        ('contributor', 'Contributor'),
+    ]
+    date = models.DateField()
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES)
+    name = models.CharField(max_length=255)
+    count = models.IntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        unique_together = [('date', 'category', 'name')]
+        indexes = [models.Index(fields=['category', 'name'])]

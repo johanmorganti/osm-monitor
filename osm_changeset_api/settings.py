@@ -91,8 +91,22 @@ else:
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
             'NAME': os.getenv('SQLITE_PATH', BASE_DIR / 'db.sqlite3'),
+            # The poller writes continuously while the dashboard reads; without
+            # WAL mode and a busy timeout, a request landing mid-write blocks on
+            # SQLite's file lock until it's killed by the gunicorn worker timeout.
+            'OPTIONS': {'timeout': 20},
         }
     }
+
+    from django.db.backends.signals import connection_created
+
+    def _enable_sqlite_wal(sender, connection, **kwargs):
+        if connection.vendor == 'sqlite':
+            with connection.cursor() as cursor:
+                cursor.execute('PRAGMA journal_mode=WAL;')
+                cursor.execute('PRAGMA synchronous=NORMAL;')
+
+    connection_created.connect(_enable_sqlite_wal)
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators

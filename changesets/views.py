@@ -6,12 +6,11 @@ from django.shortcuts import get_object_or_404
 from django.views.generic import TemplateView
 from django.db.models import Count, Value, CharField, Sum, Avg
 from django.db.models.functions import TruncDate, ExtractHour, Concat
-from .models import Changeset, SequenceState, ImportJob
+from .models import Changeset, SequenceState, ImportJob, DailyVolume, DailyBreakdown
 from .serializers import ChangesetSerializer
 from .osm_fetcher import fetch_and_process_changesets
-from django.core.serializers.json import DjangoJSONEncoder
-import json
 import threading
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 class ChangesetPagination(PageNumberPagination):
@@ -132,14 +131,29 @@ class ImportJobView(APIView):
         })
 
 class DashboardView(TemplateView):
+    """Thin HTML shell — no DB access. Chart data is fetched client-side from
+    DashboardDataView so the page paints almost instantly; see dashboard.js."""
     template_name = 'changesets/dashboard.html'
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        
-        # Get date range from request parameters or use defaults
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+
+class DashboardDataView(APIView):
+    """Aggregated stats behind the dashboard's charts, as a standalone JSON API
+    (same query params the dashboard UI uses: start_date, end_date, contributor,
+    editor, imagery) — usable directly, not just by the dashboard's own JS.
+
+    The unfiltered case (no contributor/editor/imagery — the common view,
+    default 7-day window included) is served from the DailyVolume/DailyBreakdown
+    rollup tables instead of scanning Changeset directly: those precompute
+    per-day counts, so a request reads a few hundred pre-aggregated rows
+    instead of hundreds of thousands of raw ones (see changesets/rollups.py).
+    The rollup tables don't carry a contributor/editor/imagery dimension, so a
+    request with any of those filters falls back to the raw Changeset query —
+    filtered results are usually a small slice of the table anyway, so that
+    path stays fast without needing a rollup per filter combination."""
+
+    def get(self, request):
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
 
         # If no dates provided, default to previous week
         if not start_date or not end_date:
@@ -147,16 +161,98 @@ class DashboardView(TemplateView):
             end_date = today.strftime('%Y-%m-%d')  # Today
             start_date = (today - timedelta(days=7)).strftime('%Y-%m-%d')  # 7 days ago (previous week)
 
-        contributor = self.request.GET.get('contributor', '')
-        editor      = self.request.GET.get('editor', '')
-        imagery     = self.request.GET.get('imagery', '')
+        contributor = request.query_params.get('contributor', '')
+        editor      = request.query_params.get('editor', '')
+        imagery     = request.query_params.get('imagery', '')
 
+        filters = {
+            'start_date': start_date, 'end_date': end_date,
+            'contributor': contributor, 'editor': editor, 'imagery': imagery,
+        }
+
+        if not (contributor or editor or imagery):
+            return Response(self._from_rollups(start_date, end_date, filters))
+        return Response(self._from_raw(start_date, end_date, contributor, editor, imagery, filters))
+
+    def _from_rollups(self, start_date, end_date, filters):
+        volume = list(
+            DailyVolume.objects.filter(date__gte=start_date, date__lte=end_date)
+            .order_by('date', 'hour')[:360]
+        )
+        daily_counts = [{'date': f'{v.date.isoformat()} {v.hour}:00', 'count': v.count} for v in volume]
+        unique_dates = [d['date'] for d in daily_counts]
+
+        total_changesets = sum(v.count for v in volume)
+        total_objects = sum(v.changes_sum for v in volume)
+        avg_objects = round(total_objects / total_changesets, 1) if total_changesets else 0
+
+        def top_with_time(category):
+            top = list(
+                DailyBreakdown.objects.filter(category=category, date__gte=start_date, date__lte=end_date)
+                .values('name').annotate(total_count=Sum('count')).order_by('-total_count')[:20]
+            )
+            names = [row['name'] for row in top]
+            if not names:
+                return [], []
+
+            rows = (
+                DailyBreakdown.objects.filter(
+                    category=category, name__in=names, date__gte=start_date, date__lte=end_date
+                ).values('date', 'name', 'count')
+            )
+            per_name_day = defaultdict(dict)
+            for r in rows:
+                per_name_day[r['name']][r['date'].isoformat()] = r['count']
+
+            top_list = [{'name': row['name'], 'count': row['total_count']} for row in top]
+            time_series = [
+                {
+                    'name': name,
+                    'counts': [per_name_day[name].get(d.split(' ')[0], 0) for d in unique_dates],
+                }
+                for name in names
+            ]
+            return top_list, time_series
+
+        top_editors, top_editors_time = top_with_time('editor')
+        top_imageries, top_imageries_time = top_with_time('imagery')
+        top_locales, top_locales_time = top_with_time('locale')
+
+        top_contributors_by_objects = list(
+            DailyBreakdown.objects.filter(category='contributor', date__gte=start_date, date__lte=end_date)
+            .values('name').annotate(total=Sum('changes_sum')).order_by('-total')[:20]
+        )
+        top_editors_by_objects = list(
+            DailyBreakdown.objects.filter(category='editor', date__gte=start_date, date__lte=end_date)
+            .values('name').annotate(total=Sum('changes_sum')).order_by('-total')[:20]
+        )
+
+        return {
+            'filters': filters,
+            'total_changesets': total_changesets,
+            'total_objects': total_objects,
+            'avg_objects': avg_objects,
+            'daily_counts': daily_counts,
+            'top_editors': top_editors,
+            'top_editors_time': {'dates': unique_dates, 'series': top_editors_time},
+            'top_imageries': top_imageries,
+            'top_imageries_time': {'dates': unique_dates, 'series': top_imageries_time},
+            'top_locales': top_locales,
+            'top_locales_time': {'dates': unique_dates, 'series': top_locales_time},
+            'top_contributors_by_objects': [{'name': r['name'], 'total': r['total']} for r in top_contributors_by_objects],
+            'top_editors_by_objects': [{'name': r['name'], 'total': r['total']} for r in top_editors_by_objects],
+        }
+
+    def _from_raw(self, start_date, end_date, contributor, editor, imagery, filters):
         # Base queryset
         changesets = Changeset.objects.all()
 
-        # Apply date filters
-        changesets = changesets.filter(created_at__gte=start_date)
-        changesets = changesets.filter(created_at__lte=end_date)
+        # Apply date filters. __date (not a plain __lte on the datetime) so
+        # end_date includes that whole day — matching the rollup path, which
+        # is naturally date-granular; a plain __lte would cut off at midnight
+        # and silently exclude nearly all of the end date.
+        changesets = changesets.filter(created_at__date__gte=start_date)
+        changesets = changesets.filter(created_at__date__lte=end_date)
 
         # Apply optional filters
         if contributor:
@@ -165,7 +261,7 @@ class DashboardView(TemplateView):
             changesets = changesets.filter(created_by_family__iexact=editor)
         if imagery:
             changesets = changesets.filter(imagery_family__iexact=imagery)
-        
+
         # ── Part 1: Changeset activity ────────────────────────────────────────
 
         daily_counts = changesets.annotate(
@@ -180,48 +276,43 @@ class DashboardView(TemplateView):
 
         unique_dates = sorted({item['date'] for item in daily_counts})
 
-        def time_series(qs_filter, field):
-            """Return [{name, counts}] aligned to unique_dates."""
-            rows = (
-                changesets.filter(**{field: qs_filter})
-                .annotate(date=TruncDate('created_at'))
-                .values('date').annotate(count=Count('id')).order_by('date')
+        def top_with_time(field):
+            """Top 20 by count, plus each one's daily series aligned to
+            unique_dates — as 2 queries total regardless of how many names
+            there are, instead of 1 per name (was up to 60 queries across the
+            three categories on top of everything else)."""
+            top = list(
+                changesets.filter(**{f'{field}__isnull': False})
+                .values(field).annotate(count=Count('id'))
+                .order_by('-count')[:20]
             )
-            date_map = {item['date'].isoformat() if hasattr(item['date'], 'isoformat') else str(item['date']): item['count'] for item in rows}
-            return [date_map.get(d.split(' ')[0] if ' ' in d else d, 0) for d in unique_dates]
+            names = [row[field] for row in top]
+            if not names:
+                return [], []
 
-        # Top 20 editors
-        top_editors = (
-            changesets.filter(created_by_family__isnull=False)
-            .values('created_by_family').annotate(count=Count('id'))
-            .order_by('-count')[:20]
-        )
-        top_editors_time = [
-            {'name': e['created_by_family'], 'counts': time_series(e['created_by_family'], 'created_by_family')}
-            for e in top_editors
-        ]
+            rows = (
+                changesets.filter(**{f'{field}__in': names})
+                .annotate(date=TruncDate('created_at'))
+                .values('date', field).annotate(count=Count('id'))
+            )
+            per_name_day = defaultdict(dict)
+            for r in rows:
+                day = r['date'].isoformat() if hasattr(r['date'], 'isoformat') else str(r['date'])
+                per_name_day[r[field]][day] = r['count']
 
-        # Top 20 imagery families
-        top_imageries = (
-            changesets.filter(imagery_family__isnull=False)
-            .values('imagery_family').annotate(count=Count('id'))
-            .order_by('-count')[:20]
-        )
-        top_imageries_time = [
-            {'name': i['imagery_family'], 'counts': time_series(i['imagery_family'], 'imagery_family')}
-            for i in top_imageries
-        ]
+            top_list = [{'name': row[field], 'count': row['count']} for row in top]
+            time_series = [
+                {
+                    'name': name,
+                    'counts': [per_name_day[name].get(d.split(' ')[0] if ' ' in d else d, 0) for d in unique_dates],
+                }
+                for name in names
+            ]
+            return top_list, time_series
 
-        # Top 20 locale families
-        top_locales = (
-            changesets.filter(locale_family__isnull=False)
-            .values('locale_family').annotate(count=Count('id'))
-            .order_by('-count')[:20]
-        )
-        top_locales_time = [
-            {'name': l['locale_family'], 'counts': time_series(l['locale_family'], 'locale_family')}
-            for l in top_locales
-        ]
+        top_editors, top_editors_time = top_with_time('created_by_family')
+        top_imageries, top_imageries_time = top_with_time('imagery_family')
+        top_locales, top_locales_time = top_with_time('locale_family')
 
         # ── Part 2: Objects changed ───────────────────────────────────────────
 
@@ -240,43 +331,23 @@ class DashboardView(TemplateView):
             .order_by('-total')[:20]
         )
 
-        # ── Serialise to context ──────────────────────────────────────────────
+        # ── Response ─────────────────────────────────────────────────────────
 
-        context['daily_counts_json'] = json.dumps(
-            [{'date': i['date'], 'count': i['count']} for i in daily_counts],
-            cls=DjangoJSONEncoder)
-        context['top_editors_json'] = json.dumps(
-            [{'editor': e['created_by_family'], 'count': e['count']} for e in top_editors],
-            cls=DjangoJSONEncoder)
-        context['top_editors_time_json'] = json.dumps(
-            {'dates': unique_dates, 'editors': top_editors_time}, cls=DjangoJSONEncoder)
-        context['top_imageries_json'] = json.dumps(
-            [{'imagery': i['imagery_family'], 'count': i['count']} for i in top_imageries],
-            cls=DjangoJSONEncoder)
-        context['top_imageries_time_json'] = json.dumps(
-            {'dates': unique_dates, 'imageries': top_imageries_time}, cls=DjangoJSONEncoder)
-        context['top_locales_json'] = json.dumps(
-            [{'locale': l['locale_family'], 'count': l['count']} for l in top_locales],
-            cls=DjangoJSONEncoder)
-        context['top_locales_time_json'] = json.dumps(
-            {'dates': unique_dates, 'locales': top_locales_time}, cls=DjangoJSONEncoder)
-        context['total_objects_json']              = json.dumps(total_objects, cls=DjangoJSONEncoder)
-        context['avg_objects_json']                = json.dumps(avg_objects, cls=DjangoJSONEncoder)
-        context['top_contributors_by_objects_json'] = json.dumps(
-            [{'user': r['user'], 'total': r['total']} for r in top_contributors_by_objects],
-            cls=DjangoJSONEncoder)
-        context['top_editors_by_objects_json'] = json.dumps(
-            [{'editor': r['created_by_family'], 'total': r['total']} for r in top_editors_by_objects],
-            cls=DjangoJSONEncoder)
-
-        context['total_changesets'] = changesets.count()
-        context['start_date'] = start_date
-        context['end_date'] = end_date
-        context['contributor'] = contributor
-        context['editor'] = editor
-        context['imagery'] = imagery
-
-        return context
+        return {
+            'filters': filters,
+            'total_changesets': changesets.count(),
+            'total_objects': total_objects,
+            'avg_objects': avg_objects,
+            'daily_counts': [{'date': i['date'], 'count': i['count']} for i in daily_counts],
+            'top_editors': top_editors,
+            'top_editors_time': {'dates': unique_dates, 'series': top_editors_time},
+            'top_imageries': top_imageries,
+            'top_imageries_time': {'dates': unique_dates, 'series': top_imageries_time},
+            'top_locales': top_locales,
+            'top_locales_time': {'dates': unique_dates, 'series': top_locales_time},
+            'top_contributors_by_objects': [{'name': r['user'], 'total': r['total']} for r in top_contributors_by_objects],
+            'top_editors_by_objects': [{'name': r['created_by_family'], 'total': r['total']} for r in top_editors_by_objects],
+        }
 
 class ImageryAuditView(APIView):
     """

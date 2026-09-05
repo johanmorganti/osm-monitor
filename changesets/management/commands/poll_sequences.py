@@ -6,6 +6,7 @@ import yaml
 from django.core.management.base import BaseCommand, CommandError
 from changesets.models import SequenceState
 from changesets.osm_fetcher import process_sequence
+from changesets.rollups import refresh_rollups
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,10 @@ class Command(BaseCommand):
             help='Max backfill sequences to process before re-checking for new live sequences (default: 1000)'
         )
         parser.add_argument(
+            '--rollup-interval', type=int, default=120,
+            help='Minimum seconds between dashboard rollup rebuilds (default: 120)'
+        )
+        parser.add_argument(
             '--reset', action='store_true',
             help='Reset live polling to start from the current latest sequence and restart the '
                  'backfill window from there, then exit without entering the poll loop. Run this '
@@ -67,12 +72,15 @@ class Command(BaseCommand):
         backfill_days = options['backfill_days']
         sequences_per_day = options['sequences_per_day']
         backfill_batch_size = options['backfill_batch_size']
+        rollup_interval = options['rollup_interval']
 
         if options['reset']:
             self._reset(start_arg, backfill_days, sequences_per_day)
             return
 
         logger.info("Starting sequence poller")
+
+        last_rollup_refresh = 0.0
 
         while True:
             try:
@@ -158,6 +166,15 @@ class Command(BaseCommand):
                     )
                     state.backfill_floor = None
                     state.save()
+
+                if time.monotonic() - last_rollup_refresh >= rollup_interval:
+                    refresh_start = time.monotonic()
+                    refresh_rollups()
+                    last_rollup_refresh = time.monotonic()
+                    logger.info(
+                        "Rollups refreshed",
+                        extra={'osm.rollup_refresh_seconds': round(last_rollup_refresh - refresh_start, 2)},
+                    )
 
                 if not did_work:
                     logger.info(

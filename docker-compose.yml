@@ -1,10 +1,26 @@
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "5007:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   web:
     build: .
     restart: unless-stopped
     env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
-      SQLITE_PATH: /data/db.sqlite3
       DD_SERVICE: osm-monitor
       DD_ENV: production
       DD_TRACE_AGENT_URL: unix:///var/run/datadog/apm.socket
@@ -14,15 +30,16 @@ services:
     ports:
       - "5006:8000"
     volumes:
-      - sqlite-data:/data
       - /var/run/datadog:/var/run/datadog:ro
 
   poller:
     build: .
     restart: unless-stopped
     env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
-      SQLITE_PATH: /data/db.sqlite3
       DD_SERVICE: osm-monitor-poller
       DD_ENV: production
       DD_TRACE_AGENT_URL: unix:///var/run/datadog/apm.socket
@@ -30,9 +47,8 @@ services:
       DD_LOGS_INJECTION: "true"
       DD_VERSION: ${GIT_VERSION:-unknown}
     volumes:
-      - sqlite-data:/data
       - /var/run/datadog:/var/run/datadog:ro
     command: python manage.py poll_sequences --interval 60
 
 volumes:
-  sqlite-data:
+  postgres-data:
