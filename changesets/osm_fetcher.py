@@ -79,12 +79,187 @@ def _process_sequence_traced(sequence_number, span):
         with open(sequence_path, 'rb') as sequence_file:
             xml_sequence = ET.fromstring(gzip.decompress(sequence_file.read()))
 
-    changeset_elements = list(xml_sequence)
+    log_extra = {'osm.sequence_number': sequence_number}
+    created_count, skipped_count, updated_count = import_changeset_batch(list(xml_sequence), log_extra)
 
-    # One query for the whole batch instead of one per changeset — the
-    # ids/deletes loop below used to hit the DB per changeset (up to ~60
-    # round-trips per sequence), which is fine on same-process SQLite but
-    # costly once the DB is a separate networked Postgres instance.
+    source = "network" if sequence_was_fetched else "cache"
+    logger.info(
+        "Processed sequence",
+        extra={
+            **log_extra,
+            'osm.source': source,
+            'osm.changesets.created': created_count,
+            'osm.changesets.skipped': skipped_count,
+            'osm.changesets.updated': updated_count,
+        },
+    )
+
+    span.set_tag("osm.source", source)
+    span.set_metric("osm.changesets.created", created_count)
+    span.set_metric("osm.changesets.skipped", skipped_count)
+    span.set_metric("osm.changesets.updated", updated_count)
+
+
+def _parse_changeset_element(changeset, log_extra):
+    """
+    Changeset overview :
+        <changeset [...] attribute_key="attribute_value" [...]>
+            [...]
+            # list of elements, in OSM there is moslty tag elements, with k/v attributes for key/values
+            <tag k="key" v="value"/>
+            [...]
+        </changeset>
+        <osm>
+        <changeset id="113928427" created_at="2021-11-18T06:17:42Z" open="false" comments_count="0" changes_count="6" closed_at="2021-11-18T06:17:44Z" min_lat="15.3384649" min_lon="-91.8697209" max_lat="15.3386183" max_lon="-91.8694203" uid="12026398" user="<redacted>">
+        <tag k="changesets_count" v="73"/>
+        [...] # More k,v tags
+        </changeset>
+        <changeset id="113928426" created_at="2021-11-18T06:17:42Z" open="false" comments_count="0" changes_count="11" closed_at="2021-11-18T06:17:43Z" min_lat="-23.6402734" min_lon="47.3068178" max_lat="-23.6387451" max_lon="47.3096663" uid="13571396" user="<redated>">
+        <tag k="changesets_count" v="2200"/>
+        [...] # More k,v tags
+        </changeset>
+        [...] # more changesets
+        </osm>
+    """
+    changeset_to_add = {}
+    changeset_to_add["tags"] = {}
+
+    for attribute, value in changeset.attrib.items():
+        if attribute in COLUMNS_MAPPING:
+            if attribute == "open":
+                value = value.lower() == 'true'
+            elif attribute in ["changes_count", "comments_count", "user_id"]:
+                value = int(value)
+            elif attribute in ["min_lat", "max_lat", "min_lon", "max_lon"]:
+                value = float(value)
+            elif attribute in ["created_at", "closed_at"]:
+                naive_datetime = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+                value = timezone.make_aware(naive_datetime, timezone.utc) # prevents from RuntimeWarning about time zone
+
+            changeset_to_add[COLUMNS_MAPPING[attribute]] = value
+        else:
+            logger.warning(
+                "Unknown changeset attribute",
+                extra={
+                    **log_extra,
+                    'osm.changeset_id': changeset.attrib["id"],
+                    'osm.attribute': attribute,
+                },
+            )
+
+    for element in changeset:
+        if 'tag' in element.tag:
+            if 'k' in element.attrib:
+                tag_key = element.attrib["k"]
+                tag_value = element.attrib["v"]
+
+                # Store in tags JSON field
+                changeset_to_add["tags"][tag_key] = tag_value
+
+                # Populate dedicated columns for common tags
+                if tag_key == 'created_by':
+                    changeset_to_add['created_by'] = tag_value
+                    # Extract family name with specific rules
+                    if tag_value:
+                        family = None
+                        # Handle special cases first
+                        if 'JOSM' in tag_value:
+                            family = 'JOSM'
+                        elif tag_value.startswith('Go Map!!'):
+                            family = 'Go Map!!'
+                        elif tag_value.startswith('OsmAnd'):
+                            family = 'OsmAnd'
+                        elif tag_value.startswith('StreetComplete'):
+                            family = 'StreetComplete'
+                        elif tag_value.startswith('Osm Go!'):
+                            family = 'Osm Go!'
+                        elif tag_value.startswith('https://'):
+                            family = tag_value
+                        else:
+                            # For other cases, take up to first space, slash, or parenthesis
+                            family = tag_value.split(' ')[0].split('/')[0].split('(')[0].strip()
+
+                            # Special case adjustments
+                            if family == 'AED':
+                                family = 'AED Map'
+                            elif family == 'Abakus':
+                                family = 'StrazakOSM'
+                            elif family == 'Every':
+                                family = 'Every Door'
+                            elif family == 'Organic':
+                                family == 'Organic Maps'
+                            elif family == 'Votre':
+                                family = 'Ubiflow'
+                            elif family == None:
+                                family = 'Other'
+
+                        changeset_to_add['created_by_family'] = family
+                    else:
+                        changeset_to_add['created_by_family'] = 'Other'
+                elif tag_key == 'comment':
+                    changeset_to_add['comment'] = tag_value
+                elif tag_key == 'locale':
+                    changeset_to_add['locale'] = tag_value
+                    if tag_value:
+                        changeset_to_add['locale_family'] = tag_value.replace('_', '-').split('-')[0].upper() or None
+                elif tag_key == 'source':
+                    changeset_to_add['source'] = tag_value
+                elif tag_key == 'imagery_used':
+                    # Split imageries into array and strip whitespace
+                    imageries = [img.strip() for img in tag_value.split(';') if img.strip()]
+                    changeset_to_add['imagery_used'] = imageries  # Store as Python list
+                    if imageries:
+                        raw = imageries[0]
+                        if raw.startswith('http'):
+                            from urllib.parse import urlparse
+                            family = urlparse(raw).netloc or raw
+                        else:
+                            family = raw.split(' ')[0].split('/')[0].split('(')[0].strip()
+                        changeset_to_add['imagery_family'] = family or None
+                elif tag_key == 'host':
+                    changeset_to_add['host'] = tag_value
+                elif tag_key == 'changesets_count':
+                    try:
+                        changeset_to_add['changesets_count'] = int(tag_value)
+                    except ValueError:
+                        changeset_to_add['changesets_count'] = None
+                elif tag_key == 'hashtags':
+                    # Split hashtags into array and remove # symbol
+                    hashtags = [tag.lstrip('#') for tag in tag_value.split(';') if tag]
+                    changeset_to_add['hashtags'] = hashtags  # Store as Python list
+                elif tag_key == 'StreetComplete:quest_type':
+                    changeset_to_add['streetcomplete_quest_type'] = tag_value
+                elif tag_key == 'review_requested':
+                    changeset_to_add['review_requested'] = tag_value.lower() == 'yes'
+                else:
+                    # Store in remaining_tags if not in dedicated columns
+                    if 'remaining_tags' not in changeset_to_add:
+                        changeset_to_add['remaining_tags'] = {}
+                    changeset_to_add['remaining_tags'][tag_key] = tag_value
+        elif 'discussion' in element.tag:
+            ## TODO : implement
+            continue
+        else:
+            logger.warning(
+                "Unexpected XML element under changeset",
+                extra={
+                    **log_extra,
+                    'osm.changeset_id': changeset.attrib["id"],
+                    'osm.element_tag': element.tag,
+                },
+            )
+
+    return changeset_to_add
+
+
+def import_changeset_batch(changeset_elements, log_extra):
+    """Batched existence-check + insert/update for a list of <changeset> XML
+    elements, from any source (a replication sequence file, or a slice of the
+    full planet changesets dump). One query for the whole batch instead of
+    one per changeset — costly once the DB is a separate networked Postgres
+    instance rather than a same-process SQLite file.
+
+    Returns (created_count, skipped_count, updated_count)."""
     existing_changes_count_by_id = dict(
         Changeset.objects.filter(
             changeset_id__in=[int(c.attrib['id']) for c in changeset_elements]
@@ -97,29 +272,6 @@ def _process_sequence_traced(sequence_number, span):
     updated_count = 0
 
     for changeset in changeset_elements:
-        """
-        Changeset overview :
-            <changeset [...] attribute_key="attribute_value" [...]>
-                [...]
-                # list of elements, in OSM there is moslty tag elements, with k/v attributes for key/values
-                <tag k="key" v="value"/>
-                [...]
-            </changeset>
-            <osm>
-            <changeset id="113928427" created_at="2021-11-18T06:17:42Z" open="false" comments_count="0" changes_count="6" closed_at="2021-11-18T06:17:44Z" min_lat="15.3384649" min_lon="-91.8697209" max_lat="15.3386183" max_lon="-91.8694203" uid="12026398" user="<redacted>">
-            <tag k="changesets_count" v="73"/>
-            [...] # More k,v tags
-            </changeset>
-            <changeset id="113928426" created_at="2021-11-18T06:17:42Z" open="false" comments_count="0" changes_count="11" closed_at="2021-11-18T06:17:43Z" min_lat="-23.6402734" min_lon="47.3068178" max_lat="-23.6387451" max_lon="47.3096663" uid="13571396" user="<redated>">
-            <tag k="changesets_count" v="2200"/>
-            [...] # More k,v tags
-            </changeset>
-            [...] # more changesets
-            </osm>
-        """
-        changeset_to_add = {}
-        changeset_to_add["tags"] = {}
-
         changeset_id = int(changeset.attrib['id'])
 
         # Check for duplicates and compare changes_count
@@ -130,7 +282,7 @@ def _process_sequence_traced(sequence_number, span):
                 logger.debug(
                     "Changeset already up to date, skipping",
                     extra={
-                        'osm.sequence_number': sequence_number,
+                        **log_extra,
                         'osm.changeset_id': changeset_id,
                         'osm.changes_count.existing': existing_changes_count,
                         'osm.changes_count.incoming': new_changes_count,
@@ -142,7 +294,7 @@ def _process_sequence_traced(sequence_number, span):
                 logger.debug(
                     "Changeset has grown, updating",
                     extra={
-                        'osm.sequence_number': sequence_number,
+                        **log_extra,
                         'osm.changeset_id': changeset_id,
                         'osm.changes_count.existing': existing_changes_count,
                         'osm.changes_count.incoming': new_changes_count,
@@ -151,133 +303,7 @@ def _process_sequence_traced(sequence_number, span):
                 changeset_ids_to_delete.append(changeset_id)  # deleted in one batch below
                 updated_count += 1
 
-        for attribute, value in changeset.attrib.items():
-            if attribute in COLUMNS_MAPPING:
-                if attribute == "open":
-                    value = value.lower() == 'true'
-                elif attribute in ["changes_count", "comments_count", "user_id"]:
-                    value = int(value)
-                elif attribute in ["min_lat", "max_lat", "min_lon", "max_lon"]:
-                    value = float(value)
-                elif attribute in ["created_at", "closed_at"]:
-                    naive_datetime = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
-                    value = timezone.make_aware(naive_datetime, timezone.utc) # prevents from RuntimeWarning about time zone
-
-                changeset_to_add[COLUMNS_MAPPING[attribute]] = value
-            else:
-                logger.warning(
-                    "Unknown changeset attribute",
-                    extra={
-                        'osm.sequence_number': sequence_number,
-                        'osm.changeset_id': changeset.attrib["id"],
-                        'osm.attribute': attribute,
-                    },
-                )
-                    
-        for element in changeset:
-            if 'tag' in element.tag:
-                if 'k' in element.attrib:
-                    tag_key = element.attrib["k"]
-                    tag_value = element.attrib["v"]
-                    
-                    # Store in tags JSON field
-                    changeset_to_add["tags"][tag_key] = tag_value
-                    
-                    # Populate dedicated columns for common tags
-                    if tag_key == 'created_by':
-                        changeset_to_add['created_by'] = tag_value
-                        # Extract family name with specific rules
-                        if tag_value:
-                            family = None
-                            # Handle special cases first
-                            if 'JOSM' in tag_value:
-                                family = 'JOSM'
-                            elif tag_value.startswith('Go Map!!'):
-                                family = 'Go Map!!'
-                            elif tag_value.startswith('OsmAnd'):
-                                family = 'OsmAnd'
-                            elif tag_value.startswith('StreetComplete'):
-                                family = 'StreetComplete'
-                            elif tag_value.startswith('Osm Go!'):
-                                family = 'Osm Go!'
-                            elif tag_value.startswith('https://'):
-                                family = tag_value
-                            else:
-                                # For other cases, take up to first space, slash, or parenthesis
-                                family = tag_value.split(' ')[0].split('/')[0].split('(')[0].strip()
-                                
-                                # Special case adjustments
-                                if family == 'AED':
-                                    family = 'AED Map'
-                                elif family == 'Abakus':
-                                    family = 'StrazakOSM'
-                                elif family == 'Every':
-                                    family = 'Every Door'
-                                elif family == 'Organic':
-                                    family == 'Organic Maps'
-                                elif family == 'Votre':
-                                    family = 'Ubiflow'
-                                elif family == None:
-                                    family = 'Other'
-                                
-                            changeset_to_add['created_by_family'] = family
-                        else:
-                            changeset_to_add['created_by_family'] = 'Other'
-                    elif tag_key == 'comment':
-                        changeset_to_add['comment'] = tag_value
-                    elif tag_key == 'locale':
-                        changeset_to_add['locale'] = tag_value
-                        if tag_value:
-                            changeset_to_add['locale_family'] = tag_value.replace('_', '-').split('-')[0].upper() or None
-                    elif tag_key == 'source':
-                        changeset_to_add['source'] = tag_value
-                    elif tag_key == 'imagery_used':
-                        # Split imageries into array and strip whitespace
-                        imageries = [img.strip() for img in tag_value.split(';') if img.strip()]
-                        changeset_to_add['imagery_used'] = imageries  # Store as Python list
-                        if imageries:
-                            raw = imageries[0]
-                            if raw.startswith('http'):
-                                from urllib.parse import urlparse
-                                family = urlparse(raw).netloc or raw
-                            else:
-                                family = raw.split(' ')[0].split('/')[0].split('(')[0].strip()
-                            changeset_to_add['imagery_family'] = family or None
-                    elif tag_key == 'host':
-                        changeset_to_add['host'] = tag_value
-                    elif tag_key == 'changesets_count':
-                        try:
-                            changeset_to_add['changesets_count'] = int(tag_value)
-                        except ValueError:
-                            changeset_to_add['changesets_count'] = None
-                    elif tag_key == 'hashtags':
-                        # Split hashtags into array and remove # symbol
-                        hashtags = [tag.lstrip('#') for tag in tag_value.split(';') if tag]
-                        changeset_to_add['hashtags'] = hashtags  # Store as Python list
-                    elif tag_key == 'StreetComplete:quest_type':
-                        changeset_to_add['streetcomplete_quest_type'] = tag_value
-                    elif tag_key == 'review_requested':
-                        changeset_to_add['review_requested'] = tag_value.lower() == 'yes'
-                    else:
-                        # Store in remaining_tags if not in dedicated columns
-                        if 'remaining_tags' not in changeset_to_add:
-                            changeset_to_add['remaining_tags'] = {}
-                        changeset_to_add['remaining_tags'][tag_key] = tag_value
-            elif 'discussion' in element.tag:
-                ## TODO : implement
-                continue
-            else:
-                logger.warning(
-                    "Unexpected XML element under changeset",
-                    extra={
-                        'osm.sequence_number': sequence_number,
-                        'osm.changeset_id': changeset.attrib["id"],
-                        'osm.element_tag': element.tag,
-                    },
-                )
-
-        # No need to convert to JSON string - Django's JSONField handles that
-        changesets_to_create.append(changeset_to_add)
+        changesets_to_create.append(_parse_changeset_element(changeset, log_extra))
 
     if changeset_ids_to_delete:
         Changeset.objects.filter(changeset_id__in=changeset_ids_to_delete).delete()
@@ -291,7 +317,7 @@ def _process_sequence_traced(sequence_number, span):
         except Exception:
             logger.exception(
                 "Bulk creation failed, falling back to individual creation",
-                extra={'osm.sequence_number': sequence_number},
+                extra=log_extra,
             )
             # Fallback to individual creation if bulk create fails
             for changeset in changesets_to_create:
@@ -300,28 +326,10 @@ def _process_sequence_traced(sequence_number, span):
                 except Exception:
                     logger.exception(
                         "Error creating changeset",
-                        extra={
-                            'osm.sequence_number': sequence_number,
-                            'osm.changeset_id': changeset.get('changeset_id'),
-                        },
+                        extra={**log_extra, 'osm.changeset_id': changeset.get('changeset_id')},
                     )
 
-    source = "network" if sequence_was_fetched else "cache"
-    logger.info(
-        "Processed sequence",
-        extra={
-            'osm.sequence_number': sequence_number,
-            'osm.source': source,
-            'osm.changesets.created': len(changesets_to_create),
-            'osm.changesets.skipped': skipped_count,
-            'osm.changesets.updated': updated_count,
-        },
-    )
-
-    span.set_tag("osm.source", source)
-    span.set_metric("osm.changesets.created", len(changesets_to_create))
-    span.set_metric("osm.changesets.skipped", skipped_count)
-    span.set_metric("osm.changesets.updated", updated_count)
+    return len(changesets_to_create), skipped_count, updated_count
 
 
 def fetch_and_process_changesets(seq_start, seq_end, on_progress=None):
