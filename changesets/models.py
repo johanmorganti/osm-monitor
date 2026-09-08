@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models.functions import Upper
 import json
 
 class SequenceState(models.Model):
@@ -102,6 +103,19 @@ class Changeset(models.Model):
     def tags_dict(self):
         """Returns a dictionary of all tags"""
         return self.tags or {}
+
+    class Meta:
+        app_label = 'changesets'
+        # The dashboard's contributor/editor/imagery filters use __iexact,
+        # which Postgres implements as UPPER(col) = UPPER(val) — without a
+        # matching expression index that forces a sequential scan even when
+        # the date range is also filtered, since a date range spanning most
+        # of the table's history isn't selective enough on its own.
+        indexes = [
+            models.Index(Upper('user'), name='changeset_user_upper_idx'),
+            models.Index(Upper('created_by_family'), name='changeset_editor_upper_idx'),
+            models.Index(Upper('imagery_family'), name='changeset_imagery_upper_idx'),
+        ]
 
 
 class DailyVolume(models.Model):

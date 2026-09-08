@@ -178,9 +178,9 @@ function showError(err) {
 
 // ── Load ─────────────────────────────────────────────────────────────────────
 // The page shell renders instantly with empty charts; this fetch (against the
-// standalone /api/dashboard/ endpoint) is what actually populates them.
+// standalone /api/changesets/stats/ endpoint) is what actually populates them.
 
-fetch(`/api/dashboard/${window.location.search}`)
+fetch(`/api/changesets/stats/${window.location.search}`)
     .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();

@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.views.generic import TemplateView
 from django.db.models import Count, Value, CharField, Sum, Avg
 from django.db.models.functions import TruncDate, ExtractHour, Concat
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, OpenApiTypes
 from .models import Changeset, SequenceState, ImportJob, DailyVolume, DailyBreakdown
 from .serializers import ChangesetSerializer
 from .osm_fetcher import fetch_and_process_changesets
@@ -20,6 +21,31 @@ class ChangesetPagination(PageNumberPagination):
 
 
 class ChangesetQueryView(APIView):
+    """Paginated list of raw changeset records, newest first."""
+
+    # Not used for actual pagination (that's done manually below with the
+    # same class) — set here so drf-spectacular knows to document the
+    # paginated envelope shape (count/next/previous/results).
+    pagination_class = ChangesetPagination
+
+    @extend_schema(
+        tags=['changesets'],
+        summary='List changesets',
+        description='Paginated list of ingested changeset records, newest first, with optional filters.',
+        parameters=[
+            OpenApiParameter('start_date', OpenApiTypes.DATE, description='Only changesets created on/after this date (YYYY-MM-DD).'),
+            OpenApiParameter('end_date', OpenApiTypes.DATE, description='Only changesets created on/before this date (YYYY-MM-DD), inclusive of the whole day.'),
+            OpenApiParameter('user', OpenApiTypes.STR, description='Exact OSM username.'),
+            OpenApiParameter('editor', OpenApiTypes.STR, description='Exact editor family (e.g. "StreetComplete", "iD").'),
+            OpenApiParameter('hashtag', OpenApiTypes.STR, description='Hashtag the changeset must include (from its #hashtags tag).'),
+            OpenApiParameter('imagery_raw', OpenApiTypes.STR, description='Exact raw imagery string as found in the changeset\'s imagery_used tag.'),
+            OpenApiParameter('imagery_family', OpenApiTypes.STR, description='Normalised imagery family (case-insensitive), e.g. "Bing".'),
+            OpenApiParameter('bbox', OpenApiTypes.STR, description='Bounding box filter as "min_lon,min_lat,max_lon,max_lat".'),
+            OpenApiParameter('page', OpenApiTypes.INT, description='Page number.'),
+            OpenApiParameter('page_size', OpenApiTypes.INT, description='Results per page (default 100, max 1000).'),
+        ],
+        responses=ChangesetSerializer(many=True),
+    )
     def get(self, request):
         qs = Changeset.objects.order_by('-created_at')
 
@@ -65,6 +91,12 @@ class ChangesetQueryView(APIView):
 
 
 class ChangesetDetailView(APIView):
+    @extend_schema(
+        tags=['changesets'],
+        summary='Get one changeset',
+        description='A single changeset record by its OSM changeset ID.',
+        responses=ChangesetSerializer,
+    )
     def get(self, request, changeset_id):
         changeset = get_object_or_404(Changeset, changeset_id=changeset_id)
         serializer = ChangesetSerializer(changeset)
@@ -91,7 +123,24 @@ def _run_import_job(job_id, seq_start, seq_end):
 
 
 class ChangesetListView(APIView):
+    """Kicks off a one-shot background import of a replication sequence
+    range and returns a job to poll via ImportJobView — not itself the
+    changeset data. See poll_sequences (manage.py) for continuous ingestion."""
 
+    @extend_schema(
+        tags=['import'],
+        summary='Import a sequence range',
+        description=(
+            'Starts a background import of OSM replication sequences seq_start..seq_end '
+            '(inclusive), capped at 10000 sequences per call. Returns a job to poll via '
+            'GET /api/import-job/{job_id}/.'
+        ),
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Job started', value={'job_id': 42, 'seq_start': 1000, 'seq_end': 1010, 'total': 11},
+            response_only=True,
+        )],
+    )
     def get(self, request, seq_start, seq_end):
         seq_start = int(seq_start)
         seq_end = int(seq_end)
@@ -113,7 +162,20 @@ class ChangesetListView(APIView):
 
 
 class ImportJobView(APIView):
-
+    @extend_schema(
+        tags=['import'],
+        summary='Import job status',
+        description='Progress of a background sequence-range import started via GET /api/sequence/{seq_start}/{seq_end}/.',
+        responses={200: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'In progress',
+            value={
+                'job_id': 42, 'status': 'running', 'seq_start': 1000, 'seq_end': 1010,
+                'current_seq': 1004, 'total': 11, 'done': 5, 'pct': 45.5, 'error': None,
+            },
+            response_only=True,
+        )],
+    )
     def get(self, request, job_id):
         job = ImportJob.objects.filter(id=job_id).first()
         if job is None:
@@ -132,11 +194,11 @@ class ImportJobView(APIView):
 
 class DashboardView(TemplateView):
     """Thin HTML shell — no DB access. Chart data is fetched client-side from
-    DashboardDataView so the page paints almost instantly; see dashboard.js."""
+    ChangesetStatsView so the page paints almost instantly; see dashboard.js."""
     template_name = 'changesets/dashboard.html'
 
 
-class DashboardDataView(APIView):
+class ChangesetStatsView(APIView):
     """Aggregated stats behind the dashboard's charts, as a standalone JSON API
     (same query params the dashboard UI uses: start_date, end_date, contributor,
     editor, imagery) — usable directly, not just by the dashboard's own JS.
@@ -151,6 +213,39 @@ class DashboardDataView(APIView):
     filtered results are usually a small slice of the table anyway, so that
     path stays fast without needing a rollup per filter combination."""
 
+    @extend_schema(
+        tags=['changesets'],
+        summary='Aggregated changeset stats',
+        description=(
+            'Daily volume, top editors/imageries/locales/contributors, and object-change '
+            'totals over a date range. Defaults to the last 7 days if no dates are given.'
+        ),
+        parameters=[
+            OpenApiParameter('start_date', OpenApiTypes.DATE, description='Range start (YYYY-MM-DD). Defaults to 7 days before end_date.'),
+            OpenApiParameter('end_date', OpenApiTypes.DATE, description='Range end (YYYY-MM-DD), inclusive. Defaults to today.'),
+            OpenApiParameter('contributor', OpenApiTypes.STR, description='Restrict to one OSM username (case-insensitive).'),
+            OpenApiParameter('editor', OpenApiTypes.STR, description='Restrict to one editor family (case-insensitive).'),
+            OpenApiParameter('imagery', OpenApiTypes.STR, description='Restrict to one imagery family (case-insensitive).'),
+        ],
+        responses={200: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Unfiltered week',
+            value={
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': ''},
+                'total_changesets': 350000, 'total_objects': 12500000, 'avg_objects': 35.7,
+                'daily_counts': [{'date': '2026-09-01 0:00', 'count': 2100}],
+                'top_editors': [{'name': 'iD', 'count': 180000}],
+                'top_editors_time': {'dates': ['2026-09-01 0:00'], 'series': [{'name': 'iD', 'counts': [1200]}]},
+                'top_imageries': [{'name': 'Bing', 'count': 90000}],
+                'top_imageries_time': {'dates': ['2026-09-01 0:00'], 'series': [{'name': 'Bing', 'counts': [600]}]},
+                'top_locales': [{'name': 'EN', 'count': 200000}],
+                'top_locales_time': {'dates': ['2026-09-01 0:00'], 'series': [{'name': 'EN', 'counts': [1400]}]},
+                'top_contributors_by_objects': [{'name': 'someuser', 'total': 50000}],
+                'top_editors_by_objects': [{'name': 'iD', 'total': 6000000}],
+            },
+            response_only=True,
+        )],
+    )
     def get(self, request):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
@@ -247,12 +342,13 @@ class DashboardDataView(APIView):
         # Base queryset
         changesets = Changeset.objects.all()
 
-        # Apply date filters. __date (not a plain __lte on the datetime) so
-        # end_date includes that whole day — matching the rollup path, which
-        # is naturally date-granular; a plain __lte would cut off at midnight
-        # and silently exclude nearly all of the end date.
-        changesets = changesets.filter(created_at__date__gte=start_date)
-        changesets = changesets.filter(created_at__date__lte=end_date)
+        # Half-open range on the raw datetime (not created_at__date) so the
+        # created_at index can be used directly — created_at__date forces a
+        # sequential scan since it's a function of the column, not the column
+        # itself. end_date_exclusive makes end_date inclusive of its whole day.
+        end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+        changesets = changesets.filter(created_at__gte=start_date)
+        changesets = changesets.filter(created_at__lt=end_date_exclusive)
 
         # Apply optional filters
         if contributor:
@@ -355,12 +451,30 @@ class ImageryAuditView(APIView):
     grouped by family with up to 5 raw sample values each.
     Useful for auditing the family normalisation logic.
     """
+    @extend_schema(
+        tags=['audit'],
+        summary='Imagery family audit',
+        description='Raw imagery_used values grouped by their normalised imagery_family, with sample raw values per family — useful for auditing the normalisation logic.',
+        responses={200: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Sample',
+            value=[{'family': 'Bing', 'total': 90000, 'samples': [{'raw': 'Bing aerial imagery', 'count': 85000}]}],
+            response_only=True,
+        )],
+    )
     def get(self, request):
         from django.db import connection
+        # imagery_used is a JSON array (e.g. ["Bing", "Mapbox"]) — extracting its
+        # first element is backend-specific: Postgres uses jsonb's ->> operator,
+        # SQLite (dev fallback, see settings.py) uses json_extract.
+        if connection.vendor == 'postgresql':
+            raw_first_expr = "imagery_used->>0"
+        else:
+            raw_first_expr = "json_extract(imagery_used, '$[0]')"
         with connection.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT imagery_family,
-                       json_extract(imagery_used, '$[0]') AS raw_first,
+                       {raw_first_expr} AS raw_first,
                        COUNT(*) AS cnt
                 FROM changesets_changeset
                 WHERE imagery_family IS NOT NULL
@@ -383,6 +497,20 @@ class ImageryAuditView(APIView):
 
 
 class BatchProgressView(APIView):
+    @extend_schema(
+        tags=['import'],
+        summary='Live-poll batch progress',
+        description='Progress of the poller\'s current catch-up batch (the live-sequence range it\'s working through), not the historical backfill.',
+        responses={200: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Running', value={
+                'running': True, 'last_sequence': 7172968, 'batch_start': 7172365,
+                'batch_target': 7172980, 'done': 603, 'total': 615, 'pct': 98.0,
+                'updated_at': '2026-09-08T02:54:10Z',
+            },
+            response_only=True,
+        )],
+    )
     def get(self, request):
         state = SequenceState.objects.first()
         if state is None:
@@ -419,6 +547,17 @@ class AutocompleteView(APIView):
         'imagery':     ('imagery_family', 'imagery_family__icontains'),
     }
 
+    @extend_schema(
+        tags=['changesets'],
+        summary='Autocomplete filter values',
+        description='Up to 10 distinct existing values for a filter field, matching a partial query — backs the dashboard\'s filter inputs.',
+        parameters=[
+            OpenApiParameter('field', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery.'),
+            OpenApiParameter('q', OpenApiTypes.STR, description='Partial value to match (case-insensitive, substring).'),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample('Sample', value=['StreetComplete', 'StreetComplete GO'], response_only=True)],
+    )
     def get(self, request):
         field = request.query_params.get('field', '')
         q = request.query_params.get('q', '')
@@ -452,4 +591,4 @@ from django.http import HttpResponseRedirect
 from django.urls import reverse
 
 def redirect_to_landing_page(request):
-    return HttpResponseRedirect(reverse('api-landing-page'))
+    return HttpResponseRedirect(reverse('changeset-import'))

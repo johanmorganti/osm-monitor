@@ -9,32 +9,38 @@ database, and serves a Chart.js dashboard plus a REST API.
 
 Key entry points:
 - `/` → `DashboardView` (Chart.js dashboard)
-- `/api/changesets/` → `ChangesetQueryView` (filterable REST API)
+- `/api/changesets/` → `ChangesetQueryView` (filterable REST API, raw changeset records)
+- `/api/changesets/stats/` → `ChangesetStatsView` (aggregated stats behind the dashboard's charts)
 - `/api/sequence/<start>/<end>/` → `ChangesetListView` (one-shot import)
+- `/api/docs/` → Swagger UI (drf-spectacular) for the public API, `/api/schema/` for the raw OpenAPI schema
 - `/changeset_import/` → `APILandingPageView` (import helper UI)
 - `manage.py poll_sequences` → continuous background poller
 
 ## Architecture decisions
 
-### Template / JS separation (2026-03-20)
-`dashboard.html` is a thin HTML shell only. All Chart.js initialisation lives in
-`static/js/dashboard.js`.
+### Template / JS separation, async data fetch
+`dashboard.html` is a thin HTML shell only (no server-rendered chart data) — it renders
+instantly and reads only `{{ request.GET.xxx }}` for filter-input defaults. All Chart.js
+initialisation lives in `static/js/dashboard.js`.
 
-**Contract:** the template sets `window.dashboardData = { ... }` using Django context variables
-serialised with `json.dumps(..., cls=DjangoJSONEncoder)` and emitted with `{{ ...|safe }}`.
-`dashboard.js` reads from that global — it never contains Django template syntax.
+**Contract:** `dashboard.js` calls `fetch('/api/changesets/stats/' + window.location.search)`
+client-side and renders the JSON response into the KPI numbers and charts. That endpoint is a
+standalone, public JSON API (same query params the dashboard UI uses: `start_date`, `end_date`,
+`contributor`, `editor`, `imagery`) — usable directly by anyone, not just the dashboard's own JS.
+`DashboardView` itself is a bare `TemplateView` with no `get_context_data` — it does no DB access.
 
-**Why:** when the whole chart code lived inline in the template, any edit caused Claude to
-rewrite the entire 335-line file and risk breaking layout or charts. The split means:
+**Why:** when the whole chart code lived inline in the template with server-rendered
+`window.dashboardData`, any edit caused Claude to rewrite the entire file and risk breaking
+layout or charts, and the data was only reachable by loading the HTML page. The split means:
 - Chart logic changes → edit `static/js/dashboard.js` only
 - HTML/layout changes → edit `dashboard.html` only
 - Backend/data changes → edit `views.py` only
+- The aggregated data itself is a real API endpoint other tools can call directly
 
-### Data serialisation
-`DashboardView.get_context_data` builds Python lists/dicts, serialises them with
-`json.dumps(..., cls=DjangoJSONEncoder)`, and puts the resulting JSON strings in context.
-The template emits them raw with `|safe` (no extra `JSON.parse` needed in JS — the values are
-already valid JS literals).
+### Public API + docs
+All DRF views carry `@extend_schema` annotations (drf-spectacular) so `/api/docs/` stays
+accurate as new endpoints/params are added — update the annotation in `views.py` alongside any
+signature change, don't just rely on the docstring.
 
 ### imagery_used stored as JSON array
 `Changeset.imagery_used` is a `JSONField` holding a list of strings (e.g. `["Bing", "Mapbox"]`).
