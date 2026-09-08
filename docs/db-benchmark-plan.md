@@ -5,7 +5,8 @@
 `osm-monitor` (this repo) ingests OSM changeset data into a single `changesets_changeset`
 table. Today it holds ~23M rows (the past year only); the eventual goal is full 2005-present
 history (~190M+ rows). Almost all real query traffic is time-filtered (see `changesets/views.py`:
-`ChangesetQueryView` defaults to a 24h window, `ChangesetStatsView` to 7 days) — see `TODO.md`'s
+`ChangesetQueryView` defaults to a 24h window, `TimeseriesView`/`SummaryView`/`ToplistView` to 7
+days) — see `TODO.md`'s
 "Table partitioning / TimescaleDB" entry for the full reasoning.
 
 **Goal of this benchmark:** decide, before doing the real migration, whether to (a) monthly
@@ -78,13 +79,13 @@ WHERE created_at >= :start AND created_at < :end
   AND UPPER(created_by_family) = UPPER(:editor)
 ORDER BY created_at DESC LIMIT 100;
 
--- ChangesetStatsView._from_raw: daily/hourly volume over a range
+-- TimeseriesView: daily/hourly volume over a range
 SELECT created_at::date, EXTRACT(HOUR FROM created_at)::int, COUNT(*), SUM(changes_count)
 FROM changesets_changeset
 WHERE created_at >= :start AND created_at < :end
 GROUP BY 1, 2;
 
--- ChangesetStatsView._from_raw: top-20 editors over a range
+-- ToplistView: top editors over a range
 SELECT created_by_family, COUNT(*) FROM changesets_changeset
 WHERE created_at >= :start AND created_at < :end AND created_by_family IS NOT NULL
 GROUP BY 1 ORDER BY 2 DESC LIMIT 20;

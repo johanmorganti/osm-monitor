@@ -12,7 +12,9 @@ database, and serves a Chart.js dashboard plus a REST API.
 Key entry points:
 - `/` → `DashboardView` (Chart.js dashboard)
 - `/api/changesets/` → `ChangesetQueryView` (filterable REST API, raw changeset records)
-- `/api/changesets/stats/` → `ChangesetStatsView` (aggregated stats behind the dashboard's charts)
+- `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped)
+- `/api/changesets/summary/` → `SummaryView` (total_changesets/total_objects/avg_objects)
+- `/api/changesets/toplist/` → `ToplistView` (top 20 by dimension × metric)
 - `/api/sequence/<start>/<end>/` → `ChangesetListView` (one-shot import)
 - `/api/docs/` → Swagger UI (drf-spectacular) for the public API, `/api/schema/` for the raw OpenAPI schema
 - `/changeset_import/` → `APILandingPageView` (import helper UI)
@@ -25,11 +27,13 @@ Key entry points:
 instantly and reads only `{{ request.GET.xxx }}` for filter-input defaults. All Chart.js
 initialisation lives in `static/js/dashboard.js`.
 
-**Contract:** `dashboard.js` calls `fetch('/api/changesets/stats/' + window.location.search)`
-client-side and renders the JSON response into the KPI numbers and charts. That endpoint is a
-standalone, public JSON API (same query params the dashboard UI uses: `start_date`, `end_date`,
-`contributor`, `editor`, `imagery`) — usable directly by anyone, not just the dashboard's own JS.
-`DashboardView` itself is a bare `TemplateView` with no `get_context_data` — it does no DB access.
+**Contract:** `dashboard.js` fetches from `/api/changesets/timeseries/`, `/summary/`, and
+`/toplist/` (in parallel, several calls — one per chart/KPI group; see the file's `Promise.all`)
+and renders the JSON responses into the KPI numbers and charts. Those endpoints are standalone,
+public JSON APIs (same query params the dashboard UI uses: `start_date`, `end_date`,
+`contributor`, `editor`, `imagery`, plus `group_by`/`dimension`/`metric` depending on the
+endpoint) — usable directly by anyone, not just the dashboard's own JS. `DashboardView` itself is
+a bare `TemplateView` with no `get_context_data` — it does no DB access.
 
 **Why:** when the whole chart code lived inline in the template with server-rendered
 `window.dashboardData`, any edit caused Claude to rewrite the entire file and risk breaking
@@ -38,6 +42,22 @@ layout or charts, and the data was only reachable by loading the HTML page. The 
 - HTML/layout changes → edit `dashboard.html` only
 - Backend/data changes → edit `views.py` only
 - The aggregated data itself is a real API endpoint other tools can call directly
+
+### Stats split into timeseries/summary/toplist, not one bundled endpoint
+`TimeseriesView`/`SummaryView`/`ToplistView` replaced a single `ChangesetStatsView` that returned
+everything (daily counts, every top-N breakdown, object totals) in one bundled response. Split by
+resource *shape* (analogous to Datadog's widget types), not by business concept: `timeseries`
+handles anything date-bucketed (plain volume via `group_by=none`, or per-name series via
+`group_by=editor|imagery|locale|contributor`), `toplist` handles any ranked list
+(`dimension` × `metric=count|objects`), `summary` is the handful of single-number KPIs. This
+means a `contributor`×`count` or `locale`×`objects` toplist — combinations the old bundled
+endpoint never exposed — are just other parameter values on the same endpoint, not new code.
+Shared filter-resolution/queryset logic lives in module-level helpers in `views.py`
+(`_resolve_range_and_filters`, `_filtered_changesets`, `DIMENSION_FIELDS`) rather than being
+duplicated per view. Trade-off: the dashboard now makes ~10 parallel requests to render instead
+of 1 — acceptable since they're fetched concurrently (bounded by the slowest, not the sum) and
+each is now independently small/cacheable, but a real cost avoided if the "aggregate everything"
+endpoint had stayed.
 
 ### Public API + docs
 All DRF views carry `@extend_schema` annotations (drf-spectacular) so `/api/docs/` stays
@@ -80,6 +100,6 @@ over periodic full-table rebuilds.
 
 - Static files in `DEBUG` mode are served by Django via `django.conf.urls.static`.
 - Initial sequence on first poller run: pass `--start <seq>` or set `INITIAL_SEQUENCE` env var.
-- `ChangesetStatsView` (aggregated stats) defaults to the last 7 days when no date params are
-  given; `ChangesetQueryView` (raw record list) defaults to the last 24 hours — it has no
-  unfiltered "everything" mode, see its docstring in `views.py`.
+- `TimeseriesView`/`SummaryView`/`ToplistView` (aggregated stats) default to the last 7 days when
+  no date params are given; `ChangesetQueryView` (raw record list) defaults to the last 24 hours
+  — it has no unfiltered "everything" mode, see its docstring in `views.py`.

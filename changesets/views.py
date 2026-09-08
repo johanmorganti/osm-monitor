@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.views.generic import TemplateView
-from django.db.models import Count, Value, CharField, Sum, Avg
+from django.db.models import Count, Value, CharField, Sum
 from django.db.models.functions import TruncDate, ExtractHour, Concat
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, OpenApiTypes
@@ -29,8 +29,9 @@ class ChangesetQueryView(APIView):
     isn't offered: with tens of millions of rows, both the full scan to
     build a page and the COUNT(*) DRF's pagination needs for it are
     prohibitively expensive, and nobody actually wants to page through all
-    of OSM history 100 rows at a time anyway. Use ChangesetStatsView for
-    aggregate questions over a large range instead of pulling raw rows."""
+    of OSM history 100 rows at a time anyway. Use TimeseriesView/SummaryView/
+    ToplistView for aggregate questions over a large range instead of
+    pulling raw rows."""
 
     # Not used for actual pagination (that's done manually below with the
     # same class) — set here so drf-spectacular knows to document the
@@ -43,8 +44,8 @@ class ChangesetQueryView(APIView):
         description=(
             'Paginated list of ingested changeset records, newest first, with optional filters. '
             'Always bounded by a date range — defaults to the last 24 hours if start_date/end_date '
-            'are omitted (there\'s no unfiltered "everything" mode; use /api/changesets/stats/ for '
-            'aggregate questions over a large range).'
+            'are omitted (there\'s no unfiltered "everything" mode; use /api/changesets/timeseries/, '
+            '/summary/, or /toplist/ for aggregate questions over a large range).'
         ),
         parameters=[
             OpenApiParameter('start_date', OpenApiTypes.DATE, description='Only changesets created on/after this date (YYYY-MM-DD). Defaults to 24 hours before now.'),
@@ -211,256 +212,304 @@ class ImportJobView(APIView):
 
 class DashboardView(TemplateView):
     """Thin HTML shell — no DB access. Chart data is fetched client-side from
-    ChangesetStatsView so the page paints almost instantly; see dashboard.js."""
+    TimeseriesView/SummaryView/ToplistView so the page paints almost
+    instantly; see dashboard.js."""
     template_name = 'changesets/dashboard.html'
 
 
-class ChangesetStatsView(APIView):
-    """Aggregated stats behind the dashboard's charts, as a standalone JSON API
-    (same query params the dashboard UI uses: start_date, end_date, contributor,
-    editor, imagery) — usable directly, not just by the dashboard's own JS.
+# Dimension name (as used in the public API and in DailyBreakdown.category)
+# -> the raw Changeset field it corresponds to. Shared by TimeseriesView's
+# group_by and ToplistView's dimension.
+DIMENSION_FIELDS = {
+    'contributor': 'user',
+    'editor': 'created_by_family',
+    'imagery': 'imagery_family',
+    'locale': 'locale_family',
+}
 
-    The unfiltered case (no contributor/editor/imagery — the common view,
-    default 7-day window included) is served from the DailyVolume/DailyBreakdown
-    rollup tables instead of scanning Changeset directly: those precompute
-    per-day counts, so a request reads a few hundred pre-aggregated rows
-    instead of hundreds of thousands of raw ones (see changesets/rollups.py).
-    The rollup tables don't carry a contributor/editor/imagery dimension, so a
-    request with any of those filters falls back to the raw Changeset query —
-    filtered results are usually a small slice of the table anyway, so that
-    path stays fast without needing a rollup per filter combination."""
+
+def _resolve_range_and_filters(request):
+    """start_date/end_date/contributor/editor/imagery, shared by
+    TimeseriesView, SummaryView, and ToplistView — same query params,
+    same "defaults to last 7 days" behaviour, across all three."""
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
+    if not start_date or not end_date:
+        today = datetime.now().date()
+        end_date = today.strftime('%Y-%m-%d')
+        start_date = (today - timedelta(days=7)).strftime('%Y-%m-%d')
+
+    contributor = request.query_params.get('contributor', '')
+    editor = request.query_params.get('editor', '')
+    imagery = request.query_params.get('imagery', '')
+    filters = {
+        'start_date': start_date, 'end_date': end_date,
+        'contributor': contributor, 'editor': editor, 'imagery': imagery,
+    }
+    return start_date, end_date, contributor, editor, imagery, filters
+
+
+def _filtered_changesets(start_date, end_date, contributor, editor, imagery):
+    """Base queryset for the raw (filtered) path all three views fall back
+    to when a contributor/editor/imagery filter is given — the rollup
+    tables don't carry those dimensions. Half-open range on the raw
+    datetime (not created_at__date) so the created_at index can be used
+    directly — created_at__date forces a sequential scan since it's a
+    function of the column, not the column itself."""
+    changesets = Changeset.objects.all()
+    end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+    changesets = changesets.filter(created_at__gte=start_date, created_at__lt=end_date_exclusive)
+    if contributor:
+        changesets = changesets.filter(user__iexact=contributor)
+    if editor:
+        changesets = changesets.filter(created_by_family__iexact=editor)
+    if imagery:
+        changesets = changesets.filter(imagery_family__iexact=imagery)
+    return changesets
+
+
+_FILTER_PARAMS = [
+    OpenApiParameter('start_date', OpenApiTypes.DATE, description='Range start (YYYY-MM-DD). Defaults to 7 days before end_date.'),
+    OpenApiParameter('end_date', OpenApiTypes.DATE, description='Range end (YYYY-MM-DD), inclusive. Defaults to today.'),
+    OpenApiParameter('contributor', OpenApiTypes.STR, description='Restrict to one OSM username (case-insensitive).'),
+    OpenApiParameter('editor', OpenApiTypes.STR, description='Restrict to one editor family (case-insensitive).'),
+    OpenApiParameter('imagery', OpenApiTypes.STR, description='Restrict to one imagery family (case-insensitive).'),
+]
+
+
+class TimeseriesView(APIView):
+    """Changeset volume over time. Without group_by: plain hourly volume.
+    With group_by: daily volume split into up to 20 series — the top names
+    by total count over the range (the rollup/raw split below can't offer
+    hourly granularity once grouped, since DailyBreakdown only has a daily
+    grain — there's no hourly equivalent to fall back to).
+
+    Backed by the DailyVolume/DailyBreakdown rollup tables when unfiltered;
+    a contributor/editor/imagery filter falls back to the raw Changeset
+    table, since the rollups don't carry those dimensions (see
+    changesets/rollups.py)."""
 
     @extend_schema(
         tags=['changesets'],
-        summary='Aggregated changeset stats',
+        summary='Changeset volume over time',
         description=(
-            'Daily volume, top editors/imageries/locales/contributors, and object-change '
-            'totals over a date range. Defaults to the last 7 days if no dates are given.'
+            'Time series of changeset volume. Without group_by: hourly, unfiltered range. '
+            'With group_by: daily, split into up to 20 series (the top names by total count '
+            'over the range). Defaults to the last 7 days if no dates are given.'
         ),
-        parameters=[
-            OpenApiParameter('start_date', OpenApiTypes.DATE, description='Range start (YYYY-MM-DD). Defaults to 7 days before end_date.'),
-            OpenApiParameter('end_date', OpenApiTypes.DATE, description='Range end (YYYY-MM-DD), inclusive. Defaults to today.'),
-            OpenApiParameter('contributor', OpenApiTypes.STR, description='Restrict to one OSM username (case-insensitive).'),
-            OpenApiParameter('editor', OpenApiTypes.STR, description='Restrict to one editor family (case-insensitive).'),
-            OpenApiParameter('imagery', OpenApiTypes.STR, description='Restrict to one imagery family (case-insensitive).'),
+        parameters=_FILTER_PARAMS + [
+            OpenApiParameter('group_by', OpenApiTypes.STR, description='Split into per-name series: contributor, editor, imagery, or locale. Omit for plain hourly volume.'),
         ],
-        responses={200: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
         examples=[OpenApiExample(
-            'Unfiltered week',
+            'Plain hourly volume',
             value={
-                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': ''},
-                'total_changesets': 350000, 'total_objects': 12500000, 'avg_objects': 35.7,
-                'daily_counts': [{'date': '2026-09-01 0:00', 'count': 2100}],
-                'top_editors': [{'name': 'iD', 'count': 180000}],
-                'top_editors_time': {'dates': ['2026-09-01 0:00'], 'series': [{'name': 'iD', 'counts': [1200]}]},
-                'top_imageries': [{'name': 'Bing', 'count': 90000}],
-                'top_imageries_time': {'dates': ['2026-09-01 0:00'], 'series': [{'name': 'Bing', 'counts': [600]}]},
-                'top_locales': [{'name': 'EN', 'count': 200000}],
-                'top_locales_time': {'dates': ['2026-09-01 0:00'], 'series': [{'name': 'EN', 'counts': [1400]}]},
-                'top_contributors_by_objects': [{'name': 'someuser', 'total': 50000}],
-                'top_editors_by_objects': [{'name': 'iD', 'total': 6000000}],
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'group_by': None},
+                'dates': ['2026-09-01 0:00'], 'series': [{'name': 'changesets', 'counts': [2100]}],
             },
             response_only=True,
         )],
     )
     def get(self, request):
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
+        group_by = request.query_params.get('group_by') or None
+        if group_by not in (None, *DIMENSION_FIELDS):
+            return Response({'error': f'group_by must be one of: {", ".join(DIMENSION_FIELDS)}'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # If no dates provided, default to previous week
-        if not start_date or not end_date:
-            today = datetime.now().date()
-            end_date = today.strftime('%Y-%m-%d')  # Today
-            start_date = (today - timedelta(days=7)).strftime('%Y-%m-%d')  # 7 days ago (previous week)
-
-        contributor = request.query_params.get('contributor', '')
-        editor      = request.query_params.get('editor', '')
-        imagery     = request.query_params.get('imagery', '')
-
-        filters = {
-            'start_date': start_date, 'end_date': end_date,
-            'contributor': contributor, 'editor': editor, 'imagery': imagery,
-        }
+        start_date, end_date, contributor, editor, imagery, filters = _resolve_range_and_filters(request)
+        filters = {**filters, 'group_by': group_by}
 
         if not (contributor or editor or imagery):
-            return Response(self._from_rollups(start_date, end_date, filters))
-        return Response(self._from_raw(start_date, end_date, contributor, editor, imagery, filters))
+            data = self._from_rollups(start_date, end_date, group_by)
+        else:
+            data = self._from_raw(start_date, end_date, contributor, editor, imagery, group_by)
+        return Response({'filters': filters, **data})
 
-    def _from_rollups(self, start_date, end_date, filters):
-        volume = list(
-            DailyVolume.objects.filter(date__gte=start_date, date__lte=end_date)
-            .order_by('date', 'hour')[:360]
+    def _from_rollups(self, start_date, end_date, group_by):
+        if group_by is None:
+            volume = list(
+                DailyVolume.objects.filter(date__gte=start_date, date__lte=end_date)
+                .order_by('date', 'hour')[:360]
+            )
+            dates = [f'{v.date.isoformat()} {v.hour}:00' for v in volume]
+            return {'dates': dates, 'series': [{'name': 'changesets', 'counts': [v.count for v in volume]}]}
+
+        top = list(
+            DailyBreakdown.objects.filter(category=group_by, date__gte=start_date, date__lte=end_date)
+            .values('name').annotate(total_count=Sum('count')).order_by('-total_count')[:20]
         )
-        daily_counts = [{'date': f'{v.date.isoformat()} {v.hour}:00', 'count': v.count} for v in volume]
-        unique_dates = [d['date'] for d in daily_counts]
+        names = [row['name'] for row in top]
+        if not names:
+            return {'dates': [], 'series': []}
 
-        total_changesets = sum(v.count for v in volume)
-        total_objects = sum(v.changes_sum for v in volume)
+        rows = (
+            DailyBreakdown.objects.filter(category=group_by, name__in=names, date__gte=start_date, date__lte=end_date)
+            .values('date', 'name', 'count')
+        )
+        per_name_day = defaultdict(dict)
+        dates = set()
+        for r in rows:
+            day = r['date'].isoformat()
+            per_name_day[r['name']][day] = r['count']
+            dates.add(day)
+        dates = sorted(dates)
+        series = [{'name': name, 'counts': [per_name_day[name].get(d, 0) for d in dates]} for name in names]
+        return {'dates': dates, 'series': series}
+
+    def _from_raw(self, start_date, end_date, contributor, editor, imagery, group_by):
+        changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery)
+
+        if group_by is None:
+            rows = list(
+                changesets.annotate(
+                    date=Concat(TruncDate('created_at'), Value(' '), ExtractHour('created_at'), Value(':00'), output_field=CharField())
+                ).values('date').annotate(count=Count('id')).order_by('date')[:360]
+            )
+            return {'dates': [r['date'] for r in rows], 'series': [{'name': 'changesets', 'counts': [r['count'] for r in rows]}]}
+
+        field = DIMENSION_FIELDS[group_by]
+        top = list(
+            changesets.filter(**{f'{field}__isnull': False})
+            .values(field).annotate(count=Count('id')).order_by('-count')[:20]
+        )
+        names = [row[field] for row in top]
+        if not names:
+            return {'dates': [], 'series': []}
+
+        rows = (
+            changesets.filter(**{f'{field}__in': names})
+            .annotate(date=TruncDate('created_at'))
+            .values('date', field).annotate(count=Count('id'))
+        )
+        per_name_day = defaultdict(dict)
+        dates = set()
+        for r in rows:
+            day = r['date'].isoformat()
+            per_name_day[r[field]][day] = r['count']
+            dates.add(day)
+        dates = sorted(dates)
+        series = [{'name': name, 'counts': [per_name_day[name].get(d, 0) for d in dates]} for name in names]
+        return {'dates': dates, 'series': series}
+
+
+class SummaryView(APIView):
+    """Single-number KPIs for a date range: total_changesets, total_objects
+    (objects changed), avg_objects (objects per changeset). Backed by the
+    DailyVolume rollup table when unfiltered; a contributor/editor/imagery
+    filter falls back to the raw Changeset table."""
+
+    @extend_schema(
+        tags=['changesets'],
+        summary='Changeset summary totals',
+        description='total_changesets, total_objects, and avg_objects for a date range. Defaults to the last 7 days if no dates are given.',
+        parameters=_FILTER_PARAMS,
+        responses={200: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Sample',
+            value={
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': ''},
+                'total_changesets': 350000, 'total_objects': 12500000, 'avg_objects': 35.7,
+            },
+            response_only=True,
+        )],
+    )
+    def get(self, request):
+        start_date, end_date, contributor, editor, imagery, filters = _resolve_range_and_filters(request)
+
+        if not (contributor or editor or imagery):
+            totals = DailyVolume.objects.filter(date__gte=start_date, date__lte=end_date).aggregate(
+                total_changesets=Sum('count'), total_objects=Sum('changes_sum'))
+        else:
+            changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery)
+            totals = changesets.aggregate(total_changesets=Count('id'), total_objects=Sum('changes_count'))
+
+        total_changesets = totals['total_changesets'] or 0
+        total_objects = totals['total_objects'] or 0
         avg_objects = round(total_objects / total_changesets, 1) if total_changesets else 0
 
-        def top_with_time(category):
-            top = list(
-                DailyBreakdown.objects.filter(category=category, date__gte=start_date, date__lte=end_date)
-                .values('name').annotate(total_count=Sum('count')).order_by('-total_count')[:20]
-            )
-            names = [row['name'] for row in top]
-            if not names:
-                return [], []
-
-            rows = (
-                DailyBreakdown.objects.filter(
-                    category=category, name__in=names, date__gte=start_date, date__lte=end_date
-                ).values('date', 'name', 'count')
-            )
-            per_name_day = defaultdict(dict)
-            for r in rows:
-                per_name_day[r['name']][r['date'].isoformat()] = r['count']
-
-            top_list = [{'name': row['name'], 'count': row['total_count']} for row in top]
-            time_series = [
-                {
-                    'name': name,
-                    'counts': [per_name_day[name].get(d.split(' ')[0], 0) for d in unique_dates],
-                }
-                for name in names
-            ]
-            return top_list, time_series
-
-        top_editors, top_editors_time = top_with_time('editor')
-        top_imageries, top_imageries_time = top_with_time('imagery')
-        top_locales, top_locales_time = top_with_time('locale')
-
-        top_contributors_by_objects = list(
-            DailyBreakdown.objects.filter(category='contributor', date__gte=start_date, date__lte=end_date)
-            .values('name').annotate(total=Sum('changes_sum')).order_by('-total')[:20]
-        )
-        top_editors_by_objects = list(
-            DailyBreakdown.objects.filter(category='editor', date__gte=start_date, date__lte=end_date)
-            .values('name').annotate(total=Sum('changes_sum')).order_by('-total')[:20]
-        )
-
-        return {
+        return Response({
             'filters': filters,
             'total_changesets': total_changesets,
             'total_objects': total_objects,
             'avg_objects': avg_objects,
-            'daily_counts': daily_counts,
-            'top_editors': top_editors,
-            'top_editors_time': {'dates': unique_dates, 'series': top_editors_time},
-            'top_imageries': top_imageries,
-            'top_imageries_time': {'dates': unique_dates, 'series': top_imageries_time},
-            'top_locales': top_locales,
-            'top_locales_time': {'dates': unique_dates, 'series': top_locales_time},
-            'top_contributors_by_objects': [{'name': r['name'], 'total': r['total']} for r in top_contributors_by_objects],
-            'top_editors_by_objects': [{'name': r['name'], 'total': r['total']} for r in top_editors_by_objects],
-        }
+        })
 
-    def _from_raw(self, start_date, end_date, contributor, editor, imagery, filters):
-        # Base queryset
-        changesets = Changeset.objects.all()
 
-        # Half-open range on the raw datetime (not created_at__date) so the
-        # created_at index can be used directly — created_at__date forces a
-        # sequential scan since it's a function of the column, not the column
-        # itself. end_date_exclusive makes end_date inclusive of its whole day.
-        end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
-        changesets = changesets.filter(created_at__gte=start_date)
-        changesets = changesets.filter(created_at__lt=end_date_exclusive)
+class ToplistView(APIView):
+    """Top N by a metric, for one dimension (default N=20). Backed by the
+    DailyBreakdown rollup table when unfiltered; a contributor/editor/
+    imagery filter falls back to the raw Changeset table."""
 
-        # Apply optional filters
-        if contributor:
-            changesets = changesets.filter(user__iexact=contributor)
-        if editor:
-            changesets = changesets.filter(created_by_family__iexact=editor)
-        if imagery:
-            changesets = changesets.filter(imagery_family__iexact=imagery)
+    DEFAULT_LIMIT = 20
+    MAX_LIMIT = 1000
 
-        # ── Part 1: Changeset activity ────────────────────────────────────────
+    @extend_schema(
+        tags=['changesets'],
+        summary='Top changesets by dimension',
+        description=(
+            'Top N (default 20) contributors/editors/imageries/locales, ranked by changeset '
+            'count or by objects changed, for a date range. Defaults to the last 7 days if no '
+            'dates are given.'
+        ),
+        parameters=_FILTER_PARAMS + [
+            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, locale.'),
+            OpenApiParameter('metric', OpenApiTypes.STR, description='count (changesets) or objects (objects changed). Defaults to count.'),
+            OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of results (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Top editors by count',
+            value={
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'dimension': 'editor', 'metric': 'count', 'limit': 20},
+                'results': [{'name': 'iD', 'value': 180000}],
+            },
+            response_only=True,
+        )],
+    )
+    def get(self, request):
+        dimension = request.query_params.get('dimension', '')
+        metric = request.query_params.get('metric', 'count')
+        if dimension not in DIMENSION_FIELDS:
+            return Response({'error': f'dimension must be one of: {", ".join(DIMENSION_FIELDS)}'}, status=status.HTTP_400_BAD_REQUEST)
+        if metric not in ('count', 'objects'):
+            return Response({'error': 'metric must be count or objects'}, status=status.HTTP_400_BAD_REQUEST)
 
-        daily_counts = changesets.annotate(
-            date=Concat(
-                TruncDate('created_at'),
-                Value(' '),
-                ExtractHour('created_at'),
-                Value(':00'),
-                output_field=CharField()
-            )
-        ).values('date').annotate(count=Count('id')).order_by('date')[:360]
+        limit_raw = request.query_params.get('limit')
+        if limit_raw is None:
+            limit = self.DEFAULT_LIMIT
+        else:
+            try:
+                limit = int(limit_raw)
+            except ValueError:
+                return Response({'error': 'limit must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+            if not (1 <= limit <= self.MAX_LIMIT):
+                return Response({'error': f'limit must be between 1 and {self.MAX_LIMIT}'}, status=status.HTTP_400_BAD_REQUEST)
 
-        unique_dates = sorted({item['date'] for item in daily_counts})
+        start_date, end_date, contributor, editor, imagery, filters = _resolve_range_and_filters(request)
+        filters = {**filters, 'dimension': dimension, 'metric': metric, 'limit': limit}
 
-        def top_with_time(field):
-            """Top 20 by count, plus each one's daily series aligned to
-            unique_dates — as 2 queries total regardless of how many names
-            there are, instead of 1 per name (was up to 60 queries across the
-            three categories on top of everything else)."""
-            top = list(
-                changesets.filter(**{f'{field}__isnull': False})
-                .values(field).annotate(count=Count('id'))
-                .order_by('-count')[:20]
-            )
-            names = [row[field] for row in top]
-            if not names:
-                return [], []
+        if not (contributor or editor or imagery):
+            results = self._from_rollups(start_date, end_date, dimension, metric, limit)
+        else:
+            results = self._from_raw(start_date, end_date, contributor, editor, imagery, dimension, metric, limit)
+        return Response({'filters': filters, 'results': results})
 
-            rows = (
-                changesets.filter(**{f'{field}__in': names})
-                .annotate(date=TruncDate('created_at'))
-                .values('date', field).annotate(count=Count('id'))
-            )
-            per_name_day = defaultdict(dict)
-            for r in rows:
-                day = r['date'].isoformat() if hasattr(r['date'], 'isoformat') else str(r['date'])
-                per_name_day[r[field]][day] = r['count']
-
-            top_list = [{'name': row[field], 'count': row['count']} for row in top]
-            time_series = [
-                {
-                    'name': name,
-                    'counts': [per_name_day[name].get(d.split(' ')[0] if ' ' in d else d, 0) for d in unique_dates],
-                }
-                for name in names
-            ]
-            return top_list, time_series
-
-        top_editors, top_editors_time = top_with_time('created_by_family')
-        top_imageries, top_imageries_time = top_with_time('imagery_family')
-        top_locales, top_locales_time = top_with_time('locale_family')
-
-        # ── Part 2: Objects changed ───────────────────────────────────────────
-
-        totals = changesets.aggregate(total=Sum('changes_count'), avg=Avg('changes_count'))
-        total_objects = totals['total'] or 0
-        avg_objects   = round(totals['avg'] or 0, 1)
-
-        top_contributors_by_objects = list(
-            changesets.filter(user__isnull=False)
-            .values('user').annotate(total=Sum('changes_count'))
-            .order_by('-total')[:20]
+    def _from_rollups(self, start_date, end_date, dimension, metric, limit):
+        agg_field = 'count' if metric == 'count' else 'changes_sum'
+        rows = (
+            DailyBreakdown.objects.filter(category=dimension, date__gte=start_date, date__lte=end_date)
+            .values('name').annotate(value=Sum(agg_field)).order_by('-value')[:limit]
         )
-        top_editors_by_objects = list(
-            changesets.filter(created_by_family__isnull=False)
-            .values('created_by_family').annotate(total=Sum('changes_count'))
-            .order_by('-total')[:20]
+        return [{'name': r['name'], 'value': r['value']} for r in rows]
+
+    def _from_raw(self, start_date, end_date, contributor, editor, imagery, dimension, metric, limit):
+        changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery)
+        field = DIMENSION_FIELDS[dimension]
+        agg = Count('id') if metric == 'count' else Sum('changes_count')
+        rows = (
+            changesets.filter(**{f'{field}__isnull': False})
+            .values(field).annotate(value=agg).order_by('-value')[:limit]
         )
-
-        # ── Response ─────────────────────────────────────────────────────────
-
-        return {
-            'filters': filters,
-            'total_changesets': changesets.count(),
-            'total_objects': total_objects,
-            'avg_objects': avg_objects,
-            'daily_counts': [{'date': i['date'], 'count': i['count']} for i in daily_counts],
-            'top_editors': top_editors,
-            'top_editors_time': {'dates': unique_dates, 'series': top_editors_time},
-            'top_imageries': top_imageries,
-            'top_imageries_time': {'dates': unique_dates, 'series': top_imageries_time},
-            'top_locales': top_locales,
-            'top_locales_time': {'dates': unique_dates, 'series': top_locales_time},
-            'top_contributors_by_objects': [{'name': r['user'], 'total': r['total']} for r in top_contributors_by_objects],
-            'top_editors_by_objects': [{'name': r['created_by_family'], 'total': r['total']} for r in top_editors_by_objects],
-        }
+        return [{'name': r[field], 'value': r['value']} for r in rows]
 
 class BatchProgressView(APIView):
     @extend_schema(

@@ -97,30 +97,33 @@ function horizontalBar(canvasId, labels, data, label) {
 
 // ── Render ───────────────────────────────────────────────────────────────────
 
-function renderDashboard(data) {
+function renderDashboard({ summary, volume, editorsTime, imageriesTime, localesTime, topEditors, topImageries, topLocales, topContributorsByObjects, topEditorsByObjects }) {
     document.getElementById('loadingIndicator').hidden = true;
 
     // Pre-fill the filter form with the range actually applied (e.g. the
     // default 7-day window when the page was loaded with no query params).
-    document.getElementById('start_date').value = data.filters.start_date;
-    document.getElementById('end_date').value = data.filters.end_date;
-    document.getElementById('contributor').value = data.filters.contributor;
-    document.getElementById('editor').value = data.filters.editor;
-    document.getElementById('imagery').value = data.filters.imagery;
+    // Every endpoint echoes the same start_date/end_date/contributor/editor/
+    // imagery back, so any one of the responses would do here — summary is
+    // always fetched regardless of what else is on the page.
+    document.getElementById('start_date').value = summary.filters.start_date;
+    document.getElementById('end_date').value = summary.filters.end_date;
+    document.getElementById('contributor').value = summary.filters.contributor;
+    document.getElementById('editor').value = summary.filters.editor;
+    document.getElementById('imagery').value = summary.filters.imagery;
 
-    document.getElementById('totalChangesets').textContent = data.total_changesets;
-    document.getElementById('totalObjects').textContent = data.total_objects;
-    document.getElementById('avgObjects').textContent = data.avg_objects;
+    document.getElementById('totalChangesets').textContent = summary.total_changesets;
+    document.getElementById('totalObjects').textContent = summary.total_objects;
+    document.getElementById('avgObjects').textContent = summary.avg_objects;
 
     // Part 1: Changeset activity
-    if (data.daily_counts.length) {
+    if (volume.dates.length) {
         new Chart(document.getElementById('changesetChart').getContext('2d'), {
             type: 'line',
             data: {
-                labels: data.daily_counts.map(d => d.date),
+                labels: volume.dates,
                 datasets: [{
                     label: 'Changesets',
-                    data: data.daily_counts.map(d => d.count),
+                    data: volume.series[0].counts,
                     borderColor: CATEGORICAL[0],
                     backgroundColor: 'rgba(42, 120, 214, 0.10)',
                     borderWidth: 2,
@@ -140,34 +143,18 @@ function renderDashboard(data) {
         });
     }
 
-    horizontalBar('topEditorsChart',
-        data.top_editors.map(e => e.name),
-        data.top_editors.map(e => e.count),
-        'Changesets');
-    stackedBar('topEditorsTimeChart', data.top_editors_time.dates, data.top_editors_time.series);
+    horizontalBar('topEditorsChart', topEditors.results.map(r => r.name), topEditors.results.map(r => r.value), 'Changesets');
+    stackedBar('topEditorsTimeChart', editorsTime.dates, editorsTime.series);
 
-    horizontalBar('topImageriesChart',
-        data.top_imageries.map(i => i.name),
-        data.top_imageries.map(i => i.count),
-        'Changesets');
-    stackedBar('topImageriesTimeChart', data.top_imageries_time.dates, data.top_imageries_time.series);
+    horizontalBar('topImageriesChart', topImageries.results.map(r => r.name), topImageries.results.map(r => r.value), 'Changesets');
+    stackedBar('topImageriesTimeChart', imageriesTime.dates, imageriesTime.series);
 
-    horizontalBar('topLocalesChart',
-        data.top_locales.map(l => l.name),
-        data.top_locales.map(l => l.count),
-        'Changesets');
-    stackedBar('topLocalesTimeChart', data.top_locales_time.dates, data.top_locales_time.series);
+    horizontalBar('topLocalesChart', topLocales.results.map(r => r.name), topLocales.results.map(r => r.value), 'Changesets');
+    stackedBar('topLocalesTimeChart', localesTime.dates, localesTime.series);
 
     // Part 2: Objects changed
-    horizontalBar('topContributorsByObjectsChart',
-        data.top_contributors_by_objects.map(r => r.name),
-        data.top_contributors_by_objects.map(r => r.total),
-        'Objects changed');
-
-    horizontalBar('topEditorsByObjectsChart',
-        data.top_editors_by_objects.map(r => r.name),
-        data.top_editors_by_objects.map(r => r.total),
-        'Objects changed');
+    horizontalBar('topContributorsByObjectsChart', topContributorsByObjects.results.map(r => r.name), topContributorsByObjects.results.map(r => r.value), 'Objects changed');
+    horizontalBar('topEditorsByObjectsChart', topEditorsByObjects.results.map(r => r.name), topEditorsByObjects.results.map(r => r.value), 'Objects changed');
 }
 
 function showError(err) {
@@ -180,15 +167,41 @@ function showError(err) {
 }
 
 // ── Load ─────────────────────────────────────────────────────────────────────
-// The page shell renders instantly with empty charts; this fetch (against the
-// standalone /api/changesets/stats/ endpoint) is what actually populates them.
+// The page shell renders instantly with empty charts; these fetches (against
+// the standalone /api/changesets/{timeseries,summary,toplist}/ endpoints —
+// each independently public, not just for this page's own use) are what
+// actually populate them. Fetched in parallel so total load time is bounded
+// by the slowest one, not their sum.
 
-fetch(`/api/changesets/stats/${window.location.search}`)
-    .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+function apiUrl(path, extraParams) {
+    const params = new URLSearchParams(window.location.search);
+    for (const [key, value] of Object.entries(extraParams || {})) {
+        params.set(key, value);
+    }
+    return `${path}?${params.toString()}`;
+}
+
+function fetchJson(url) {
+    return fetch(url).then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
         return r.json();
-    })
-    .then(renderDashboard)
+    });
+}
+
+Promise.all([
+    fetchJson(apiUrl('/api/changesets/summary/')),
+    fetchJson(apiUrl('/api/changesets/timeseries/')),
+    fetchJson(apiUrl('/api/changesets/timeseries/', { group_by: 'editor' })),
+    fetchJson(apiUrl('/api/changesets/timeseries/', { group_by: 'imagery' })),
+    fetchJson(apiUrl('/api/changesets/timeseries/', { group_by: 'locale' })),
+    fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'count' })),
+    fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'imagery', metric: 'count' })),
+    fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'locale', metric: 'count' })),
+    fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'objects' })),
+    fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'objects' })),
+])
+    .then(([summary, volume, editorsTime, imageriesTime, localesTime, topEditors, topImageries, topLocales, topContributorsByObjects, topEditorsByObjects]) =>
+        renderDashboard({ summary, volume, editorsTime, imageriesTime, localesTime, topEditors, topImageries, topLocales, topContributorsByObjects, topEditorsByObjects }))
     .catch(showError);
 
 // ── Filter autocomplete ─────────────────────────────────────────────────────

@@ -47,8 +47,8 @@
         </form>
     </div>
 
-    <!-- Shown while /api/changesets/stats/ is loading; hidden by dashboard.js
-         once the response renders (or replaced by an error banner on failure). -->
+    <!-- Shown while dashboard.js's parallel fetches to /api/changesets/{timeseries,summary,toplist}/
+         are in flight; hidden once they all render (or replaced by an error banner on failure). -->
     <div id="loadingIndicator" class="flex justify-center items-center gap-3 py-16">
         <div class="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
         <span class="text-gray-500">Loading dashboard data…</span>
