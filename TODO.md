@@ -40,6 +40,29 @@ Postgres `LOG:`-level lines are showing up in Datadog with `status:error`. Cosme
 a functional bug. Needs a manual fix in the Datadog UI (Logs → Pipelines) — no MCP tool access
 to do this one programmatically from here.
 
+## Planned work
+
+### Datadog Database Monitoring
+Only the basic Postgres integration check is enabled today (`docker-compose.yml`'s
+`com.datadoghq.ad.checks` label on `db` — connection counts, row activity, buffer hits, etc.).
+Datadog's actual "Database Monitoring" product (query samples, explain plans, per-query
+performance) is a separate, deeper feature — needs `pg_stat_statements` enabled on the `db`
+service and `dbm: true` (plus the extra permissions it requires) added to the check config.
+
+### Favicon
+The dashboard has no favicon — confirmed by recurring `Not Found: /favicon.ico` 404s in `web`'s
+logs all session. Needs an actual design, not just a placeholder.
+
+### Split `/api/changesets/stats/` into dedicated endpoints
+Right now it's one large response bundling daily volume, top editors/imageries/locales (+ their
+time series), and object-change breakdowns by contributor/editor — all computed and returned
+together on every call, whether or not the caller wants all of it. Split into separate,
+independently-cacheable endpoints per part (e.g. daily volume, top editors, top imageries, top
+locales, object totals) so a consumer only pays for what it actually asks for, and each one's
+shape can evolve independently. Needs a design pass on what the resource boundaries should be
+before implementing — not a mechanical find-and-split of the current `_from_rollups`/`_from_raw`
+methods.
+
 ## Design principles for future work
 
 - **Design for the full history import, not just the current subset.** Only the past year is
