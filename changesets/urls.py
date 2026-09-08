@@ -1,12 +1,11 @@
 from django.urls import path
-from .views import ChangesetListView, ChangesetQueryView, ChangesetDetailView, AutocompleteView, BatchProgressView, ImportJobView, ImageryAuditView, ChangesetStatsView, redirect_to_landing_page
+from .views import ChangesetListView, ChangesetQueryView, ChangesetDetailView, AutocompleteView, BatchProgressView, ImportJobView, ChangesetStatsView, redirect_to_landing_page
 
 
 urlpatterns = [
     path('changesets/', ChangesetQueryView.as_view(), name='changeset-query'),
     path('autocomplete/', AutocompleteView.as_view(), name='autocomplete'),
     path('batch-progress/', BatchProgressView.as_view(), name='batch-progress'),
-    path('imagery-audit/', ImageryAuditView.as_view(), name='imagery-audit'),
     path('changesets/stats/', ChangesetStatsView.as_view(), name='changeset-stats'),
     path('changesets/<int:changeset_id>/', ChangesetDetailView.as_view(), name='changeset-detail'),
     path('sequence/<int:seq_start>/<int:seq_end>/', ChangesetListView.as_view(), name='changeset-list'),

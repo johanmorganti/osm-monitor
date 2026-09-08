@@ -86,8 +86,15 @@ class Command(BaseCommand):
 
         logger.info("Starting sequence poller")
 
+        # Start the full-rebuild timer as "just refreshed" rather than "due
+        # immediately" — at 20M+ rows a cold full refresh_rollups() takes
+        # long enough to lock DailyVolume/DailyBreakdown (via TRUNCATE) and
+        # block both live polling and the dashboard for minutes on every
+        # restart/deploy. The incremental refresh below still keeps rollups
+        # reasonably fresh in the meantime; the full reconciliation pass
+        # just waits for its normal rollup_full_interval cadence instead.
         last_rollup_refresh = 0.0
-        last_rollup_full_refresh = 0.0
+        last_rollup_full_refresh = time.monotonic()
 
         while True:
             try:
@@ -147,7 +154,10 @@ class Command(BaseCommand):
 
                 # Then spend a bounded batch filling in older history, so live
                 # polling gets re-checked regularly instead of blocking on it.
-                if state.backfill_sequence >= state.backfill_floor:
+                # backfill_floor is None once backfill is retired (see the
+                # "Backfill complete" branch below) — skip straight past both
+                # branches rather than comparing against None.
+                if state.backfill_floor is not None and state.backfill_sequence >= state.backfill_floor:
                     batch_end = max(state.backfill_floor, state.backfill_sequence - backfill_batch_size + 1)
                     batch_start = state.backfill_sequence
                     for seq in range(batch_start, batch_end - 1, -1):

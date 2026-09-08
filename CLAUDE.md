@@ -1,6 +1,8 @@
 # CLAUDE.md — OSM Monitor
 
-Project context and architectural decisions for AI-assisted development.
+Project context and architectural decisions for AI-assisted development. See `TODO.md` for the
+running backlog of known issues and deferred design work — check it before starting non-trivial
+work, and keep it updated as things get fixed or newly deferred.
 
 ## Project overview
 
@@ -51,6 +53,14 @@ the project supports SQLite in development.
 A single-row model (`SequenceState`) tracks the last ingested sequence number so that
 `poll_sequences` can resume after a crash without re-importing history.
 
+### Design for full history, not just the current subset
+Only the past year of changesets is imported today (~23M rows), but the eventual goal is full
+2005-present OSM history (~190M+ rows, ~8x bigger). When adding a query, index, or background
+job, sanity-check it against "does this still work at ~8x the row count" rather than just
+today's data size — see `TODO.md`'s `refresh_rollups()` entry for a concrete example of a design
+that already stopped scaling well before that point. Prefer incremental/watermark-based designs
+over periodic full-table rebuilds.
+
 ## File map
 
 | Path | Role |
@@ -70,4 +80,6 @@ A single-row model (`SequenceState`) tracks the last ingested sequence number so
 
 - Static files in `DEBUG` mode are served by Django via `django.conf.urls.static`.
 - Initial sequence on first poller run: pass `--start <seq>` or set `INITIAL_SEQUENCE` env var.
-- The dashboard defaults to the last 7 days when no date params are provided.
+- `ChangesetStatsView` (aggregated stats) defaults to the last 7 days when no date params are
+  given; `ChangesetQueryView` (raw record list) defaults to the last 24 hours — it has no
+  unfiltered "everything" mode, see its docstring in `views.py`.

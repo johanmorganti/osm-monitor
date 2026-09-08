@@ -3,6 +3,15 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     env_file: .env
+    # This host is 3.8GB total, shared with several unrelated apps — the
+    # stock postgres defaults (effective_cache_size=4GB, i.e. "assume the
+    # whole box is free for caching") and unbounded parallel workers were
+    # contributing to swap pressure. mem_limit is a hard ceiling so a heavy
+    # query/index build can't single-handedly starve the other apps on the
+    # box; effective_cache_size is sized to fit under it.
+    command: postgres -c effective_cache_size=768MB -c max_parallel_workers_per_gather=1
+    mem_limit: 1200m
+    mem_reservation: 512m
     ports:
       - "5007:5432"
     volumes:
@@ -44,6 +53,7 @@ services:
       DD_DOGSTATSD_URL: unix:///var/run/datadog/dsd.socket
       DD_LOGS_INJECTION: "true"
       DD_VERSION: ${GIT_VERSION:-unknown}
+    mem_limit: 512m
     ports:
       - "5006:8000"
     volumes:
@@ -63,6 +73,7 @@ services:
       DD_DOGSTATSD_URL: unix:///var/run/datadog/dsd.socket
       DD_LOGS_INJECTION: "true"
       DD_VERSION: ${GIT_VERSION:-unknown}
+    mem_limit: 512m
     volumes:
       - /var/run/datadog:/var/run/datadog:ro
     command: python manage.py poll_sequences --interval 60

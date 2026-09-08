@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.views.generic import TemplateView
 from django.db.models import Count, Value, CharField, Sum, Avg
 from django.db.models.functions import TruncDate, ExtractHour, Concat
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, OpenApiTypes
 from .models import Changeset, SequenceState, ImportJob, DailyVolume, DailyBreakdown
 from .serializers import ChangesetSerializer
@@ -21,7 +22,15 @@ class ChangesetPagination(PageNumberPagination):
 
 
 class ChangesetQueryView(APIView):
-    """Paginated list of raw changeset records, newest first."""
+    """Paginated list of raw changeset records, newest first.
+
+    Always bounded by a date range — defaults to the last 24 hours when
+    start_date/end_date aren't given. An unbounded "list everything" mode
+    isn't offered: with tens of millions of rows, both the full scan to
+    build a page and the COUNT(*) DRF's pagination needs for it are
+    prohibitively expensive, and nobody actually wants to page through all
+    of OSM history 100 rows at a time anyway. Use ChangesetStatsView for
+    aggregate questions over a large range instead of pulling raw rows."""
 
     # Not used for actual pagination (that's done manually below with the
     # same class) — set here so drf-spectacular knows to document the
@@ -31,10 +40,15 @@ class ChangesetQueryView(APIView):
     @extend_schema(
         tags=['changesets'],
         summary='List changesets',
-        description='Paginated list of ingested changeset records, newest first, with optional filters.',
+        description=(
+            'Paginated list of ingested changeset records, newest first, with optional filters. '
+            'Always bounded by a date range — defaults to the last 24 hours if start_date/end_date '
+            'are omitted (there\'s no unfiltered "everything" mode; use /api/changesets/stats/ for '
+            'aggregate questions over a large range).'
+        ),
         parameters=[
-            OpenApiParameter('start_date', OpenApiTypes.DATE, description='Only changesets created on/after this date (YYYY-MM-DD).'),
-            OpenApiParameter('end_date', OpenApiTypes.DATE, description='Only changesets created on/before this date (YYYY-MM-DD), inclusive of the whole day.'),
+            OpenApiParameter('start_date', OpenApiTypes.DATE, description='Only changesets created on/after this date (YYYY-MM-DD). Defaults to 24 hours before now.'),
+            OpenApiParameter('end_date', OpenApiTypes.DATE, description='Only changesets created on/before this date (YYYY-MM-DD), inclusive of the whole day. Defaults to now.'),
             OpenApiParameter('user', OpenApiTypes.STR, description='Exact OSM username.'),
             OpenApiParameter('editor', OpenApiTypes.STR, description='Exact editor family (e.g. "StreetComplete", "iD").'),
             OpenApiParameter('hashtag', OpenApiTypes.STR, description='Hashtag the changeset must include (from its #hashtags tag).'),
@@ -58,12 +72,15 @@ class ChangesetQueryView(APIView):
         imagery_family = request.query_params.get('imagery_family')
         bbox = request.query_params.get('bbox')
 
-        if start_date:
-            qs = qs.filter(created_at__gte=start_date)
-        if end_date:
-            from datetime import date, timedelta
-            end = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
-            qs = qs.filter(created_at__lt=end.strftime('%Y-%m-%d'))
+        # Explicit start_date/end_date are whole-day (YYYY-MM-DD) boundaries;
+        # a missing one defaults off the precise current instant instead, so
+        # "no dates given" is a real rolling 24h window, not just "today".
+        now = timezone.now()
+        end_dt = (datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)) if end_date else now
+        start_dt = start_date if start_date else (now - timedelta(hours=24))
+
+        qs = qs.filter(created_at__gte=start_dt)
+        qs = qs.filter(created_at__lt=end_dt)
         if user:
             qs = qs.filter(user=user)
         if editor:
@@ -444,57 +461,6 @@ class ChangesetStatsView(APIView):
             'top_contributors_by_objects': [{'name': r['user'], 'total': r['total']} for r in top_contributors_by_objects],
             'top_editors_by_objects': [{'name': r['created_by_family'], 'total': r['total']} for r in top_editors_by_objects],
         }
-
-class ImageryAuditView(APIView):
-    """
-    Returns distinct (raw first imagery entry → imagery_family) mappings,
-    grouped by family with up to 5 raw sample values each.
-    Useful for auditing the family normalisation logic.
-    """
-    @extend_schema(
-        tags=['audit'],
-        summary='Imagery family audit',
-        description='Raw imagery_used values grouped by their normalised imagery_family, with sample raw values per family — useful for auditing the normalisation logic.',
-        responses={200: OpenApiTypes.OBJECT},
-        examples=[OpenApiExample(
-            'Sample',
-            value=[{'family': 'Bing', 'total': 90000, 'samples': [{'raw': 'Bing aerial imagery', 'count': 85000}]}],
-            response_only=True,
-        )],
-    )
-    def get(self, request):
-        from django.db import connection
-        # imagery_used is a JSON array (e.g. ["Bing", "Mapbox"]) — extracting its
-        # first element is backend-specific: Postgres uses jsonb's ->> operator,
-        # SQLite (dev fallback, see settings.py) uses json_extract.
-        if connection.vendor == 'postgresql':
-            raw_first_expr = "imagery_used->>0"
-        else:
-            raw_first_expr = "json_extract(imagery_used, '$[0]')"
-        with connection.cursor() as cursor:
-            cursor.execute(f"""
-                SELECT imagery_family,
-                       {raw_first_expr} AS raw_first,
-                       COUNT(*) AS cnt
-                FROM changesets_changeset
-                WHERE imagery_family IS NOT NULL
-                  AND imagery_used IS NOT NULL
-                GROUP BY imagery_family, raw_first
-                ORDER BY imagery_family, cnt DESC
-            """)
-            rows = cursor.fetchall()
-
-        grouped = {}
-        for family, raw, cnt in rows:
-            if family not in grouped:
-                grouped[family] = {'family': family, 'total': 0, 'samples': []}
-            grouped[family]['total'] += cnt
-            if len(grouped[family]['samples']) < 5:
-                grouped[family]['samples'].append({'raw': raw, 'count': cnt})
-
-        result = sorted(grouped.values(), key=lambda x: -x['total'])
-        return Response(result)
-
 
 class BatchProgressView(APIView):
     @extend_schema(
