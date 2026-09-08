@@ -98,6 +98,8 @@ function horizontalBar(canvasId, labels, data, label) {
 // ── Render ───────────────────────────────────────────────────────────────────
 
 function renderDashboard(data) {
+    document.getElementById('loadingIndicator').hidden = true;
+
     // Pre-fill the filter form with the range actually applied (e.g. the
     // default 7-day window when the page was loaded with no query params).
     document.getElementById('start_date').value = data.filters.start_date;
@@ -170,6 +172,7 @@ function renderDashboard(data) {
 
 function showError(err) {
     console.error('Failed to load dashboard data', err);
+    document.getElementById('loadingIndicator').hidden = true;
     const banner = document.createElement('div');
     banner.className = 'bg-red-100 text-red-700 rounded-lg p-4 mb-8';
     banner.textContent = 'Could not load dashboard data. Please try again shortly.';

@@ -4,6 +4,7 @@ import os
 import requests
 import yaml
 from django.core.management.base import BaseCommand, CommandError
+from django.db import connection
 from changesets.models import SequenceState
 from changesets.osm_fetcher import process_sequence
 from changesets.rollups import refresh_rollups_reconcile, refresh_rollups_incremental
@@ -216,6 +217,14 @@ class Command(BaseCommand):
                 raise
             except Exception:
                 logger.exception("Error in poll loop")
+                # This is a long-running loop, not a per-request WSGI cycle —
+                # nothing else ever calls close_old_connections() here, so a
+                # broken connection (e.g. the DB restarting) would otherwise
+                # error identically forever instead of self-healing on the
+                # next iteration. Unconditionally closing it is cheap (just
+                # means the next query reconnects) and safe even when the
+                # connection was actually fine.
+                connection.close()
                 time.sleep(interval)
 
     def _reset(self, start_arg, backfill_days, sequences_per_day):

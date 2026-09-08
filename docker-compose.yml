@@ -9,7 +9,12 @@ services:
     # contributing to swap pressure. mem_limit is a hard ceiling so a heavy
     # query/index build can't single-handedly starve the other apps on the
     # box; effective_cache_size is sized to fit under it.
-    command: postgres -c effective_cache_size=768MB -c max_parallel_workers_per_gather=1
+    # shared_preload_libraries=pg_stat_statements is required for Datadog
+    # Database Monitoring (query-level metrics/samples/explain plans) — the
+    # extension itself still needs `CREATE EXTENSION pg_stat_statements;`
+    # run once against the app database after this takes effect, since it
+    # can't be preloaded and self-installed in the same step.
+    command: postgres -c effective_cache_size=768MB -c max_parallel_workers_per_gather=1 -c shared_preload_libraries=pg_stat_statements -c track_io_timing=on
     mem_limit: 1200m
     mem_reservation: 512m
     ports:
@@ -33,7 +38,8 @@ services:
                 "password": "${DD_POSTGRES_PASSWORD}",
                 "dbname": "${POSTGRES_DB}",
                 "reported_hostname": "osm-monitor-db",
-                "tags": ["service:osm-monitor-db", "env:production"]
+                "tags": ["service:osm-monitor-db", "env:production"],
+                "dbm": true
               }
             ]
           }

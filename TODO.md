@@ -42,13 +42,6 @@ to do this one programmatically from here.
 
 ## Planned work
 
-### Datadog Database Monitoring
-Only the basic Postgres integration check is enabled today (`docker-compose.yml`'s
-`com.datadoghq.ad.checks` label on `db` — connection counts, row activity, buffer hits, etc.).
-Datadog's actual "Database Monitoring" product (query samples, explain plans, per-query
-performance) is a separate, deeper feature — needs `pg_stat_statements` enabled on the `db`
-service and `dbm: true` (plus the extra permissions it requires) added to the check config.
-
 ### Favicon
 The dashboard has no favicon — confirmed by recurring `Not Found: /favicon.ico` 404s in `web`'s
 logs all session. Needs an actual design, not just a placeholder.
