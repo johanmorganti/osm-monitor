@@ -14,13 +14,16 @@ services:
     # extension itself still needs `CREATE EXTENSION pg_stat_statements;`
     # run once against the app database after this takes effect, since it
     # can't be preloaded and self-installed in the same step.
-    command: postgres -c effective_cache_size=768MB -c max_parallel_workers_per_gather=1 -c shared_preload_libraries=pg_stat_statements -c track_io_timing=on
+    command: postgres -c effective_cache_size=768MB -c max_parallel_workers_per_gather=1 -c shared_preload_libraries=pg_stat_statements -c track_io_timing=on -c track_activity_query_size=4096
     mem_limit: 1200m
     mem_reservation: 512m
     ports:
       - "5007:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # Only runs on a genuinely fresh data directory — see db/init/'s own
+      # comments for what still needs doing manually on the existing volume.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
