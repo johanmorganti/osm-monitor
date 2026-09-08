@@ -8,7 +8,7 @@ from django.db.models import Count, Value, CharField, Sum, Avg
 from django.db.models.functions import TruncDate, ExtractHour, Concat
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, OpenApiTypes
-from .models import Changeset, SequenceState, ImportJob, DailyVolume, DailyBreakdown
+from .models import Changeset, SequenceState, ImportJob, DailyVolume, DailyBreakdown, FilterValue
 from .serializers import ChangesetSerializer
 from .osm_fetcher import fetch_and_process_changesets
 import threading
@@ -507,16 +507,19 @@ class BatchProgressView(APIView):
 
 
 class AutocompleteView(APIView):
-    FIELD_MAP = {
-        'contributor': ('user', 'user__icontains'),
-        'editor':      ('created_by_family', 'created_by_family__icontains'),
-        'imagery':     ('imagery_family', 'imagery_family__icontains'),
-    }
+    """Backed by FilterValue (see changesets.models / changesets.rollups),
+    not the raw Changeset table — that table has one row per distinct
+    contributor/editor/imagery value ever seen, globally deduplicated, so
+    this stays fast regardless of how many changesets exist. Was previously
+    a direct `Changeset.objects.filter(field__icontains=q).distinct()`
+    query, which forced a full sequential scan of the whole table on every
+    keystroke and stopped being usable once the table passed a few million
+    rows."""
 
     @extend_schema(
         tags=['changesets'],
         summary='Autocomplete filter values',
-        description='Up to 10 distinct existing values for a filter field, matching a partial query — backs the dashboard\'s filter inputs.',
+        description='Up to 10 distinct known values for a filter field, matching a partial query — backs the dashboard\'s filter inputs.',
         parameters=[
             OpenApiParameter('field', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery.'),
             OpenApiParameter('q', OpenApiTypes.STR, description='Partial value to match (case-insensitive, substring).'),
@@ -527,16 +530,13 @@ class AutocompleteView(APIView):
     def get(self, request):
         field = request.query_params.get('field', '')
         q = request.query_params.get('q', '')
-        if field not in self.FIELD_MAP:
+        if field not in dict(FilterValue.FIELD_CHOICES):
             return Response({'error': 'field must be contributor, editor, or imagery'}, status=status.HTTP_400_BAD_REQUEST)
-        db_field, lookup = self.FIELD_MAP[field]
         values = (
-            Changeset.objects
-            .filter(**{lookup: q})
-            .exclude(**{f'{db_field}__isnull': True})
-            .exclude(**{f'{db_field}__exact': ''})
-            .values_list(db_field, flat=True)
-            .distinct()[:10]
+            FilterValue.objects
+            .filter(field=field, value__icontains=q)
+            .order_by('value')
+            .values_list('value', flat=True)[:10]
         )
         return Response(list(values))
 

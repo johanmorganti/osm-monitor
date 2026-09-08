@@ -8,25 +8,22 @@ add it here rather than letting it live only in conversation history.
 
 ## Known issues (deferred)
 
-### Autocomplete filter inputs slow at current scale
-`AutocompleteView` (`/api/autocomplete/`) backs the dashboard's contributor/editor/imagery
-search-as-you-type inputs using `__icontains` (`user__icontains`, etc.). That compiles to
-`ILIKE '%q%'` on Postgres, which can't use a plain btree index — it's a full sequential scan,
-and now slow/timing out at ~23M rows. Needs a real fix, not a quick patch: a `pg_trgm` GIN index
-would make `ILIKE` fast, or (probably better long-term, see the scaling note below) a small
-precomputed "distinct known values" table per field, refreshed by the poller alongside the
-rollups, so autocomplete never touches `Changeset` directly regardless of table size.
-
-### `refresh_rollups()` full rebuild doesn't scale to full history
-`changesets/rollups.py`'s `refresh_rollups()` does a `TRUNCATE` + full-table-scan rebuild of
-`DailyVolume`/`DailyBreakdown` from `Changeset`, on an hourly timer (`rollup_full_interval`).
-Already took 11+ minutes at ~23M rows, blocking all reads of those tables for the duration (the
-`TRUNCATE` takes an exclusive lock) — including the dashboard's default view and, transitively,
-live polling (single-threaded poll loop). At the eventual full 2005-present import (~190M+ rows)
-this will not finish inside its own interval and will effectively wedge the dashboard
-indefinitely whenever it runs. Needs a redesign that stays incremental-only — e.g. drop the full
-rebuild entirely and instead have the incremental path reconcile a bounded recent window (last
-N days) on its own cadence, rather than ever re-scanning the whole table.
+### Table partitioning / TimescaleDB
+Most real usage of this API is time-filtered (dashboard defaults, `/api/changesets/` 24h window,
+etc.), so monthly range partitioning on `created_at` (native Postgres, or via a TimescaleDB
+hypertable) would let those queries prune to just the relevant partition(s) instead of searching
+an index across the whole table — increasingly important as history grows toward the full
+2005-present import (~190M+ rows). TimescaleDB specifically is also attractive because its
+continuous aggregates could replace the hand-rolled `DailyVolume`/`DailyBreakdown` rollup system
+in `changesets/rollups.py` entirely. Neither helps queries that inherently need every row
+regardless of date (e.g. the `FilterValue` backfill) — partition pruning only kicks in when a
+query filters by the partition key. Deferred deliberately: converting the *existing* ~23M-row
+live table (continuously written by the poller) to either is real migration work, not a quick
+add, and shouldn't be done without dedicated planning. Plan floated: benchmark both options
+side by side on a separate, beefier machine using the past-year data we already have locally
+(the dump file), before deciding; if compared on this machine too, run the two tests
+sequentially, never simultaneously — it's resource-constrained enough already (see mem_limit
+notes in docker-compose.yml).
 
 ### Single gunicorn worker on `web`
 No `--workers` flag is set, so `web` runs exactly one sync worker. Any single slow/heavy request
@@ -48,6 +45,9 @@ to do this one programmatically from here.
 - **Design for the full history import, not just the current subset.** Only the past year is
   imported today (~23M rows), but the eventual goal is full 2005-present history (~190M+ rows,
   ~8x bigger). Before calling a query/index/background-job design "done," sanity-check it against
-  "does this still work at 8x the row count" — see the `refresh_rollups()` item above for what
-  happens when that check gets skipped. "Simple" means few moving parts, not "whatever happens
-  to work on today's data size."
+  "does this still work at 8x the row count." Concrete example of what happens when that check
+  gets skipped: `refresh_rollups()`'s old hourly full `TRUNCATE`+rebuild-from-everything already
+  took 11+ minutes at 23M rows, locking the dashboard out for the duration each time — replaced
+  with `refresh_rollups_reconcile()`, which only recomputes a bounded recent window (see
+  `changesets/rollups.py`'s module docstring) since that's all that can ever actually be stale.
+  "Simple" means few moving parts, not "whatever happens to work on today's data size."

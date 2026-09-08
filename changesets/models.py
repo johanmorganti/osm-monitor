@@ -154,3 +154,26 @@ class DailyBreakdown(models.Model):
         app_label = 'changesets'
         unique_together = [('date', 'category', 'name')]
         indexes = [models.Index(fields=['category', 'name'])]
+
+
+class FilterValue(models.Model):
+    """Distinct known values for the dashboard's contributor/editor/imagery
+    autocomplete. Deduplicated globally — unlike DailyBreakdown, there's no
+    date dimension — so its size tracks the number of distinct contributors/
+    editors/imageries ever seen, not the number of changesets, and stays
+    small (editor/imagery) or slow-growing (contributor) regardless of how
+    much history is imported. Populated incrementally by
+    refresh_rollups_incremental() (see changesets.rollups) from new rows
+    only; existing data is backfilled once via the backfill_filter_values
+    management command."""
+    FIELD_CHOICES = [
+        ('contributor', 'Contributor'),
+        ('editor', 'Editor'),
+        ('imagery', 'Imagery'),
+    ]
+    field = models.CharField(max_length=20, choices=FIELD_CHOICES)
+    value = models.CharField(max_length=255)
+
+    class Meta:
+        app_label = 'changesets'
+        unique_together = [('field', 'value')]

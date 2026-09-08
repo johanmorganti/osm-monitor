@@ -6,7 +6,7 @@ import yaml
 from django.core.management.base import BaseCommand, CommandError
 from changesets.models import SequenceState
 from changesets.osm_fetcher import process_sequence
-from changesets.rollups import refresh_rollups, refresh_rollups_incremental
+from changesets.rollups import refresh_rollups_reconcile, refresh_rollups_incremental
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +59,10 @@ class Command(BaseCommand):
             help='Minimum seconds between incremental rollup merges (default: 120)'
         )
         parser.add_argument(
-            '--rollup-full-interval', type=int, default=3600,
-            help='Minimum seconds between full rollup rebuilds, which correct any drift the '
-                 'incremental merge leaves behind (default: 3600)'
+            '--rollup-full-interval', type=int, default=21600,
+            help='Minimum seconds between bounded rollup reconciliation passes (last few days '
+                 'only, see refresh_rollups_reconcile), which correct any drift the incremental '
+                 'merge leaves behind (default: 21600, i.e. 6h)'
         )
         parser.add_argument(
             '--reset', action='store_true',
@@ -86,13 +87,12 @@ class Command(BaseCommand):
 
         logger.info("Starting sequence poller")
 
-        # Start the full-rebuild timer as "just refreshed" rather than "due
-        # immediately" — at 20M+ rows a cold full refresh_rollups() takes
-        # long enough to lock DailyVolume/DailyBreakdown (via TRUNCATE) and
-        # block both live polling and the dashboard for minutes on every
-        # restart/deploy. The incremental refresh below still keeps rollups
-        # reasonably fresh in the meantime; the full reconciliation pass
-        # just waits for its normal rollup_full_interval cadence instead.
+        # Start the reconciliation timer as "just refreshed" rather than "due
+        # immediately", so a restart/deploy doesn't force one right away on
+        # top of whatever else startup is doing. The incremental refresh
+        # below keeps rollups reasonably fresh in the meantime; the
+        # reconciliation pass just waits for its normal rollup_full_interval
+        # cadence instead.
         last_rollup_refresh = 0.0
         last_rollup_full_refresh = time.monotonic()
 
@@ -186,10 +186,10 @@ class Command(BaseCommand):
 
                 if time.monotonic() - last_rollup_full_refresh >= rollup_full_interval:
                     refresh_start = time.monotonic()
-                    refresh_rollups()
+                    refresh_rollups_reconcile()
                     last_rollup_refresh = last_rollup_full_refresh = time.monotonic()
                     logger.info(
-                        "Rollups refreshed (full)",
+                        "Rollups refreshed (reconcile)",
                         extra={'osm.rollup_refresh_seconds': round(last_rollup_refresh - refresh_start, 2)},
                     )
                 elif time.monotonic() - last_rollup_refresh >= rollup_interval:
