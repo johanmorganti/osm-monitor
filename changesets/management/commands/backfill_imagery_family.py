@@ -26,8 +26,13 @@ class Command(BaseCommand):
         for cs in qs.iterator():
             family = derive_imagery_family(cs.imagery_used)
             if family:
-                cs.imagery_family = family
-                cs.save(update_fields=['imagery_family'])
+                # .save() would filter by bare id, which (like changeset_id)
+                # isn't the hypertable's partitioning column and so can't
+                # use chunk exclusion. created_at is immutable, so filtering
+                # by the exact value we already have on `cs` is free
+                # precision, not a guess — same fix as import_changeset_batch's
+                # delete in osm_fetcher.py.
+                Changeset.objects.filter(id=cs.id, created_at=cs.created_at).update(imagery_family=family)
                 updated += 1
 
         self.stdout.write(self.style.SUCCESS(f'Done. Updated {updated}/{total} changesets.'))

@@ -51,7 +51,10 @@ services:
                 "dbname": "${POSTGRES_DB}",
                 "reported_hostname": "osm-monitor-db",
                 "tags": ["service:osm-monitor-db", "env:production"],
-                "dbm": true
+                "dbm": true,
+                "min_collection_interval": 60,
+                "query_metrics": {"collection_interval": 60},
+                "query_samples": {"collection_interval": 60}
               }
             ]
           }

@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 import gzip
 from .models import Changeset
 from datetime import datetime
+from django.db.models import Q
 from django.utils import timezone
 from ddtrace import tracer
 import json
@@ -259,19 +260,32 @@ def import_changeset_batch(changeset_elements, log_extra):
     one per changeset, since the DB is a separate networked Postgres instance.
 
     Returns (created_count, skipped_count, updated_count)."""
+    # A replication sequence (or dump slice) covers one narrow time window,
+    # so bounding by it lets chunk exclusion skip every other chunk —
+    # including any compressed one — instead of having to check all of
+    # them just to look up a handful of changeset_ids. Derived from the
+    # batch's own data, so this is correct for both live and backfill
+    # batches, unlike a hardcoded "recent" assumption would be.
+    created_ats = [
+        timezone.make_aware(datetime.strptime(c.attrib['created_at'], "%Y-%m-%dT%H:%M:%SZ"), timezone.utc)
+        for c in changeset_elements
+    ]
     existing_changes_count_by_id = dict(
         Changeset.objects.filter(
-            changeset_id__in=[int(c.attrib['id']) for c in changeset_elements]
+            changeset_id__in=[int(c.attrib['id']) for c in changeset_elements],
+            created_at__gte=min(created_ats),
+            created_at__lte=max(created_ats),
         ).values_list('changeset_id', 'changes_count')
     )
 
     changesets_to_create = []
-    changeset_ids_to_delete = []
+    changesets_to_delete = []  # (changeset_id, created_at) pairs, not bare ids
     skipped_count = 0
     updated_count = 0
 
     for changeset in changeset_elements:
         changeset_id = int(changeset.attrib['id'])
+        parsed = _parse_changeset_element(changeset, log_extra)
 
         # Check for duplicates and compare changes_count
         existing_changes_count = existing_changes_count_by_id.get(changeset_id)
@@ -299,13 +313,23 @@ def import_changeset_batch(changeset_elements, log_extra):
                         'osm.changes_count.incoming': new_changes_count,
                     },
                 )
-                changeset_ids_to_delete.append(changeset_id)  # deleted in one batch below
+                changesets_to_delete.append((changeset_id, parsed['created_at']))  # deleted in one batch below
                 updated_count += 1
 
-        changesets_to_create.append(_parse_changeset_element(changeset, log_extra))
+        changesets_to_create.append(parsed)
 
-    if changeset_ids_to_delete:
-        Changeset.objects.filter(changeset_id__in=changeset_ids_to_delete).delete()
+    if changesets_to_delete:
+        # created_at is immutable once a changeset exists, so the value we
+        # just parsed is exact — not a guess. Filtering by it (not just
+        # changeset_id) lets chunk exclusion target only the chunk(s) each
+        # row actually lives in, instead of a changeset_id-only filter that
+        # can't exclude any chunk and forces TimescaleDB to check all of
+        # them — including decompressing any compressed chunk just to rule
+        # it out, even when nothing in this batch is anywhere near it.
+        delete_filter = Q()
+        for changeset_id, created_at in changesets_to_delete:
+            delete_filter |= Q(changeset_id=changeset_id, created_at=created_at)
+        Changeset.objects.filter(delete_filter).delete()
 
     if changesets_to_create:
         try:

@@ -103,7 +103,6 @@ Full reference: `/api/docs/` (interactive) or `/api/schema/` (raw OpenAPI). High
 | Endpoint | What it returns |
 |---|---|
 | `GET /api/changesets/` | Raw changeset records, paginated, always date-bounded (24h default) |
-| `GET /api/changesets/<id>/` | Single changeset |
 | `GET /api/changesets/timeseries/` | Volume over time, optionally split by dimension |
 | `GET /api/changesets/summary/` | Total changesets / objects changed / average, for a range |
 | `GET /api/changesets/toplist/` | Top N by count or objects changed, for one dimension |

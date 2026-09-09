@@ -2,7 +2,6 @@ from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
-from django.shortcuts import get_object_or_404
 from django.views.generic import TemplateView
 from django.db.models import Count, Value, CharField, Sum
 from django.db.models.functions import TruncDate, ExtractHour, Concat
@@ -106,19 +105,6 @@ class ChangesetQueryView(APIView):
         page = paginator.paginate_queryset(qs, request)
         serializer = ChangesetSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
-
-
-class ChangesetDetailView(APIView):
-    @extend_schema(
-        tags=['changesets'],
-        summary='Get one changeset',
-        description='A single changeset record by its OSM changeset ID.',
-        responses=ChangesetSerializer,
-    )
-    def get(self, request, changeset_id):
-        changeset = get_object_or_404(Changeset, changeset_id=changeset_id)
-        serializer = ChangesetSerializer(changeset)
-        return Response(serializer.data)
 
 
 def _run_import_job(job_id, seq_start, seq_end):
