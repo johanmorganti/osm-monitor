@@ -1,13 +1,18 @@
 # DB benchmark plan: plain Postgres (partitioned) vs TimescaleDB
 
+> **Outcome:** superseded — the beefy machine this plan was written for wasn't available, so the
+> TimescaleDB migration was done directly on the original host instead of benchmarked first.
+> See `docs/ARCHITECTURE.md`'s "Why a hypertable" section for the resulting design. Kept here for
+> the reasoning behind the options that were considered.
+
 ## Context
 
 `osm-monitor` (this repo) ingests OSM changeset data into a single `changesets_changeset`
 table. Today it holds ~23M rows (the past year only); the eventual goal is full 2005-present
 history (~190M+ rows). Almost all real query traffic is time-filtered (see `changesets/views.py`:
 `ChangesetQueryView` defaults to a 24h window, `TimeseriesView`/`SummaryView`/`ToplistView` to 7
-days) — see `TODO.md`'s
-"Table partitioning / TimescaleDB" entry for the full reasoning.
+days) — see `docs/ARCHITECTURE.md`'s "Why a hypertable" section for the full reasoning behind
+what this plan was originally weighing.
 
 **Goal of this benchmark:** decide, before doing the real migration, whether to (a) monthly
 range-partition `changesets_changeset` on plain Postgres, or (b) migrate to a TimescaleDB

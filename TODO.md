@@ -8,22 +8,20 @@ add it here rather than letting it live only in conversation history.
 
 ## Known issues (deferred)
 
-### Table partitioning / TimescaleDB
-Most real usage of this API is time-filtered (dashboard defaults, `/api/changesets/` 24h window,
-etc.), so monthly range partitioning on `created_at` (native Postgres, or via a TimescaleDB
-hypertable) would let those queries prune to just the relevant partition(s) instead of searching
-an index across the whole table — increasingly important as history grows toward the full
-2005-present import (~190M+ rows). TimescaleDB specifically is also attractive because its
-continuous aggregates could replace the hand-rolled `DailyVolume`/`DailyBreakdown` rollup system
-in `changesets/rollups.py` entirely. Neither helps queries that inherently need every row
-regardless of date (e.g. the `FilterValue` backfill) — partition pruning only kicks in when a
-query filters by the partition key. Deferred deliberately: converting the *existing* ~23M-row
-live table (continuously written by the poller) to either is real migration work, not a quick
-add, and shouldn't be done without dedicated planning. Plan floated: benchmark both options
-side by side on a separate, beefier machine using the past-year data we already have locally
-(the dump file), before deciding; if compared on this machine too, run the two tests
-sequentially, never simultaneously — it's resource-constrained enough already (see mem_limit
-notes in docker-compose.yml).
+### TimescaleDB continuous aggregates (replace the hand-rolled rollup system)
+`changesets_changeset` is now a TimescaleDB hypertable (see `docs/ARCHITECTURE.md`) — done
+deliberately as "hypertable only," with continuous aggregates as an explicit follow-up rather
+than bundled into the same pass. `DailyVolume`/`DailyBreakdown` + `refresh_rollups_incremental()`/
+`refresh_rollups_reconcile()` (`changesets/rollups.py`) still exist and work, but are exactly the
+kind of hand-rolled machinery Timescale's continuous aggregates would replace with something
+battle-tested. Concrete motivating incident: right after the migration, the incremental refresh
+tried to process the *entire* freshly-bulk-imported dataset (millions of rows) as one pass — the
+wrong tool for populating from scratch, and it ran for 90+ minutes before being killed in favor of
+a one-time `refresh_rollups()` full rebuild instead. A continuous aggregate's refresh policy is
+designed to handle both the bulk-backfill and steady-incremental cases correctly out of the box.
+Worth scoping as its own piece of work (needs a design pass on what the aggregates should look
+like and how `TimeseriesView`/`SummaryView`/`ToplistView`'s rollup-path queries change), not
+something to bolt on to an already-eventful deploy.
 
 ### Single gunicorn worker on `web`
 No `--workers` flag is set, so `web` runs exactly one sync worker. Any single slow/heavy request

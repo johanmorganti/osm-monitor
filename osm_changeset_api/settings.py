@@ -82,32 +82,15 @@ WSGI_APPLICATION = 'osm_changeset_api.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
-
-if not DEBUG:
-    DATABASES = {
-        'default': dj_database_url.parse(os.environ.get('DATABASE_URL'), conn_max_age=600),
-    }
-else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': os.getenv('SQLITE_PATH', BASE_DIR / 'db.sqlite3'),
-            # The poller writes continuously while the dashboard reads; without
-            # WAL mode and a busy timeout, a request landing mid-write blocks on
-            # SQLite's file lock until it's killed by the gunicorn worker timeout.
-            'OPTIONS': {'timeout': 20},
-        }
-    }
-
-    from django.db.backends.signals import connection_created
-
-    def _enable_sqlite_wal(sender, connection, **kwargs):
-        if connection.vendor == 'sqlite':
-            with connection.cursor() as cursor:
-                cursor.execute('PRAGMA journal_mode=WAL;')
-                cursor.execute('PRAGMA synchronous=NORMAL;')
-
-    connection_created.connect(_enable_sqlite_wal)
+#
+# Postgres/TimescaleDB always — no SQLite fallback. The schema relies on
+# Postgres/Timescale-specific SQL throughout (rollups.py's raw upserts,
+# the expression indexes in Changeset.Meta, the hypertable conversion in
+# migration 0018), so a SQLite path would need its own parallel
+# implementation of most of that rather than being a lighter alternative.
+DATABASES = {
+    'default': dj_database_url.parse(os.environ.get('DATABASE_URL'), conn_max_age=600),
+}
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators

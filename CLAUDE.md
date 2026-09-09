@@ -66,12 +66,19 @@ signature change, don't just rely on the docstring.
 
 ### imagery_used stored as JSON array
 `Changeset.imagery_used` is a `JSONField` holding a list of strings (e.g. `["Bing", "Mapbox"]`).
-Filtering uses `__isnull` + Python-side filtering rather than a DB-level array contains, because
-the project supports SQLite in development.
+Filtering (`imagery_raw` on `ChangesetQueryView`) uses `__contains`, which on Postgres compiles to
+`jsonb`'s native `@>` containment operator — a real DB-level query, not Python-side filtering.
 
 ### SequenceState
 A single-row model (`SequenceState`) tracks the last ingested sequence number so that
 `poll_sequences` can resume after a crash without re-importing history.
+
+### TimescaleDB hypertable
+`changesets_changeset` is a TimescaleDB hypertable (monthly chunks on `created_at`) — see
+`docs/ARCHITECTURE.md`'s "Why a hypertable" section for the full reasoning and the PK/unique-
+constraint trade-off it required (`id` is no longer DB-enforced-unique; real duplicate protection
+is the composite `UNIQUE(changeset_id, created_at)` added in migration
+`0018_timescale_hypertable`). Django ORM code is otherwise unaffected.
 
 ### Design for full history, not just the current subset
 Only the past year of changesets is imported today (~23M rows), but the eventual goal is full
@@ -85,16 +92,20 @@ over periodic full-table rebuilds.
 
 | Path | Role |
 |---|---|
-| `changesets/models.py` | `Changeset` + `SequenceState` models |
+| `changesets/models.py` | `Changeset` (hypertable) + rollup/state/job models |
 | `changesets/views.py` | All views (dashboard, API, import landing) |
 | `changesets/serializers.py` | DRF serializer for `Changeset` |
 | `changesets/urls.py` | API URL patterns (`/api/…`) |
 | `osm_changeset_api/urls.py` | Root URL conf (mounts API + dashboard) |
 | `changesets/osm_fetcher.py` | Fetches & parses OSM replication XML |
+| `changesets/rollups.py` | Precomputed daily aggregates behind the unfiltered dashboard view |
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |
+| `changesets/management/commands/import_from_dump.py` | Bulk planet-dump importer |
 | `changesets/templates/changesets/dashboard.html` | Dashboard HTML shell only |
 | `static/js/dashboard.js` | All Chart.js chart initialisation |
 | `static/output.css` | Compiled Tailwind CSS |
+| `db/init/` | One-time Postgres setup (extensions, Datadog schema) for a fresh DB |
+| `docs/ARCHITECTURE.md` | Deep dive: data flow, why TimescaleDB, observability, deployment |
 
 ## Development notes
 

@@ -54,7 +54,11 @@ class ImportJob(models.Model):
 
 
 class Changeset(models.Model):
-    changeset_id = models.BigIntegerField(unique=True)
+    # Not unique=True here — TimescaleDB requires every UNIQUE constraint on
+    # a hypertable to include the partitioning column, so real duplicate-
+    # import protection is the composite UNIQUE(changeset_id, created_at) in
+    # Meta.constraints instead (see migration 0018_timescale_hypertable).
+    changeset_id = models.BigIntegerField()
     created_at = models.DateTimeField(null=True, db_index=True)
     closed_at = models.DateTimeField(null=True, blank=True)
     open = models.BooleanField(null=True)
@@ -115,6 +119,12 @@ class Changeset(models.Model):
             models.Index(Upper('user'), name='changeset_user_upper_idx'),
             models.Index(Upper('created_by_family'), name='changeset_editor_upper_idx'),
             models.Index(Upper('imagery_family'), name='changeset_imagery_upper_idx'),
+        ]
+        # Replaces changeset_id's old standalone unique=True — TimescaleDB
+        # requires the partitioning column (created_at) in any UNIQUE
+        # constraint on a hypertable.
+        constraints = [
+            models.UniqueConstraint(fields=['changeset_id', 'created_at'], name='changeset_changeset_id_created_at_uniq'),
         ]
 
 

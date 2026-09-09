@@ -256,8 +256,7 @@ def import_changeset_batch(changeset_elements, log_extra):
     """Batched existence-check + insert/update for a list of <changeset> XML
     elements, from any source (a replication sequence file, or a slice of the
     full planet changesets dump). One query for the whole batch instead of
-    one per changeset — costly once the DB is a separate networked Postgres
-    instance rather than a same-process SQLite file.
+    one per changeset, since the DB is a separate networked Postgres instance.
 
     Returns (created_count, skipped_count, updated_count)."""
     existing_changes_count_by_id = dict(
