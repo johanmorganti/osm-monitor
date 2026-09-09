@@ -50,30 +50,6 @@ a real stored column (segmentby requires an actual column, not an expression) �
 the final column list once, before paying the backlog compression cost, than to compress now and
 redo it later.
 
-### Migration race when a non-idempotent RunSQL migration runs during deploy
-`entrypoint.sh` runs `python manage.py migrate --no-input` on *every* container start, and both
-`web` and `poller` run it (same image, same entrypoint). A migration whose `RunSQL` isn't
-idempotent (e.g. `SELECT add_compression_policy(...)` in `0019_compress_changesets`, which errors
-if you try to register the same policy twice `IF NOT EXISTS`-style, but doesn't stop you from
-registering distinct duplicate jobs) can run concurrently from multiple containers before any of
-them commits the migration as applied, producing duplicate side effects. Hit this directly:
-`0019_compress_changesets` registered 3 identical `policy_compression` jobs instead of 1 after a
-routine `docker compose up -d web poller` (cleaned up manually via `delete_job()`). Not a problem
-for ordinary schema-only migrations (those really are idempotent via `django_migrations`), only
-ones with real side effects outside the schema. Worth either moving `migrate` to a single one-shot
-deploy step instead of per-service entrypoint, or making any future non-idempotent `RunSQL` check
-for its own prior effect before applying.
-
-### Single gunicorn worker on `web`
-No `--workers` flag is set, so `web` runs exactly one sync worker. Any single slow/heavy request
-blocks every other request until it finishes or hits gunicorn's 30s worker timeout and gets
-SIGKILLed — and the query it was running often keeps executing server-side on Postgres as an
-orphaned backend afterward (client gone, server hasn't noticed yet), silently consuming
-CPU/IO and sometimes blocking *other* queries behind a lock it's still holding. This caused
-several confusing incidents this session before being traced back to the same root cause each
-time. Worth adding more workers (`--workers N`) and/or a statement_timeout on the DB connection
-so a slow query can't outlive the request indefinitely.
-
 ### Datadog log pipeline severity remapping
 Postgres `LOG:`-level lines are showing up in Datadog with `status:error`. Cosmetic/noisy, not
 a functional bug. Needs a manual fix in the Datadog UI (Logs → Pipelines) — no MCP tool access

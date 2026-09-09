@@ -57,6 +57,18 @@ services:
           }
         }
 
+  # One-shot: runs migrations once before web/poller start, instead of each
+  # of them running `migrate` themselves on every container start (the old
+  # entrypoint.sh behavior) — that raced when both started together, see
+  # TODO.md's "Migration race" entry.
+  migrate:
+    build: .
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python manage.py migrate --no-input
+
   web:
     build: .
     restart: unless-stopped
@@ -64,6 +76,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       DD_SERVICE: osm-monitor
       DD_ENV: production
@@ -91,6 +105,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       DD_SERVICE: osm-monitor-poller
       DD_ENV: production
