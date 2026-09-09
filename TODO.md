@@ -23,6 +23,47 @@ Worth scoping as its own piece of work (needs a design pass on what the aggregat
 like and how `TimeseriesView`/`SummaryView`/`ToplistView`'s rollup-path queries change), not
 something to bolt on to an already-eventful deploy.
 
+Also the place to fix a related, currently-open gap: a `contributor`/`editor`/`imagery` filter on
+`SummaryView`/`ToplistView` always falls back to scanning raw `Changeset` rows
+(`_filtered_changesets` in `changesets/views.py`), which is fine over a week but times out over a
+full year (confirmed: `summary/?editor=X` over a year hit gunicorn's 30s worker timeout and left
+an orphaned Postgres backend running for 2+ minutes afterward, resistant to `pg_cancel_backend`).
+`DailyBreakdown` already stores per-name-per-day rows for exactly these three dimensions, so a
+*single*-dimension filter could be served from there instead — deliberately not hand-rolled onto
+the existing rollup tables now, in favor of building the equivalent as a continuous aggregate when
+this item gets picked up.
+
+### Compression backlog not yet compressed — policy manually paused
+`changesets_changeset` has compression enabled (`0019_compress_changesets`, segmented by
+`created_by_family`/editor, 30-day policy) but the policy job (job_id 1000) is currently
+**unscheduled** (`SELECT alter_job(1000, scheduled => false);`) and only one chunk is actually
+compressed. First activation tried to compress the entire ~13-month backlog (12 real chunks,
+~11GB) in one call — the same "processes the whole backlog in one pass" trap as the rollup
+incremental-refresh incident — and was killed after 18+ minutes to compress a single 84MB chunk
+while actively starving other queries (a poller rollup insert stuck 12+ minutes). Deliberately
+left paused rather than worked through gradually; re-enabling needs either a controlled
+one-chunk-at-a-time manual pass or accepting a similar I/O spike. Before doing that backlog pass,
+reconsider `compress_segmentby`: multiple columns are supported (editor ~778 distinct, imagery
+~773 distinct — both fine cardinality-wise for segment-exclusion benefit on either filter
+independently), and a future `country` filter (extrapolated from bbox) could join it once that's
+a real stored column (segmentby requires an actual column, not an expression) — cheaper to decide
+the final column list once, before paying the backlog compression cost, than to compress now and
+redo it later.
+
+### Migration race when a non-idempotent RunSQL migration runs during deploy
+`entrypoint.sh` runs `python manage.py migrate --no-input` on *every* container start, and both
+`web` and `poller` run it (same image, same entrypoint). A migration whose `RunSQL` isn't
+idempotent (e.g. `SELECT add_compression_policy(...)` in `0019_compress_changesets`, which errors
+if you try to register the same policy twice `IF NOT EXISTS`-style, but doesn't stop you from
+registering distinct duplicate jobs) can run concurrently from multiple containers before any of
+them commits the migration as applied, producing duplicate side effects. Hit this directly:
+`0019_compress_changesets` registered 3 identical `policy_compression` jobs instead of 1 after a
+routine `docker compose up -d web poller` (cleaned up manually via `delete_job()`). Not a problem
+for ordinary schema-only migrations (those really are idempotent via `django_migrations`), only
+ones with real side effects outside the schema. Worth either moving `migrate` to a single one-shot
+deploy step instead of per-service entrypoint, or making any future non-idempotent `RunSQL` check
+for its own prior effect before applying.
+
 ### Single gunicorn worker on `web`
 No `--workers` flag is set, so `web` runs exactly one sync worker. Any single slow/heavy request
 blocks every other request until it finishes or hits gunicorn's 30s worker timeout and gets

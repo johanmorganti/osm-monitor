@@ -16,7 +16,14 @@ services:
     # takes effect, since they can't be preloaded and self-installed in the
     # same step (see changesets/migrations/0018_timescale_hypertable.py and
     # db/init/01-datadog-dbm.sql).
-    command: postgres -c effective_cache_size=768MB -c max_parallel_workers_per_gather=1 -c shared_preload_libraries=timescaledb,pg_stat_statements -c track_io_timing=on -c track_activity_query_size=4096
+    # work_mem=32MB: default 4MB was forcing GROUP BY aggregates over the
+    # rollup tables (e.g. ToplistView's contributor breakdown, ~223K groups)
+    # to spill to disk mid-query — pure wasted I/O on an already I/O-
+    # constrained host. 32MB comfortably covers what we've observed spilling
+    # (~16MB) without risking the container's mem_limit under normal
+    # concurrency (this host serves one gunicorn worker + the poller, not a
+    # high-concurrency pool).
+    command: postgres -c effective_cache_size=768MB -c max_parallel_workers_per_gather=1 -c shared_preload_libraries=timescaledb,pg_stat_statements -c track_io_timing=on -c track_activity_query_size=4096 -c work_mem=32MB
     mem_limit: 1200m
     mem_reservation: 512m
     ports:
@@ -64,6 +71,13 @@ services:
       DD_DOGSTATSD_URL: unix:///var/run/datadog/dsd.socket
       DD_LOGS_INJECTION: "true"
       DD_VERSION: ${GIT_VERSION:-unknown}
+      # Web-only, not set for poller: a request-serving query has no
+      # business running longer than a user will wait, and failing fast
+      # avoids the orphaned-backend pileup seen when gunicorn's own 30s
+      # worker timeout kills the client but leaves the query running
+      # server-side. Not applied to poller/management commands, which
+      # legitimately run long queries (rollup full rebuilds, bulk imports).
+      DB_STATEMENT_TIMEOUT_MS: "10000"
     mem_limit: 512m
     ports:
       - "5006:8000"

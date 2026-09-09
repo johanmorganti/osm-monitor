@@ -92,6 +92,14 @@ DATABASES = {
     'default': dj_database_url.parse(os.environ.get('DATABASE_URL'), conn_max_age=600),
 }
 
+# Web-only request-time cap (see docker-compose.yml's DB_STATEMENT_TIMEOUT_MS
+# comment on the web service) — unset for poller/management commands, which
+# need to run long queries (rollup rebuilds, bulk imports) without being cut
+# off.
+_stmt_timeout_ms = os.getenv('DB_STATEMENT_TIMEOUT_MS')
+if _stmt_timeout_ms:
+    DATABASES['default'].setdefault('OPTIONS', {})['options'] = f'-c statement_timeout={_stmt_timeout_ms}'
+
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
 
