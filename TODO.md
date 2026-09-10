@@ -8,23 +8,23 @@ add it here rather than letting it live only in conversation history.
 
 ## Known issues (deferred)
 
-### TimescaleDB continuous aggregates (replace the hand-rolled rollup system) — IN PROGRESS
+### TimescaleDB continuous aggregates (replace the hand-rolled rollup system) — MOSTLY DONE
 Migration `0020_continuous_aggregates` created 5 CAs (`cagg_volume_hourly` + one daily CA per
-dimension: editor/imagery/locale/contributor), `WITH NO DATA` + policies, meant to eventually
-replace `DailyVolume`/`DailyBreakdown` + `refresh_rollups_incremental()`/`refresh_rollups_
-reconcile()` (`changesets/rollups.py`). Status: `cagg_volume_hourly` is backfilled (manual `CALL
-refresh_continuous_aggregate`, run in small ranges after an initial single-huge-range attempt
-appeared to stall — see that incident's own note above the corresponding commit). The 4 dimension
-CAs are **not yet backfilled**. Remaining steps (see the approved plan this was built from, or
-redo the design if the plan file is gone):
-1. Backfill the 4 dimension CAs (same paced/monitored approach as volume).
-2. Spot-check backfilled totals against current `DailyVolume`/`DailyBreakdown`.
-3. Switch `TimeseriesView`/`SummaryView`/`ToplistView` to query the CAs instead (add 5 small
-   unmanaged Django models) — this is also where a single-dimension `contributor`/`editor`/
-   `imagery` filter on `SummaryView`/`ToplistView` stops falling back to a raw `Changeset` scan
-   (`_filtered_changesets`), which is fine over a week but times out over a full year (confirmed:
-   `summary/?editor=X` over a year hit gunicorn's 30s worker timeout and left an orphaned Postgres
-   backend running for 2+ minutes, resistant to `pg_cancel_backend`).
+dimension: editor/imagery/locale/contributor), meant to eventually replace `DailyVolume`/
+`DailyBreakdown` + `refresh_rollups_incremental()`/`refresh_rollups_reconcile()`
+(`changesets/rollups.py`). Status: all 5 CAs are backfilled (manual `CALL
+refresh_continuous_aggregate`, one chunk-month at a time — 56 calls total — after an initial
+single-huge-range attempt on `cagg_volume_hourly` appeared to stall), spot-checked against raw
+`changesets_changeset` as ground truth (the *old* rollup tables turned out to be the stale ones,
+off by ~15%, not the new CAs — this session's poller downtime had let them drift), and `views.py`
+now queries them: `TimeseriesView`/`SummaryView`/`ToplistView`'s unfiltered paths, plus
+`SummaryView`'s and (as of the group_by=None case) `TimeseriesView`'s single-dimension-filtered
+fast paths. Confirmed fixed: `summary/?editor=X` over a full year (was: 30s gunicorn timeout +
+orphaned Postgres backend) now 66ms; unfiltered `toplist/?dimension=contributor&metric=objects`
+over 3 months (was: 30s+ timeout) now ~1.9s; `timeseries/?imagery=X` (no group_by) over 3 months
+(was: 30s timeout) now ~240ms.
+
+Remaining steps:
 4. Update `poll_sequences.py`: drop the old rollup refresh calls/flags, keep `FilterValue`'s
    incremental population (split into its own function).
 5. Add auto-refresh to `import_from_dump.py` (track first `created_at` seen, `CALL refresh_
@@ -35,13 +35,22 @@ redo the design if the plan file is gone):
    `rollups.py`.
 7. Update `docs/ARCHITECTURE.md`'s rollup section.
 
-Known scope limit, not a bug: none of the 5 CAs help a *combined* multi-dimension filter (e.g.
-`editor=X&imagery=Y` together) — that still falls back to raw `Changeset` scanning, same as today.
-No CA covers that shape; would need a dedicated CA per dimension *pair*, not attempted here since
-it wasn't the case that actually timed out (confirmed via direct testing: raw-scanned single- and
-2-dimension filtered queries are fast over realistic week-scale ranges once the missing indexes /
-`work_mem` fixes from this session landed — it's specifically the *unfiltered high-cardinality*
-toplist case, e.g. `dimension=contributor`, that's slow and what the CAs are actually fixing).
+**Real, confirmed remaining gap (corrects this entry's earlier "known scope limit" note, which
+was wrong about week-scale-only being the risk)**: any *cross-dimension* filtered query — a
+`contributor`/`editor`/`locale` toplist filtered by `imagery` (or vice versa), or `TimeseriesView`
+with both a `group_by` and a filter set — has no matching CA (each CA only tracks its own single
+dimension) and falls back to raw `Changeset` scanning. Confirmed via direct test: `toplist/
+?dimension={contributor,editor,imagery,locale}&imagery=Mapbox` over a 3-month range all hit the
+30s statement timeout and got cancelled, for every dimension tried. Root cause, confirmed via
+`timescaledb_information.compression_settings`: the hypertable's compression is `segmentby
+created_by_family` (editor) only (see "Compression backlog" below) — a query that filters or
+groups by anything *other* than editor can't exclude compressed segments and ends up decompressing
+everything in range. This is *not* fixable by adding more CAs (a CA per dimension *pair* would be
+needed, and doesn't scale — see CLAUDE.md's "design for full history" principle); the real fix is
+either widening `compress_segmentby` (cost: lower compression ratio, and a backlog-recompression
+pass — see below) or accepting that cross-dimension-filtered toplists stay slow/degrade gracefully
+(e.g. UI disables or caps the range for that combination). Needs a decision before doing more work
+here.
 
 ### Compression backlog not yet compressed — policy manually paused
 `changesets_changeset` has compression enabled (`0019_compress_changesets`, segmented by
@@ -58,7 +67,10 @@ reconsider `compress_segmentby`: multiple columns are supported (editor ~778 dis
 independently), and a future `country` filter (extrapolated from bbox) could join it once that's
 a real stored column (segmentby requires an actual column, not an expression) — cheaper to decide
 the final column list once, before paying the backlog compression cost, than to compress now and
-redo it later.
+redo it later. **Confirmed concrete cost of the current editor-only choice**: see the continuous-
+aggregates entry above — any toplist/timeseries query filtered or grouped by `imagery`/`locale`/
+`contributor` (i.e. every dimension except editor) can't exclude compressed segments and times out
+over multi-month ranges once real data hits those chunks.
 
 ### Revisit gunicorn's gthread switch with real data
 `web` moved from `--workers 2` (plain sync) to `--worker-class gthread --workers 2 --threads 8`

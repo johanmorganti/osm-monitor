@@ -166,6 +166,63 @@ class DailyBreakdown(models.Model):
         indexes = [models.Index(fields=['category', 'name'])]
 
 
+class CaggVolumeHourly(models.Model):
+    """Unmanaged mapping onto the cagg_volume_hourly continuous aggregate
+    (see migration 0020_continuous_aggregates) — replaces DailyVolume.
+    managed=False: Django never creates/migrates this table, TimescaleDB
+    owns its schema and refresh via the CA's own policy."""
+    bucket = models.DateTimeField(primary_key=True)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_volume_hourly'
+
+
+class _CaggDaily(models.Model):
+    """Shared shape for the four per-dimension daily continuous aggregates
+    (cagg_editor_daily, cagg_imagery_daily, cagg_locale_daily,
+    cagg_contributor_daily) — replaces DailyBreakdown's per-category rows,
+    but as four separate CAs rather than one polymorphic table: TimescaleDB
+    doesn't support UNION inside a continuous aggregate's defining query, so
+    one combined view isn't possible (see docs/ARCHITECTURE.md)."""
+    # primary_key=True here isn't a real uniqueness claim (the actual key is
+    # the composite (bucket, name)) — it's only to stop Django implicitly
+    # adding an `id` AutoField and then querying a column these views don't
+    # have. Never relied on for .get()/pk lookups, only filter()/aggregate().
+    bucket = models.DateTimeField(primary_key=True)
+    name = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        abstract = True
+        app_label = 'changesets'
+        managed = False
+
+
+class CaggEditorDaily(_CaggDaily):
+    class Meta(_CaggDaily.Meta):
+        db_table = 'cagg_editor_daily'
+
+
+class CaggImageryDaily(_CaggDaily):
+    class Meta(_CaggDaily.Meta):
+        db_table = 'cagg_imagery_daily'
+
+
+class CaggLocaleDaily(_CaggDaily):
+    class Meta(_CaggDaily.Meta):
+        db_table = 'cagg_locale_daily'
+
+
+class CaggContributorDaily(_CaggDaily):
+    class Meta(_CaggDaily.Meta):
+        db_table = 'cagg_contributor_daily'
+
+
 class FilterValue(models.Model):
     """Distinct known values for the dashboard's contributor/editor/imagery
     autocomplete. Deduplicated globally — unlike DailyBreakdown, there's no

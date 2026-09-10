@@ -7,7 +7,10 @@ from django.db.models import Count, Value, CharField, Sum
 from django.db.models.functions import TruncDate, ExtractHour, Concat
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, OpenApiTypes
-from .models import Changeset, SequenceState, ImportJob, DailyVolume, DailyBreakdown, FilterValue
+from .models import (
+    Changeset, SequenceState, ImportJob, FilterValue,
+    CaggVolumeHourly, CaggEditorDaily, CaggImageryDaily, CaggLocaleDaily, CaggContributorDaily,
+)
 from .serializers import ChangesetSerializer
 from .osm_fetcher import fetch_and_process_changesets
 import threading
@@ -203,15 +206,39 @@ class DashboardView(TemplateView):
     template_name = 'changesets/dashboard.html'
 
 
-# Dimension name (as used in the public API and in DailyBreakdown.category)
-# -> the raw Changeset field it corresponds to. Shared by TimeseriesView's
-# group_by and ToplistView's dimension.
+# Dimension name (as used in the public API and in CAGG_MODELS below) -> the
+# raw Changeset field it corresponds to. Shared by TimeseriesView's group_by
+# and ToplistView's dimension.
 DIMENSION_FIELDS = {
     'contributor': 'user',
     'editor': 'created_by_family',
     'imagery': 'imagery_family',
     'locale': 'locale_family',
 }
+
+# One continuous aggregate per dimension (see migration 0020) — used for
+# TimeseriesView's group_by and ToplistView's dimension (all 4 valid here).
+# _single_filter_dimension below only ever returns contributor/editor/
+# imagery (locale isn't wired up as a *filter* param — see TODO.md's "Add
+# locale as a filter param"), so looking it up in this same dict for
+# SummaryView's filtered fast path is safe without a separate mapping.
+CAGG_MODELS = {
+    'contributor': CaggContributorDaily,
+    'editor': CaggEditorDaily,
+    'imagery': CaggImageryDaily,
+    'locale': CaggLocaleDaily,
+}
+
+
+def _single_filter_dimension(contributor, editor, imagery):
+    """(dimension, value) if exactly one of contributor/editor/imagery is
+    set, else None. That's the only shape a per-dimension continuous
+    aggregate can answer directly — SummaryView just needs a scalar total,
+    which the matching CA already has pre-aggregated. Two or more filters
+    together still need the raw Changeset table: no CA covers that shape
+    (each one only tracks its own single dimension) — see TODO.md."""
+    set_filters = [(n, v) for n, v in (('contributor', contributor), ('editor', editor), ('imagery', imagery)) if v]
+    return set_filters[0] if len(set_filters) == 1 else None
 
 
 def _resolve_range_and_filters(request):
@@ -266,14 +293,16 @@ _FILTER_PARAMS = [
 class TimeseriesView(APIView):
     """Changeset volume over time. Without group_by: plain hourly volume.
     With group_by: daily volume split into up to 20 series — the top names
-    by total count over the range (the rollup/raw split below can't offer
-    hourly granularity once grouped, since DailyBreakdown only has a daily
-    grain — there's no hourly equivalent to fall back to).
+    by total count over the range (the per-dimension continuous aggregates
+    below only have a daily grain — there's no hourly equivalent to fall
+    back to once grouped).
 
-    Backed by the DailyVolume/DailyBreakdown rollup tables when unfiltered;
-    a contributor/editor/imagery filter falls back to the raw Changeset
-    table, since the rollups don't carry those dimensions (see
-    changesets/rollups.py)."""
+    Backed by continuous aggregates (see migration 0020) when unfiltered, and
+    also when exactly one of contributor/editor/imagery is set with no
+    group_by (that dimension's own CA, filtered by name — daily grain, same
+    as the grouped case). group_by combined with a filter is cross-dimension
+    (e.g. "top editors, filtered by imagery") and falls back to the raw
+    Changeset table, since no CA carries two filter dimensions at once."""
 
     @extend_schema(
         tags=['changesets'],
@@ -303,39 +332,64 @@ class TimeseriesView(APIView):
 
         start_date, end_date, contributor, editor, imagery, filters = _resolve_range_and_filters(request)
         filters = {**filters, 'group_by': group_by}
+        single = _single_filter_dimension(contributor, editor, imagery)
 
         if not (contributor or editor or imagery):
             data = self._from_rollups(start_date, end_date, group_by)
+        elif single and group_by is None:
+            # Plain volume-over-time for exactly one filtered dimension is
+            # still a shape that dimension's own CA can answer directly (see
+            # _single_filter_dimension) — same fast path as SummaryView's
+            # scalar total, just not summed down to one number. A group_by
+            # combined with a filter is still cross-dimension (e.g. "top
+            # editors, filtered by imagery") and stays on the raw fallback.
+            dimension, value = single
+            data = self._from_rollups_single_filtered(start_date, end_date, dimension, value)
         else:
             data = self._from_raw(start_date, end_date, contributor, editor, imagery, group_by)
         return Response({'filters': filters, **data})
 
+    def _from_rollups_single_filtered(self, start_date, end_date, dimension, value):
+        end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+        rows = list(
+            CAGG_MODELS[dimension].objects.filter(name__iexact=value, bucket__gte=start_date, bucket__lt=end_date_exclusive)
+            .order_by('bucket')
+        )
+        dates = [r.bucket.date().isoformat() for r in rows]
+        return {'dates': dates, 'series': [{'name': 'changesets', 'counts': [r.cnt for r in rows]}]}
+
     def _from_rollups(self, start_date, end_date, group_by):
+        end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+
         if group_by is None:
             volume = list(
-                DailyVolume.objects.filter(date__gte=start_date, date__lte=end_date)
-                .order_by('date', 'hour')[:360]
+                CaggVolumeHourly.objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive)
+                .order_by('bucket')[:360]
             )
-            dates = [f'{v.date.isoformat()} {v.hour}:00' for v in volume]
-            return {'dates': dates, 'series': [{'name': 'changesets', 'counts': [v.count for v in volume]}]}
+            dates = [f'{v.bucket.date().isoformat()} {v.bucket.hour}:00' for v in volume]
+            return {'dates': dates, 'series': [{'name': 'changesets', 'counts': [v.cnt for v in volume]}]}
+
+        model = CAGG_MODELS.get(group_by)
+        if model is None:
+            return {'dates': [], 'series': []}
 
         top = list(
-            DailyBreakdown.objects.filter(category=group_by, date__gte=start_date, date__lte=end_date)
-            .values('name').annotate(total_count=Sum('count')).order_by('-total_count')[:20]
+            model.objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive)
+            .values('name').annotate(total_count=Sum('cnt')).order_by('-total_count')[:20]
         )
         names = [row['name'] for row in top]
         if not names:
             return {'dates': [], 'series': []}
 
         rows = (
-            DailyBreakdown.objects.filter(category=group_by, name__in=names, date__gte=start_date, date__lte=end_date)
-            .values('date', 'name', 'count')
+            model.objects.filter(name__in=names, bucket__gte=start_date, bucket__lt=end_date_exclusive)
+            .values('bucket', 'name', 'cnt')
         )
         per_name_day = defaultdict(dict)
         dates = set()
         for r in rows:
-            day = r['date'].isoformat()
-            per_name_day[r['name']][day] = r['count']
+            day = r['bucket'].date().isoformat()
+            per_name_day[r['name']][day] = r['cnt']
             dates.add(day)
         dates = sorted(dates)
         series = [{'name': name, 'counts': [per_name_day[name].get(d, 0) for d in dates]} for name in names]
@@ -380,8 +434,11 @@ class TimeseriesView(APIView):
 class SummaryView(APIView):
     """Single-number KPIs for a date range: total_changesets, total_objects
     (objects changed), avg_objects (objects per changeset). Backed by the
-    DailyVolume rollup table when unfiltered; a contributor/editor/imagery
-    filter falls back to the raw Changeset table."""
+    cagg_volume_hourly continuous aggregate when unfiltered, or the matching
+    per-dimension CA when exactly one of contributor/editor/imagery is set
+    (it just needs a scalar total, which that CA already has pre-aggregated).
+    Two or more filters together still fall back to the raw Changeset table
+    — no CA covers that shape, each one only tracks its own dimension."""
 
     @extend_schema(
         tags=['changesets'],
@@ -400,10 +457,17 @@ class SummaryView(APIView):
     )
     def get(self, request):
         start_date, end_date, contributor, editor, imagery, filters = _resolve_range_and_filters(request)
+        end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+        single = _single_filter_dimension(contributor, editor, imagery)
 
         if not (contributor or editor or imagery):
-            totals = DailyVolume.objects.filter(date__gte=start_date, date__lte=end_date).aggregate(
-                total_changesets=Sum('count'), total_objects=Sum('changes_sum'))
+            totals = CaggVolumeHourly.objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive).aggregate(
+                total_changesets=Sum('cnt'), total_objects=Sum('changes_sum'))
+        elif single:
+            dimension, value = single
+            totals = CAGG_MODELS[dimension].objects.filter(
+                name__iexact=value, bucket__gte=start_date, bucket__lt=end_date_exclusive
+            ).aggregate(total_changesets=Sum('cnt'), total_objects=Sum('changes_sum'))
         else:
             changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery)
             totals = changesets.aggregate(total_changesets=Count('id'), total_objects=Sum('changes_count'))
@@ -421,9 +485,12 @@ class SummaryView(APIView):
 
 
 class ToplistView(APIView):
-    """Top N by a metric, for one dimension (default N=20). Backed by the
-    DailyBreakdown rollup table when unfiltered; a contributor/editor/
-    imagery filter falls back to the raw Changeset table."""
+    """Top N by a metric, for one dimension (default N=20). Backed by that
+    dimension's continuous aggregate when unfiltered; a contributor/editor/
+    imagery filter falls back to the raw Changeset table — no CA can answer
+    "top imagery, filtered by editor" (each CA only tracks its own single
+    dimension, not cross-dimension breakdowns), so filtering doesn't get a
+    fast path here the way SummaryView's scalar total does."""
 
     DEFAULT_LIMIT = 20
     MAX_LIMIT = 1000
@@ -480,9 +547,10 @@ class ToplistView(APIView):
         return Response({'filters': filters, 'results': results})
 
     def _from_rollups(self, start_date, end_date, dimension, metric, limit):
-        agg_field = 'count' if metric == 'count' else 'changes_sum'
+        end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+        agg_field = 'cnt' if metric == 'count' else 'changes_sum'
         rows = (
-            DailyBreakdown.objects.filter(category=dimension, date__gte=start_date, date__lte=end_date)
+            CAGG_MODELS[dimension].objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive)
             .values('name').annotate(value=Sum(agg_field)).order_by('-value')[:limit]
         )
         return [{'name': r['name'], 'value': r['value']} for r in rows]
