@@ -22,7 +22,10 @@ if [ "$#" -eq 0 ]; then
     # request slots costs only modestly more than today's 2 plain workers,
     # not ~8x more the way reaching 16 via --workers 16 would. Postgres
     # max_connections=100 comfortably covers the worst case (confirmed).
-    exec ddtrace-run gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers 2 --threads 8
+    # --timeout 40: must stay comfortably above DB_STATEMENT_TIMEOUT_MS
+    # (docker-compose.yml, 30s) so the DB cancels a slow query cleanly
+    # before gunicorn would SIGKILL the worker out from under it.
+    exec ddtrace-run gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers 2 --threads 8 --timeout 40
 fi
 
 exec ddtrace-run "$@"

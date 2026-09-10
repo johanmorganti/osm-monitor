@@ -27,6 +27,28 @@ const MAX_SERIES = CATEGORICAL.length; // beyond this, fold into "Other" rather 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// String-sliced rather than Date-parsed — the API's date labels ("2026-09-02"
+// or "2026-09-02 0:00") aren't full ISO 8601 (no "T"), which native Date
+// parsing handles inconsistently across browsers. Only used for axis tick
+// display; tooltips still show the original full label.
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function shortDate(dateStr) {
+    const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${MONTH_ABBR[parseInt(m[2], 10) - 1]} ${parseInt(m[3], 10)}` : dateStr;
+}
+
+// Shared x-axis config for every time-series chart — a handful of short,
+// evenly-spaced date labels instead of Chart.js's default of showing (and
+// often rotating) every single one, which is what was crowding out the
+// actual chart in the smaller "Over Time" widgets.
+function dateAxis(dates, stacked) {
+    return {
+        stacked: !!stacked,
+        grid: { display: false },
+        ticks: { maxTicksLimit: 6, autoSkip: true, maxRotation: 0, callback: (val, idx) => shortDate(dates[idx]) },
+    };
+}
+
 // Collapses series past MAX_SERIES into a single "Other" series (summed
 // elementwise), instead of cycling colors past the fixed categorical set.
 function foldToTopSeries(series) {
@@ -55,18 +77,36 @@ function stackedBar(canvasId, dates, rawSeries) {
         },
         options: {
             responsive: true,
-            plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } } },
+            // No legend here — the ranking chart directly above this one
+            // (horizontalBar, same palette, same top-N order) already shows
+            // every name's color, so a second legend on this smaller chart
+            // was purely redundant, at the cost of most of its height.
+            plugins: { legend: { display: false } },
             scales: {
-                x: { stacked: true, grid: { display: false } },
+                x: dateAxis(dates, true),
                 y: { stacked: true, beginAtZero: true, border: { color: AXIS_BASELINE } },
             },
         },
     });
 }
 
+// Sets `field` to the clicked bar's name in the current URL and reloads —
+// every filter (start_date/end_date/contributor/editor/imagery) already
+// lives in the URL and every fetch reads from it, so this needs no client-
+// side re-fetch orchestration, just a normal navigation to the new query.
+// Additive: only the clicked field changes, any other filter already set
+// stays in place.
+function applyFilter(field, value) {
+    const params = new URLSearchParams(window.location.search);
+    params.set(field, value);
+    window.location.search = params.toString();
+}
+
 // A ranking list is one measure, not several series — every bar takes the
 // same identity color; order and label carry identity, not hue.
-function horizontalBar(canvasId, labels, data, label) {
+// `filterField` (optional) is the URL filter param clicking a bar should
+// set (e.g. 'editor') — omit it for a dimension with no filter support yet.
+function horizontalBar(canvasId, labels, data, label, filterField) {
     const ctx = document.getElementById(canvasId);
     if (!ctx || !labels.length) return;
     new Chart(ctx.getContext('2d'), {
@@ -86,10 +126,23 @@ function horizontalBar(canvasId, labels, data, label) {
             indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
+            plugins: {
+                legend: { display: false },
+                tooltip: !filterField ? undefined : {
+                    callbacks: { footer: () => 'Click to filter' },
+                    footerFont: { style: 'italic', weight: 'normal' },
+                },
+            },
             scales: {
                 x: { beginAtZero: true, grid: { color: GRID_HAIRLINE } },
                 y: { ticks: { autoSkip: false }, grid: { display: false }, border: { color: AXIS_BASELINE } },
+            },
+            onClick: !filterField ? undefined : (evt, elements, chart) => {
+                if (!elements.length) return;
+                applyFilter(filterField, chart.data.labels[elements[0].index]);
+            },
+            onHover: !filterField ? undefined : (evt, elements) => {
+                evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
             },
         },
     });
@@ -110,6 +163,8 @@ function renderVolumeChart(volume) {
                 backgroundColor: 'rgba(42, 120, 214, 0.10)',
                 borderWidth: 2,
                 pointRadius: 0,
+                pointHoverRadius: 4,
+                pointHoverBackgroundColor: CATEGORICAL[0],
                 tension: 0.1,
                 fill: true,
             }],
@@ -117,8 +172,14 @@ function renderVolumeChart(volume) {
         options: {
             responsive: true,
             plugins: { legend: { display: false } },
+            // Points are invisible (pointRadius: 0) until hovered, so the
+            // default intersect:true mode — which requires the cursor to
+            // land exactly on the thin line itself — made the chart feel
+            // unresponsive. index/intersect:false triggers on proximity to
+            // a data point's x position instead, anywhere in that column.
+            interaction: { mode: 'index', intersect: false },
             scales: {
-                x: { grid: { display: false } },
+                x: dateAxis(volume.dates),
                 y: { beginAtZero: true, grid: { color: GRID_HAIRLINE } },
             },
         },
@@ -184,7 +245,7 @@ loadWidget('changesetChart', apiUrl('/api/changesets/timeseries/'), volume => {
 
 loadWidget('topEditorsChart', apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'count' }), topEditors => {
     showChart('topEditorsChart');
-    horizontalBar('topEditorsChart', topEditors.results.map(r => r.name), topEditors.results.map(r => r.value), 'Changesets');
+    horizontalBar('topEditorsChart', topEditors.results.map(r => r.name), topEditors.results.map(r => r.value), 'Changesets', 'editor');
 });
 loadWidget('topEditorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'editor' }), editorsTime => {
     showChart('topEditorsTimeChart');
@@ -193,7 +254,7 @@ loadWidget('topEditorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_
 
 loadWidget('topImageriesChart', apiUrl('/api/changesets/toplist/', { dimension: 'imagery', metric: 'count' }), topImageries => {
     showChart('topImageriesChart');
-    horizontalBar('topImageriesChart', topImageries.results.map(r => r.name), topImageries.results.map(r => r.value), 'Changesets');
+    horizontalBar('topImageriesChart', topImageries.results.map(r => r.name), topImageries.results.map(r => r.value), 'Changesets', 'imagery');
 });
 loadWidget('topImageriesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'imagery' }), imageriesTime => {
     showChart('topImageriesTimeChart');
@@ -211,11 +272,11 @@ loadWidget('topLocalesTimeChart', apiUrl('/api/changesets/timeseries/', { group_
 
 loadWidget('topContributorsByObjectsChart', apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'objects' }), topContributorsByObjects => {
     showChart('topContributorsByObjectsChart');
-    horizontalBar('topContributorsByObjectsChart', topContributorsByObjects.results.map(r => r.name), topContributorsByObjects.results.map(r => r.value), 'Objects changed');
+    horizontalBar('topContributorsByObjectsChart', topContributorsByObjects.results.map(r => r.name), topContributorsByObjects.results.map(r => r.value), 'Objects changed', 'contributor');
 });
 loadWidget('topEditorsByObjectsChart', apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'objects' }), topEditorsByObjects => {
     showChart('topEditorsByObjectsChart');
-    horizontalBar('topEditorsByObjectsChart', topEditorsByObjects.results.map(r => r.name), topEditorsByObjects.results.map(r => r.value), 'Objects changed');
+    horizontalBar('topEditorsByObjectsChart', topEditorsByObjects.results.map(r => r.name), topEditorsByObjects.results.map(r => r.value), 'Objects changed', 'editor');
 });
 
 // Summary has no chart/spinner of its own — it fills the KPI numbers (which

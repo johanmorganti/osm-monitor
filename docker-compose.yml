@@ -90,11 +90,13 @@ services:
       DD_VERSION: ${GIT_VERSION:-unknown}
       # Web-only, not set for poller: a request-serving query has no
       # business running longer than a user will wait, and failing fast
-      # avoids the orphaned-backend pileup seen when gunicorn's own 30s
-      # worker timeout kills the client but leaves the query running
-      # server-side. Not applied to poller/management commands, which
-      # legitimately run long queries (rollup full rebuilds, bulk imports).
-      DB_STATEMENT_TIMEOUT_MS: "10000"
+      # avoids the orphaned-backend pileup seen when gunicorn's own worker
+      # timeout kills the client but leaves the query running server-side.
+      # Must stay comfortably under gunicorn's --timeout (entrypoint.sh) —
+      # equal-or-higher would race it instead of cancelling first. Not
+      # applied to poller/management commands, which legitimately run long
+      # queries (rollup full rebuilds, bulk imports).
+      DB_STATEMENT_TIMEOUT_MS: "30000"
     mem_limit: 512m
     ports:
       - "5006:8000"
