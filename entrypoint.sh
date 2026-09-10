@@ -11,11 +11,18 @@ python manage.py collectstatic --no-input
 # committed it as applied, producing duplicate side effects (see TODO.md).
 
 if [ "$#" -eq 0 ]; then
-    # 2 workers: the single-worker default meant any one slow/heavy request
-    # blocked every other request until gunicorn's 30s timeout killed it —
-    # cheap to raise given a single worker only uses ~190MB against this
-    # container's 512MB limit.
-    exec ddtrace-run gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --workers 2
+    # gthread, not plain sync workers: this workload is almost entirely
+    # I/O-bound (waiting on Postgres), and a single dashboard page load
+    # fires ~10 parallel API calls (dashboard.js's Promise.all) — with only
+    # 2 sync workers, one page load alone can saturate both and queue every
+    # other request behind it (observed: a trivial ~50ms query taking 38-158s
+    # wall-clock under concurrent dashboard load, all queueing, not query
+    # cost). Threads share a worker's memory instead of each duplicating the
+    # full Django import footprint, so 2 workers x 8 threads = 16 concurrent
+    # request slots costs only modestly more than today's 2 plain workers,
+    # not ~8x more the way reaching 16 via --workers 16 would. Postgres
+    # max_connections=100 comfortably covers the worst case (confirmed).
+    exec ddtrace-run gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers 2 --threads 8
 fi
 
 exec ddtrace-run "$@"

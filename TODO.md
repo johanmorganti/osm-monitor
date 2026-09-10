@@ -50,6 +50,15 @@ a real stored column (segmentby requires an actual column, not an expression) �
 the final column list once, before paying the backlog compression cost, than to compress now and
 redo it later.
 
+### Revisit gunicorn's gthread switch with real data
+`web` moved from `--workers 2` (plain sync) to `--worker-class gthread --workers 2 --threads 8`
+(`entrypoint.sh`) after directly observing the problem it's meant to fix: a single dashboard page
+load fires ~10 parallel API calls (`dashboard.js`'s `Promise.all`), which saturated both sync
+workers by itself and queued a trivial ~50ms query behind it for 38-158s wall-clock (queueing time,
+not query cost). Not yet verified this actually resolves it in practice — revisit once there's
+real request-latency/queue-time data (Datadog APM) from normal usage, not just the one-off manual
+test that motivated the change.
+
 ### Datadog log pipeline severity remapping
 Postgres `LOG:`-level lines are showing up in Datadog with `status:error`. Cosmetic/noisy, not
 a functional bug. Needs a manual fix in the Datadog UI (Logs → Pipelines) — no MCP tool access
