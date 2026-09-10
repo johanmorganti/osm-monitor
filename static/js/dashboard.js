@@ -97,81 +97,41 @@ function horizontalBar(canvasId, labels, data, label) {
 
 // ── Render ───────────────────────────────────────────────────────────────────
 
-function renderDashboard({ summary, volume, editorsTime, imageriesTime, localesTime, topEditors, topImageries, topLocales, topContributorsByObjects, topEditorsByObjects }) {
-    document.getElementById('loadingIndicator').hidden = true;
-
-    // Pre-fill the filter form with the range actually applied (e.g. the
-    // default 7-day window when the page was loaded with no query params).
-    // Every endpoint echoes the same start_date/end_date/contributor/editor/
-    // imagery back, so any one of the responses would do here — summary is
-    // always fetched regardless of what else is on the page.
-    document.getElementById('start_date').value = summary.filters.start_date;
-    document.getElementById('end_date').value = summary.filters.end_date;
-    document.getElementById('contributor').value = summary.filters.contributor;
-    document.getElementById('editor').value = summary.filters.editor;
-    document.getElementById('imagery').value = summary.filters.imagery;
-
-    document.getElementById('totalChangesets').textContent = summary.total_changesets;
-    document.getElementById('totalObjects').textContent = summary.total_objects;
-    document.getElementById('avgObjects').textContent = summary.avg_objects;
-
-    // Part 1: Changeset activity
-    if (volume.dates.length) {
-        new Chart(document.getElementById('changesetChart').getContext('2d'), {
-            type: 'line',
-            data: {
-                labels: volume.dates,
-                datasets: [{
-                    label: 'Changesets',
-                    data: volume.series[0].counts,
-                    borderColor: CATEGORICAL[0],
-                    backgroundColor: 'rgba(42, 120, 214, 0.10)',
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.1,
-                    fill: true,
-                }],
+function renderVolumeChart(volume) {
+    if (!volume.dates.length) return;
+    new Chart(document.getElementById('changesetChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: volume.dates,
+            datasets: [{
+                label: 'Changesets',
+                data: volume.series[0].counts,
+                borderColor: CATEGORICAL[0],
+                backgroundColor: 'rgba(42, 120, 214, 0.10)',
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.1,
+                fill: true,
+            }],
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false } },
+                y: { beginAtZero: true, grid: { color: GRID_HAIRLINE } },
             },
-            options: {
-                responsive: true,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { grid: { display: false } },
-                    y: { beginAtZero: true, grid: { color: GRID_HAIRLINE } },
-                },
-            },
-        });
-    }
-
-    horizontalBar('topEditorsChart', topEditors.results.map(r => r.name), topEditors.results.map(r => r.value), 'Changesets');
-    stackedBar('topEditorsTimeChart', editorsTime.dates, editorsTime.series);
-
-    horizontalBar('topImageriesChart', topImageries.results.map(r => r.name), topImageries.results.map(r => r.value), 'Changesets');
-    stackedBar('topImageriesTimeChart', imageriesTime.dates, imageriesTime.series);
-
-    horizontalBar('topLocalesChart', topLocales.results.map(r => r.name), topLocales.results.map(r => r.value), 'Changesets');
-    stackedBar('topLocalesTimeChart', localesTime.dates, localesTime.series);
-
-    // Part 2: Objects changed
-    horizontalBar('topContributorsByObjectsChart', topContributorsByObjects.results.map(r => r.name), topContributorsByObjects.results.map(r => r.value), 'Objects changed');
-    horizontalBar('topEditorsByObjectsChart', topEditorsByObjects.results.map(r => r.name), topEditorsByObjects.results.map(r => r.value), 'Objects changed');
-}
-
-function showError(err) {
-    console.error('Failed to load dashboard data', err);
-    document.getElementById('loadingIndicator').hidden = true;
-    const banner = document.createElement('div');
-    banner.className = 'bg-red-100 text-red-700 rounded-lg p-4 mb-8';
-    banner.textContent = 'Could not load dashboard data. Please try again shortly.';
-    document.querySelector('.container').prepend(banner);
+        },
+    });
 }
 
 // ── Load ─────────────────────────────────────────────────────────────────────
 // The page shell renders instantly with empty charts; these fetches (against
 // the standalone /api/changesets/{timeseries,summary,toplist}/ endpoints —
 // each independently public, not just for this page's own use) are what
-// actually populate them. Fetched in parallel so total load time is bounded
-// by the slowest one, not their sum.
+// actually populate them. Each widget fetches and renders independently
+// (not gated behind Promise.all) so a slow or failed one only affects its
+// own spinner/canvas, not the rest of the page.
 
 function apiUrl(path, extraParams) {
     const params = new URLSearchParams(window.location.search);
@@ -183,26 +143,103 @@ function apiUrl(path, extraParams) {
 
 function fetchJson(url) {
     return fetch(url).then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+        if (!r.ok) return r.json().then(body => { throw new Error(body.error || `HTTP ${r.status} for ${url}`); });
         return r.json();
     });
 }
 
-Promise.all([
-    fetchJson(apiUrl('/api/changesets/summary/')),
-    fetchJson(apiUrl('/api/changesets/timeseries/')),
-    fetchJson(apiUrl('/api/changesets/timeseries/', { group_by: 'editor' })),
-    fetchJson(apiUrl('/api/changesets/timeseries/', { group_by: 'imagery' })),
-    fetchJson(apiUrl('/api/changesets/timeseries/', { group_by: 'locale' })),
-    fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'count' })),
-    fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'imagery', metric: 'count' })),
-    fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'locale', metric: 'count' })),
-    fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'objects' })),
-    fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'objects' })),
-])
-    .then(([summary, volume, editorsTime, imageriesTime, localesTime, topEditors, topImageries, topLocales, topContributorsByObjects, topEditorsByObjects]) =>
-        renderDashboard({ summary, volume, editorsTime, imageriesTime, localesTime, topEditors, topImageries, topLocales, topContributorsByObjects, topEditorsByObjects }))
-    .catch(showError);
+// Fetches `url`, hands the result to `onSuccess` (which is expected to
+// un-hide `canvasId` itself once it actually has something to draw), and
+// on failure replaces the spinner with an inline error instead of leaving
+// it spinning forever. Widgets are independent: one failing doesn't block
+// or hide any other widget on the page.
+//
+// Hides the spinner via style.display rather than the `hidden` attribute —
+// the spinner also carries Tailwind's `flex` class, and [hidden] and .flex
+// have equal CSS specificity, so whichever rule comes later in the compiled
+// stylesheet wins regardless of the hidden attribute (it's `.flex` here,
+// so `hidden = true` alone silently does nothing). An inline style always
+// wins over a class, hidden attribute or not.
+function loadWidget(canvasId, url, onSuccess) {
+    return fetchJson(url)
+        .then(data => {
+            document.getElementById(`${canvasId}-spinner`).style.display = 'none';
+            onSuccess(data);
+        })
+        .catch(err => {
+            console.error(`Failed to load ${url}`, err);
+            document.getElementById(`${canvasId}-spinner`).innerHTML =
+                '<span class="text-sm text-red-600">Failed to load</span>';
+        });
+}
+
+function showChart(canvasId) {
+    document.getElementById(canvasId).hidden = false;
+}
+
+loadWidget('changesetChart', apiUrl('/api/changesets/timeseries/'), volume => {
+    showChart('changesetChart');
+    renderVolumeChart(volume);
+});
+
+loadWidget('topEditorsChart', apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'count' }), topEditors => {
+    showChart('topEditorsChart');
+    horizontalBar('topEditorsChart', topEditors.results.map(r => r.name), topEditors.results.map(r => r.value), 'Changesets');
+});
+loadWidget('topEditorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'editor' }), editorsTime => {
+    showChart('topEditorsTimeChart');
+    stackedBar('topEditorsTimeChart', editorsTime.dates, editorsTime.series);
+});
+
+loadWidget('topImageriesChart', apiUrl('/api/changesets/toplist/', { dimension: 'imagery', metric: 'count' }), topImageries => {
+    showChart('topImageriesChart');
+    horizontalBar('topImageriesChart', topImageries.results.map(r => r.name), topImageries.results.map(r => r.value), 'Changesets');
+});
+loadWidget('topImageriesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'imagery' }), imageriesTime => {
+    showChart('topImageriesTimeChart');
+    stackedBar('topImageriesTimeChart', imageriesTime.dates, imageriesTime.series);
+});
+
+loadWidget('topLocalesChart', apiUrl('/api/changesets/toplist/', { dimension: 'locale', metric: 'count' }), topLocales => {
+    showChart('topLocalesChart');
+    horizontalBar('topLocalesChart', topLocales.results.map(r => r.name), topLocales.results.map(r => r.value), 'Changesets');
+});
+loadWidget('topLocalesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'locale' }), localesTime => {
+    showChart('topLocalesTimeChart');
+    stackedBar('topLocalesTimeChart', localesTime.dates, localesTime.series);
+});
+
+loadWidget('topContributorsByObjectsChart', apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'objects' }), topContributorsByObjects => {
+    showChart('topContributorsByObjectsChart');
+    horizontalBar('topContributorsByObjectsChart', topContributorsByObjects.results.map(r => r.name), topContributorsByObjects.results.map(r => r.value), 'Objects changed');
+});
+loadWidget('topEditorsByObjectsChart', apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'objects' }), topEditorsByObjects => {
+    showChart('topEditorsByObjectsChart');
+    horizontalBar('topEditorsByObjectsChart', topEditorsByObjects.results.map(r => r.name), topEditorsByObjects.results.map(r => r.value), 'Objects changed');
+});
+
+// Summary has no chart/spinner of its own — it fills the KPI numbers (which
+// already show "–" as their placeholder) and pre-fills the filter form with
+// the range actually applied (e.g. the default 7-day window when the page
+// loads with no query params).
+fetchJson(apiUrl('/api/changesets/summary/'))
+    .then(summary => {
+        document.getElementById('start_date').value = summary.filters.start_date;
+        document.getElementById('end_date').value = summary.filters.end_date;
+        document.getElementById('contributor').value = summary.filters.contributor;
+        document.getElementById('editor').value = summary.filters.editor;
+        document.getElementById('imagery').value = summary.filters.imagery;
+
+        document.getElementById('totalChangesets').textContent = summary.total_changesets;
+        document.getElementById('totalObjects').textContent = summary.total_objects;
+        document.getElementById('avgObjects').textContent = summary.avg_objects;
+    })
+    .catch(err => {
+        console.error('Failed to load summary', err);
+        document.getElementById('totalChangesets').textContent = 'Error';
+        document.getElementById('totalObjects').textContent = 'Error';
+        document.getElementById('avgObjects').textContent = 'Error';
+    });
 
 // ── Filter autocomplete ─────────────────────────────────────────────────────
 

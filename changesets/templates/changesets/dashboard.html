@@ -47,13 +47,6 @@
         </form>
     </div>
 
-    <!-- Shown while dashboard.js's parallel fetches to /api/changesets/{timeseries,summary,toplist}/
-         are in flight; hidden once they all render (or replaced by an error banner on failure). -->
-    <div id="loadingIndicator" class="flex justify-center items-center gap-3 py-16">
-        <div class="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
-        <span class="text-gray-500">Loading dashboard data…</span>
-    </div>
-
     <!-- ══ Part 1: Changeset activity ══════════════════════════════════════ -->
     <h2 class="text-2xl font-semibold mb-4">Part 1 — Changeset activity</h2>
 
@@ -65,7 +58,12 @@
         </div>
         <div class="col-span-5 bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-4">Changesets Over Time</h3>
-            <canvas id="changesetChart"></canvas>
+            <div class="relative" style="min-height: 300px">
+                <div id="changesetChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="changesetChart" hidden></canvas>
+            </div>
         </div>
     </div>
 
@@ -74,25 +72,55 @@
         <!-- Editors -->
         <div class="bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-4">Top 20 Editors</h3>
-            <div class="relative" style="height: 560px"><canvas id="topEditorsChart"></canvas></div>
+            <div class="relative" style="height: 560px">
+                <div id="topEditorsChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topEditorsChart" hidden></canvas>
+            </div>
             <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time</h4>
-            <canvas id="topEditorsTimeChart"></canvas>
+            <div class="relative" style="min-height: 200px">
+                <div id="topEditorsTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topEditorsTimeChart" hidden></canvas>
+            </div>
         </div>
 
         <!-- Imagery -->
         <div class="bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-4">Top 20 Imagery Providers</h3>
-            <div class="relative" style="height: 560px"><canvas id="topImageriesChart"></canvas></div>
+            <div class="relative" style="height: 560px">
+                <div id="topImageriesChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topImageriesChart" hidden></canvas>
+            </div>
             <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time</h4>
-            <canvas id="topImageriesTimeChart"></canvas>
+            <div class="relative" style="min-height: 200px">
+                <div id="topImageriesTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topImageriesTimeChart" hidden></canvas>
+            </div>
         </div>
 
         <!-- Language -->
         <div class="bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-4">Top 20 Languages</h3>
-            <div class="relative" style="height: 560px"><canvas id="topLocalesChart"></canvas></div>
+            <div class="relative" style="height: 560px">
+                <div id="topLocalesChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topLocalesChart" hidden></canvas>
+            </div>
             <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time</h4>
-            <canvas id="topLocalesTimeChart"></canvas>
+            <div class="relative" style="min-height: 200px">
+                <div id="topLocalesTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topLocalesTimeChart" hidden></canvas>
+            </div>
         </div>
     </div>
 
@@ -115,11 +143,21 @@
     <div class="grid grid-cols-2 gap-8 mb-12">
         <div class="bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-4">Top 20 Contributors by Objects Changed</h3>
-            <div class="relative" style="height: 560px"><canvas id="topContributorsByObjectsChart"></canvas></div>
+            <div class="relative" style="height: 560px">
+                <div id="topContributorsByObjectsChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topContributorsByObjectsChart" hidden></canvas>
+            </div>
         </div>
         <div class="bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-4">Top 20 Editors by Objects Changed</h3>
-            <div class="relative" style="height: 560px"><canvas id="topEditorsByObjectsChart"></canvas></div>
+            <div class="relative" style="height: 560px">
+                <div id="topEditorsByObjectsChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topEditorsByObjectsChart" hidden></canvas>
+            </div>
         </div>
     </div>
 </div>
