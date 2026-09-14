@@ -72,6 +72,22 @@ gap there.
 Still related, not done: the "Dashboard: new graph/section ideas" hashtags/campaign toplist entry
 below would let a campaign like this MapRoulette one show up by name instead of just "(none)".
 
+### TimeseriesView bucket-width auto-pick (migration 0023) — only two grains, by design
+`TimeseriesView` used to have two disconnected, ad hoc point-bounding mechanisms: the ungrouped
+path hard-sliced `[:360]` off `cagg_volume_hourly` (silently truncating any range wider than 15
+days to just its *oldest* 15 days — a real bug, found while chasing why the 2026-08-30 spike
+wasn't visible with a wider range selected), and the grouped (`group_by=...`) path was always
+daily grain with no cap at all. Replaced with a single `_pick_interval()` helper: auto-picks
+`hour` or `day` to target ~300 points for the given range (hourly up to ~12.5 days), overridable
+via `interval=hour|day`, always reported back in the response's `interval` field so a caller of
+this public API isn't left guessing. Added `cagg_volume_daily` + one hourly CA per dimension
+(`cagg_{editor,imagery,locale,contributor}_hourly`, same NULL-handling as each one's daily
+counterpart) to give the picker somewhere to switch to/from.
+**Deliberately only two grains**: daily alone tops out around ~400 points at today's real data span
+(~13 months) — nowhere near a problem. A third (weekly/monthly) tier is the natural next step once
+full-history import (2005–present, per CLAUDE.md's "design for full history" principle) makes
+multi-year default ranges common; not built now since there's no real range that needs it yet.
+
 ### Compression backlog not yet compressed — policy manually paused
 `changesets_changeset` has compression enabled (`0019_compress_changesets`, segmented by
 `created_by_family`/editor, 30-day policy) but the policy job (job_id 1000) is currently

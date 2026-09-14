@@ -223,6 +223,62 @@ class CaggContributorDaily(_CaggDaily):
         db_table = 'cagg_contributor_daily'
 
 
+class CaggVolumeDaily(models.Model):
+    """Unmanaged mapping onto the cagg_volume_daily continuous aggregate (see
+    migration 0023) — the daily-grain counterpart to CaggVolumeHourly, used
+    by TimeseriesView's ungrouped path for ranges too wide for hourly grain
+    to stay near the ~300-point target (see _pick_interval in views.py).
+    Closes the bug where a wide ungrouped range used to silently truncate to
+    only the oldest 15 days of hourly data instead of showing the full range
+    at a coarser grain."""
+    bucket = models.DateTimeField(primary_key=True)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_volume_daily'
+
+
+class _CaggHourly(models.Model):
+    """Shared shape for the four per-dimension HOURLY continuous aggregates
+    (cagg_editor_hourly, cagg_imagery_hourly, cagg_locale_hourly,
+    cagg_contributor_hourly) — same shape as _CaggDaily, different grain.
+    Exists so TimeseriesView's group_by paths can also auto-pick hourly for
+    narrow ranges (see _pick_interval/CAGG_MODELS_HOURLY in views.py),
+    instead of being stuck at daily grain regardless of range width."""
+    bucket = models.DateTimeField(primary_key=True)  # not a real uniqueness claim — see _CaggDaily's comment
+    name = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        abstract = True
+        app_label = 'changesets'
+        managed = False
+
+
+class CaggEditorHourly(_CaggHourly):
+    class Meta(_CaggHourly.Meta):
+        db_table = 'cagg_editor_hourly'
+
+
+class CaggImageryHourly(_CaggHourly):
+    class Meta(_CaggHourly.Meta):
+        db_table = 'cagg_imagery_hourly'
+
+
+class CaggLocaleHourly(_CaggHourly):
+    class Meta(_CaggHourly.Meta):
+        db_table = 'cagg_locale_hourly'
+
+
+class CaggContributorHourly(_CaggHourly):
+    class Meta(_CaggHourly.Meta):
+        db_table = 'cagg_contributor_hourly'
+
+
 class FilterValue(models.Model):
     """Distinct known values for the dashboard's contributor/editor/imagery
     autocomplete. Deduplicated globally — unlike DailyBreakdown, there's no

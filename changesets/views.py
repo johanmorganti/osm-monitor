@@ -3,13 +3,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from django.views.generic import TemplateView
-from django.db.models import Count, Value, CharField, Sum
-from django.db.models.functions import TruncDate, ExtractHour, Concat
+from django.db.models import Count, Sum
+from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, OpenApiTypes
 from .models import (
     Changeset, SequenceState, ImportJob, FilterValue,
-    CaggVolumeHourly, CaggEditorDaily, CaggImageryDaily, CaggLocaleDaily, CaggContributorDaily,
+    CaggVolumeHourly, CaggVolumeDaily,
+    CaggEditorDaily, CaggImageryDaily, CaggLocaleDaily, CaggContributorDaily,
+    CaggEditorHourly, CaggImageryHourly, CaggLocaleHourly, CaggContributorHourly,
 )
 from .serializers import ChangesetSerializer
 from .osm_fetcher import fetch_and_process_changesets
@@ -238,6 +240,79 @@ CAGG_MODELS = {
     'language': CaggLocaleDaily,
 }
 
+# Hourly counterpart to CAGG_MODELS (migration 0023) — same per-dimension
+# NULL handling as their daily equivalents (editor/contributor exclude NULLs,
+# imagery/language bucket them as NONE_BUCKET). Used by TimeseriesView's
+# _pick_interval-driven grain choice: hourly for ranges narrow enough to stay
+# near the ~300-point target, daily otherwise. Only TimeseriesView needs
+# this — SummaryView/ToplistView aggregate over the whole range regardless
+# of grain, so they stay on the (cheaper, pre-existing) daily CAs.
+CAGG_MODELS_HOURLY = {
+    'contributor': CaggContributorHourly,
+    'editor': CaggEditorHourly,
+    'imagery': CaggImageryHourly,
+    'language': CaggLocaleHourly,
+}
+
+# Ungrouped-volume counterpart to the hourly/daily split above — no
+# dimension, just total volume. CaggVolumeDaily (migration 0023) closes the
+# gap where a wide ungrouped range used to silently truncate to the oldest
+# 15 days of hourly data instead of showing the full range at a coarser
+# grain (see _pick_interval).
+CAGG_VOLUME_MODELS = {'hour': CaggVolumeHourly, 'day': CaggVolumeDaily}
+
+TARGET_POINTS = 300
+MAX_EXPLICIT_POINTS = 5000  # only constrains an explicit interval=hour override, see _pick_interval
+
+
+def _pick_interval(start_date, end_date, interval_param):
+    """Resolve 'hour' or 'day' for a TimeseriesView query. interval_param is
+    the already-validated interval= query param (None, 'hour', or 'day').
+
+    Auto-pick (interval_param is None): hourly if the range's hour-count fits
+    within TARGET_POINTS (~300 -> ranges up to ~12.5 days), else daily — the
+    only two grains that exist today. A 3rd (weekly/monthly) tier is
+    intentionally not built yet (see TODO.md) — today's real data span is
+    ~13 months, daily alone tops out around ~400 points, nowhere near a
+    problem worth a third grain for.
+
+    Explicit override: trusted, not silently capped — EXCEPT interval=hour
+    on a range wide enough to blow past MAX_EXPLICIT_POINTS is rejected
+    (raises ValueError, caller turns this into a 400), not truncated. Silent
+    truncation on a wide range is exactly the bug this function replaces;
+    doing it "safely" for the override path would just reintroduce it.
+    interval=day has no such ceiling — not a concern at today's range widths.
+    """
+    range_days = (datetime.strptime(end_date, '%Y-%m-%d').date()
+                  - datetime.strptime(start_date, '%Y-%m-%d').date()).days + 1
+    hour_count = range_days * 24
+    if interval_param == 'hour' and hour_count > MAX_EXPLICIT_POINTS:
+        raise ValueError(
+            f'interval=hour over this {range_days}-day range would return {hour_count} points '
+            f'(max {MAX_EXPLICIT_POINTS}) — use interval=day or narrow the range'
+        )
+    if interval_param is not None:
+        return interval_param
+    return 'hour' if hour_count <= TARGET_POINTS else 'day'
+
+
+def _format_bucket(bucket, interval):
+    """Render a CA/raw-query bucket as the API's date-label string. `bucket`
+    is a full datetime for every CA-backed path and for the raw path's
+    TruncHour annotation, but a plain date for the raw path's TruncDate
+    annotation (Django) — hasattr(bucket, 'date') tells the two apart
+    without the caller needing to know which query produced it.
+
+    Hour is always zero-padded (unlike this codebase's pre-existing unpadded
+    f'{hour}:00', which only got away with it by sorting on the real
+    datetime column first) — once group_by can also resolve to hourly,
+    callers sort on these *formatted strings* (per-name/per-bucket pivot),
+    where an unpadded "...9:00" would sort after "...10:00" and corrupt the
+    x-axis. dashboard.js's shortDate() only regex-matches the date prefix,
+    so this is a display-only, frontend-compatible change."""
+    day = bucket.date() if hasattr(bucket, 'date') else bucket
+    return f'{day.isoformat()} {bucket.hour:02d}:00' if interval == 'hour' else day.isoformat()
+
 
 def _single_filter_dimension(contributor, editor, imagery, language):
     """(dimension, value) if exactly one of contributor/editor/imagery/language
@@ -304,36 +379,52 @@ _FILTER_PARAMS = [
 
 
 class TimeseriesView(APIView):
-    """Changeset volume over time. Without group_by: plain hourly volume.
-    With group_by: daily volume split into up to 20 series — the top names
-    by total count over the range (the per-dimension continuous aggregates
-    below only have a daily grain — there's no hourly equivalent to fall
-    back to once grouped).
+    """Changeset volume over time, optionally split into up to 20 named
+    series via group_by. Bucket width (interval) is auto-picked to target
+    ~300 points for the given range — hourly up to ~12.5 days, daily beyond
+    that (see _pick_interval) — instead of a fixed grain per code path.
+    Override with interval=hour|day; whichever grain is actually used is
+    always reported back in the response's top-level `interval` field, so a
+    caller never has to guess what they got.
 
-    Backed by continuous aggregates (see migration 0020) when unfiltered, and
-    also when exactly one of contributor/editor/imagery/language is set with no
-    group_by (that dimension's own CA, filtered by name — daily grain, same
-    as the grouped case). group_by combined with a filter is cross-dimension
-    (e.g. "top editors, filtered by imagery") and falls back to the raw
-    Changeset table, since no CA carries two filter dimensions at once."""
+    Backed by continuous aggregates (see migrations 0020/0023) when
+    unfiltered, and also when exactly one of contributor/editor/imagery/
+    language is set with no group_by (that dimension's own hourly-or-daily
+    CA, filtered by name — same fast path as the grouped case). group_by
+    combined with a filter is cross-dimension (e.g. "top editors, filtered
+    by imagery") and falls back to the raw Changeset table, since no CA
+    carries two filter dimensions at once — this still returns a correct
+    `interval`, just without the CA-backed speed."""
 
     @extend_schema(
         tags=['changesets'],
         summary='Changeset volume over time',
         description=(
-            'Time series of changeset volume. Without group_by: hourly, unfiltered range. '
-            'With group_by: daily, split into up to 20 series (the top names by total count '
-            'over the range). Defaults to the last 7 days if no dates are given.'
+            'Time series of changeset volume, optionally split into up to 20 named series via '
+            'group_by. Bucket width is auto-picked to target ~300 points for the given range '
+            '(hourly for ranges up to ~12.5 days, daily beyond that) — override with '
+            'interval=hour|day. interval=hour on a range wide enough to blow past the point '
+            'budget is rejected (400) rather than silently truncated. The grain actually used '
+            'is always reported back in the response\'s top-level interval field. Defaults to '
+            'the last 7 days if no dates are given.'
         ),
         parameters=_FILTER_PARAMS + [
-            OpenApiParameter('group_by', OpenApiTypes.STR, description='Split into per-name series: contributor, editor, imagery, or language. Omit for plain hourly volume.'),
+            OpenApiParameter('group_by', OpenApiTypes.STR, description='Split into per-name series: contributor, editor, imagery, or language. Omit for plain volume.'),
+            OpenApiParameter('interval', OpenApiTypes.STR, description='Force the bucket width: hour or day. Omit to auto-pick based on range width (see description).'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
         examples=[OpenApiExample(
-            'Plain hourly volume',
+            'Narrow range — auto-picked hourly',
             value={
                 'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'group_by': None},
-                'dates': ['2026-09-01 0:00'], 'series': [{'name': 'changesets', 'counts': [2100]}],
+                'interval': 'hour', 'dates': ['2026-09-01 00:00'], 'series': [{'name': 'changesets', 'counts': [2100]}],
+            },
+            response_only=True,
+        ), OpenApiExample(
+            'Wide range — auto-picked daily',
+            value={
+                'filters': {'start_date': '2025-09-01', 'end_date': '2026-09-01', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'group_by': None},
+                'interval': 'day', 'dates': ['2025-09-01'], 'series': [{'name': 'changesets', 'counts': [38700]}],
             },
             response_only=True,
         )],
@@ -343,12 +434,22 @@ class TimeseriesView(APIView):
         if group_by not in (None, *DIMENSION_FIELDS):
             return Response({'error': f'group_by must be one of: {", ".join(DIMENSION_FIELDS)}'}, status=status.HTTP_400_BAD_REQUEST)
 
+        interval_param = request.query_params.get('interval') or None
+        if interval_param not in (None, 'hour', 'day'):
+            return Response({'error': "interval must be 'hour' or 'day'"}, status=status.HTTP_400_BAD_REQUEST)
+
         start_date, end_date, contributor, editor, imagery, language, filters = _resolve_range_and_filters(request)
         filters = {**filters, 'group_by': group_by}
+
+        try:
+            interval = _pick_interval(start_date, end_date, interval_param)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         single = _single_filter_dimension(contributor, editor, imagery, language)
 
         if not (contributor or editor or imagery or language):
-            data = self._from_rollups(start_date, end_date, group_by)
+            data = self._from_rollups(start_date, end_date, group_by, interval)
         elif single and group_by is None:
             # Plain volume-over-time for exactly one filtered dimension is
             # still a shape that dimension's own CA can answer directly (see
@@ -357,34 +458,35 @@ class TimeseriesView(APIView):
             # combined with a filter is still cross-dimension (e.g. "top
             # editors, filtered by imagery") and stays on the raw fallback.
             dimension, value = single
-            data = self._from_rollups_single_filtered(start_date, end_date, dimension, value)
+            data = self._from_rollups_single_filtered(start_date, end_date, dimension, value, interval)
         else:
-            data = self._from_raw(start_date, end_date, contributor, editor, imagery, language, group_by)
+            data = self._from_raw(start_date, end_date, contributor, editor, imagery, language, group_by, interval)
         return Response({'filters': filters, **data})
 
-    def _from_rollups_single_filtered(self, start_date, end_date, dimension, value):
+    def _from_rollups_single_filtered(self, start_date, end_date, dimension, value, interval):
         end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+        model = (CAGG_MODELS_HOURLY if interval == 'hour' else CAGG_MODELS)[dimension]
         rows = list(
-            CAGG_MODELS[dimension].objects.filter(name__iexact=value, bucket__gte=start_date, bucket__lt=end_date_exclusive)
+            model.objects.filter(name__iexact=value, bucket__gte=start_date, bucket__lt=end_date_exclusive)
             .order_by('bucket')
         )
-        dates = [r.bucket.date().isoformat() for r in rows]
-        return {'dates': dates, 'series': [{'name': 'changesets', 'counts': [r.cnt for r in rows]}]}
+        dates = [_format_bucket(r.bucket, interval) for r in rows]
+        return {'interval': interval, 'dates': dates, 'series': [{'name': 'changesets', 'counts': [r.cnt for r in rows]}]}
 
-    def _from_rollups(self, start_date, end_date, group_by):
+    def _from_rollups(self, start_date, end_date, group_by, interval):
         end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
 
         if group_by is None:
             volume = list(
-                CaggVolumeHourly.objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive)
-                .order_by('bucket')[:360]
+                CAGG_VOLUME_MODELS[interval].objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive)
+                .order_by('bucket')
             )
-            dates = [f'{v.bucket.date().isoformat()} {v.bucket.hour}:00' for v in volume]
-            return {'dates': dates, 'series': [{'name': 'changesets', 'counts': [v.cnt for v in volume]}]}
+            dates = [_format_bucket(v.bucket, interval) for v in volume]
+            return {'interval': interval, 'dates': dates, 'series': [{'name': 'changesets', 'counts': [v.cnt for v in volume]}]}
 
-        model = CAGG_MODELS.get(group_by)
+        model = (CAGG_MODELS_HOURLY if interval == 'hour' else CAGG_MODELS).get(group_by)
         if model is None:
-            return {'dates': [], 'series': []}
+            return {'interval': interval, 'dates': [], 'series': []}
 
         top = list(
             model.objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive)
@@ -392,32 +494,33 @@ class TimeseriesView(APIView):
         )
         names = [row['name'] for row in top]
         if not names:
-            return {'dates': [], 'series': []}
+            return {'interval': interval, 'dates': [], 'series': []}
 
         rows = (
             model.objects.filter(name__in=names, bucket__gte=start_date, bucket__lt=end_date_exclusive)
             .values('bucket', 'name', 'cnt')
         )
-        per_name_day = defaultdict(dict)
+        per_name_bucket = defaultdict(dict)
         dates = set()
         for r in rows:
-            day = r['bucket'].date().isoformat()
-            per_name_day[r['name']][day] = r['cnt']
-            dates.add(day)
+            label = _format_bucket(r['bucket'], interval)
+            per_name_bucket[r['name']][label] = r['cnt']
+            dates.add(label)
         dates = sorted(dates)
-        series = [{'name': name, 'counts': [per_name_day[name].get(d, 0) for d in dates]} for name in names]
-        return {'dates': dates, 'series': series}
+        series = [{'name': name, 'counts': [per_name_bucket[name].get(d, 0) for d in dates]} for name in names]
+        return {'interval': interval, 'dates': dates, 'series': series}
 
-    def _from_raw(self, start_date, end_date, contributor, editor, imagery, language, group_by):
+    def _from_raw(self, start_date, end_date, contributor, editor, imagery, language, group_by, interval):
         changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery, language)
+        trunc = TruncHour('created_at') if interval == 'hour' else TruncDate('created_at')
 
         if group_by is None:
             rows = list(
-                changesets.annotate(
-                    date=Concat(TruncDate('created_at'), Value(' '), ExtractHour('created_at'), Value(':00'), output_field=CharField())
-                ).values('date').annotate(count=Count('id')).order_by('date')[:360]
+                changesets.annotate(bucket=trunc)
+                .values('bucket').annotate(count=Count('id')).order_by('bucket')
             )
-            return {'dates': [r['date'] for r in rows], 'series': [{'name': 'changesets', 'counts': [r['count'] for r in rows]}]}
+            dates = [_format_bucket(r['bucket'], interval) for r in rows]
+            return {'interval': interval, 'dates': dates, 'series': [{'name': 'changesets', 'counts': [r['count'] for r in rows]}]}
 
         field = DIMENSION_FIELDS[group_by]
         top = list(
@@ -426,22 +529,22 @@ class TimeseriesView(APIView):
         )
         names = [row[field] for row in top]
         if not names:
-            return {'dates': [], 'series': []}
+            return {'interval': interval, 'dates': [], 'series': []}
 
         rows = (
             changesets.filter(**{f'{field}__in': names})
-            .annotate(date=TruncDate('created_at'))
-            .values('date', field).annotate(count=Count('id'))
+            .annotate(bucket=trunc)
+            .values('bucket', field).annotate(count=Count('id'))
         )
-        per_name_day = defaultdict(dict)
+        per_name_bucket = defaultdict(dict)
         dates = set()
         for r in rows:
-            day = r['date'].isoformat()
-            per_name_day[r[field]][day] = r['count']
-            dates.add(day)
+            label = _format_bucket(r['bucket'], interval)
+            per_name_bucket[r[field]][label] = r['count']
+            dates.add(label)
         dates = sorted(dates)
-        series = [{'name': name, 'counts': [per_name_day[name].get(d, 0) for d in dates]} for name in names]
-        return {'dates': dates, 'series': series}
+        series = [{'name': name, 'counts': [per_name_bucket[name].get(d, 0) for d in dates]} for name in names]
+        return {'interval': interval, 'dates': dates, 'series': series}
 
 
 class SummaryView(APIView):
