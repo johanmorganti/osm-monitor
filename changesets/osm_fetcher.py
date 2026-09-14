@@ -216,6 +216,18 @@ def _parse_changeset_element(changeset, log_extra):
                             family = urlparse(raw).netloc or raw
                         else:
                             family = raw.split(' ')[0].split('/')[0].split('(')[0].strip()
+                        # Some editing tools write the literal tag
+                        # `imagery_used=None` (or `unknown`/`n/a`) when no
+                        # aerial imagery was used, which parses into a
+                        # non-empty *string* here — the `family or None`
+                        # fallback below only catches an empty string, so
+                        # these leaked through as a fake imagery provider
+                        # (see TODO.md's former "imagery_family stores the
+                        # literal string 'None'" entry, and
+                        # backfill_imagery_family_none.py for the one-off
+                        # fix to already-imported rows).
+                        if family.strip().lower() in ('none', 'unknown', 'n/a', ''):
+                            family = None
                         changeset_to_add['imagery_family'] = family or None
                 elif tag_key == 'host':
                     changeset_to_add['host'] = tag_value
