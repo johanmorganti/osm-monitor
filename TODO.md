@@ -10,7 +10,7 @@ add it here rather than letting it live only in conversation history.
 
 ### TimescaleDB continuous aggregates (replace the hand-rolled rollup system) — MOSTLY DONE
 Migration `0020_continuous_aggregates` created 5 CAs (`cagg_volume_hourly` + one daily CA per
-dimension: editor/imagery/locale/contributor), meant to eventually replace `DailyVolume`/
+dimension: editor/imagery/language/contributor), meant to eventually replace `DailyVolume`/
 `DailyBreakdown` + `refresh_rollups_incremental()`/`refresh_rollups_reconcile()`
 (`changesets/rollups.py`). Status: all 5 CAs are backfilled (manual `CALL
 refresh_continuous_aggregate`, one chunk-month at a time — 56 calls total — after an initial
@@ -37,10 +37,10 @@ Remaining steps:
 
 **Real, confirmed remaining gap (corrects this entry's earlier "known scope limit" note, which
 was wrong about week-scale-only being the risk)**: any *cross-dimension* filtered query — a
-`contributor`/`editor`/`locale` toplist filtered by `imagery` (or vice versa), or `TimeseriesView`
+`contributor`/`editor`/`language` toplist filtered by `imagery` (or vice versa), or `TimeseriesView`
 with both a `group_by` and a filter set — has no matching CA (each CA only tracks its own single
 dimension) and falls back to raw `Changeset` scanning. Confirmed via direct test: `toplist/
-?dimension={contributor,editor,imagery,locale}&imagery=Mapbox` over a 3-month range all hit the
+?dimension={contributor,editor,imagery,language}&imagery=Mapbox` over a 3-month range all hit the
 30s statement timeout and got cancelled, for every dimension tried. Root cause, confirmed via
 `timescaledb_information.compression_settings`: the hypertable's compression is `segmentby
 created_by_family` (editor) only (see "Compression backlog" below) — a query that filters or
@@ -51,6 +51,30 @@ either widening `compress_segmentby` (cost: lower compression ratio, and a backl
 pass — see below) or accepting that cross-dimension-filtered toplists stay slow/degrade gracefully
 (e.g. UI disables or caps the range for that combination). Needs a decision before doing more work
 here.
+
+### Per-dimension CAs silently drop NULL-tag volume (large campaigns can vanish from breakdowns)
+Confirmed via investigation (2026-09-14) into a real symptom: the main "Changesets Over Time"
+chart (`cagg_volume_hourly`, no filter) showed a clear volume spike on 2026-08-30, but none of the
+"Top Imagery/Language Over Time" breakdown charts showed any corresponding movement. Root cause:
+`cagg_imagery_daily`/`cagg_locale_daily`/`cagg_editor_daily` are each defined with a
+`WHERE <field> IS NOT NULL` clause (see migration `0020_continuous_aggregates`), while
+`cagg_volume_hourly` has no such filter. The spike was a ~9,000-changeset MapRoulette campaign
+(challenge 56565, bulk-updating Italian municipality population from ANPR open data, mostly two
+users) — a scripted one-object-per-task edit pattern that never sets `imagery_used`/`locale`, so
+100% of it has `imagery_family`/`locale_family` NULL. Those changesets count fully toward total
+volume but are structurally invisible to the imagery/language breakdowns no matter how large the
+campaign — not a bug in the CA backfill (editor breakdown *does* show it correctly, since
+`created_by_family` is populated; verified the imagery/locale CAs' non-NULL totals for that day
+match raw data almost exactly, i.e. nothing is actually missing/stale, the NULL rows are just
+excluded by design). Any future large NULL-tag campaign (bulk imports, other MapRoulette-style
+bot edits) will reproduce this same "spike with no explanation" experience.
+Fix, if these breakdowns are meant to explain "why did total volume move": drop the
+`IS NOT NULL` filter on `cagg_imagery_daily`/`cagg_locale_daily` and add a `COALESCE(name, '(none)')`
+bucket instead, so NULL-tag volume shows up as its own explicit series rather than silently
+vanishing. Related to the "Dashboard: new graph/section ideas" hashtags/campaign toplist entry
+below — a hashtag-based campaign breakdown would make cases like this MapRoulette campaign
+directly attributable by name instead of just "(none)". Not urgent (understood gap, not active
+data corruption), but low-effort once picked up.
 
 ### Compression backlog not yet compressed — policy manually paused
 `changesets_changeset` has compression enabled (`0019_compress_changesets`, segmented by
@@ -68,7 +92,7 @@ independently), and a future `country` filter (extrapolated from bbox) could joi
 a real stored column (segmentby requires an actual column, not an expression) — cheaper to decide
 the final column list once, before paying the backlog compression cost, than to compress now and
 redo it later. **Confirmed concrete cost of the current editor-only choice**: see the continuous-
-aggregates entry above — any toplist/timeseries query filtered or grouped by `imagery`/`locale`/
+aggregates entry above — any toplist/timeseries query filtered or grouped by `imagery`/`language`/
 `contributor` (i.e. every dimension except editor) can't exclude compressed segments and times out
 over multi-month ranges once real data hits those chunks.
 
@@ -81,34 +105,36 @@ not query cost). Not yet verified this actually resolves it in practice — revi
 real request-latency/queue-time data (Datadog APM) from normal usage, not just the one-off manual
 test that motivated the change.
 
-### imagery_family stores the literal string "None" for some changesets
-Genuine upstream data, not a code bug: some editing tool writes the literal OSM tag
-`imagery_used=None` when no aerial imagery was used. `osm_fetcher.py`'s derivation (around line
-208-219, `family = raw.split(' ')[0].split('/')[0].split('(')[0].strip()` then `imagery_family =
-family or None`) faithfully parses that into the *string* `"None"` — a non-empty string, so the
-`family or None` fallback doesn't catch it. Result: "None" shows up as a fake imagery provider in
-the Top Imagery toplist, autocomplete, and filter dropdown. Confirmed via `FilterValue` (`field=
-'imagery', value='None'`) and a sample row (`changeset_id 188725155`, `imagery_used=["None"]`).
-Fix: treat known non-values (`none`/`unknown`/`n/a`/empty, case-insensitive) as real `NULL` instead
-of a provider name at parse time, plus a backfill command for already-affected rows — same
-one-line-derivation-plus-backfill pattern as the existing `backfill_imagery_family.py`.
+**Deliberately parked, no action needed until there's real traffic** (confirmed with the user
+2026-09-11) — there isn't any yet, so there's no real data to check against and a synthetic load
+test was declined in favor of waiting. If dashboard load ever feels slow or times out again, this
+is the first thing to check: in Datadog APM for the `osm-monitor` (web) service, look at request
+latency/duration for `/api/changesets/*` endpoints split from queueing/wait time if that's exposed
+per-span, and gunicorn's own worker/thread saturation (busy vs idle threads) if visible. The
+concrete symptom that would mean gthread *isn't* enough: many concurrent requests (e.g. a page
+load's ~10 parallel calls, or several users at once) showing high wall-clock time despite the
+underlying query itself being fast in the DB — that's the queueing signature this change was
+meant to fix, same as the 38-158s-for-a-50ms-query incident that motivated it. If that shows up
+again with gthread already in place, the next lever is more threads/workers (mind Postgres's
+`max_connections=100` headroom) rather than assuming the query layer regressed.
 
 ### Datadog log pipeline severity remapping
 Postgres `LOG:`-level lines are showing up in Datadog with `status:error`. Cosmetic/noisy, not
 a functional bug. Needs a manual fix in the Datadog UI (Logs → Pipelines) — no MCP tool access
-to do this one programmatically from here.
+to do this one programmatically from here. User is fixing directly, 2026-09-14.
+
+### Filter dropdown pre-population reported not working
+A prior pass (2026-09-11) wired the contributor/editor/imagery datalists to pre-fill from each
+ranking chart's already-fetched toplist response (`setDatalistOptions` in `dashboard.js`, called
+from the `loadWidget` success callbacks) instead of staying empty until the user types. Verified
+only via served-JS/HTML inspection at the time (no browser tool available) — user reports it's
+not actually working in a real browser. Not yet root-caused; set aside until revisited. Worth
+checking when picked back up: whether `<datalist>` options are actually reaching the DOM (browser
+devtools/inspect, not just curl'd HTML/JS), and whether native datalist UI (no visible dropdown
+arrow, appears only once the input is focused/clicked) is being mistaken for "empty" when it's
+actually populated but just not visually obvious.
 
 ## Planned work
-
-### Add locale as a filter param
-`contributor`/`editor`/`imagery` are the only supported filter params (`_resolve_range_and_filters`,
-`_FILTER_PARAMS` in `changesets/views.py`) — `locale`/`locale_family` is a `DIMENSION_FIELDS` entry
-(used for `group_by`/toplist) but was never wired up as an actual filter. Concretely blocks one
-thing already built: the dashboard's click-to-filter (clicking a toplist bar sets that dimension
-as a filter, `dashboard.js`'s `applyFilter`) is wired for editor/imagery/contributor but
-deliberately left off the Top 20 Languages chart, since there's no `locale` filter for it to set.
-Same shape as the existing three — add the param, the `_filtered_changesets` clause, and (once the
-continuous-aggregates work above lands) the `cagg_locale_daily`-backed single-filter fast path.
 
 ### Dashboard: new graph/section ideas
 Discussed, not yet decided on a direction — revisit and pick one rather than losing the list:
@@ -132,14 +158,6 @@ Discussed, not yet decided on a direction — revisit and pick one rather than l
   most likely — and a real design pass on aggregation: heatmap tiles vs. clustered markers).
 - **New vs. returning contributor trend** — needs a "first ever seen per user" concept not
   currently tracked, so more of a schema addition than a pure UI change.
-
-### Pre-populate filter dropdowns with top values
-`wireAutocomplete` (`dashboard.js`) only queries `/api/autocomplete/` once the user has typed at
-least one character (`if (q.length < 1) return;`), so the contributor/editor/imagery datalists
-are empty until then — no hint that typing narrows a larger list. Pre-fill each datalist with the
-current top 20 (already computed for the ranking charts) on page load, so the dropdown has
-immediately-useful options *and* implicitly signals "there's more, start typing" once a user
-opens it and sees it's not exhaustive.
 
 ### Favicon
 The dashboard has no favicon — confirmed by recurring `Not Found: /favicon.ico` 404s in `web`'s

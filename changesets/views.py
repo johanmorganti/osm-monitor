@@ -213,36 +213,34 @@ DIMENSION_FIELDS = {
     'contributor': 'user',
     'editor': 'created_by_family',
     'imagery': 'imagery_family',
-    'locale': 'locale_family',
+    'language': 'locale_family',
 }
 
 # One continuous aggregate per dimension (see migration 0020) — used for
-# TimeseriesView's group_by and ToplistView's dimension (all 4 valid here).
-# _single_filter_dimension below only ever returns contributor/editor/
-# imagery (locale isn't wired up as a *filter* param — see TODO.md's "Add
-# locale as a filter param"), so looking it up in this same dict for
-# SummaryView's filtered fast path is safe without a separate mapping.
+# TimeseriesView's group_by and ToplistView's dimension (all 4 valid here),
+# and by _single_filter_dimension's fast path (contributor/editor/imagery/
+# language can each be a single filter now).
 CAGG_MODELS = {
     'contributor': CaggContributorDaily,
     'editor': CaggEditorDaily,
     'imagery': CaggImageryDaily,
-    'locale': CaggLocaleDaily,
+    'language': CaggLocaleDaily,
 }
 
 
-def _single_filter_dimension(contributor, editor, imagery):
-    """(dimension, value) if exactly one of contributor/editor/imagery is
-    set, else None. That's the only shape a per-dimension continuous
+def _single_filter_dimension(contributor, editor, imagery, language):
+    """(dimension, value) if exactly one of contributor/editor/imagery/language
+    is set, else None. That's the only shape a per-dimension continuous
     aggregate can answer directly — SummaryView just needs a scalar total,
     which the matching CA already has pre-aggregated. Two or more filters
     together still need the raw Changeset table: no CA covers that shape
     (each one only tracks its own single dimension) — see TODO.md."""
-    set_filters = [(n, v) for n, v in (('contributor', contributor), ('editor', editor), ('imagery', imagery)) if v]
+    set_filters = [(n, v) for n, v in (('contributor', contributor), ('editor', editor), ('imagery', imagery), ('language', language)) if v]
     return set_filters[0] if len(set_filters) == 1 else None
 
 
 def _resolve_range_and_filters(request):
-    """start_date/end_date/contributor/editor/imagery, shared by
+    """start_date/end_date/contributor/editor/imagery/language, shared by
     TimeseriesView, SummaryView, and ToplistView — same query params,
     same "defaults to last 7 days" behaviour, across all three."""
     start_date = request.query_params.get('start_date')
@@ -255,17 +253,18 @@ def _resolve_range_and_filters(request):
     contributor = request.query_params.get('contributor', '')
     editor = request.query_params.get('editor', '')
     imagery = request.query_params.get('imagery', '')
+    language = request.query_params.get('language', '')
     filters = {
         'start_date': start_date, 'end_date': end_date,
-        'contributor': contributor, 'editor': editor, 'imagery': imagery,
+        'contributor': contributor, 'editor': editor, 'imagery': imagery, 'language': language,
     }
-    return start_date, end_date, contributor, editor, imagery, filters
+    return start_date, end_date, contributor, editor, imagery, language, filters
 
 
-def _filtered_changesets(start_date, end_date, contributor, editor, imagery):
+def _filtered_changesets(start_date, end_date, contributor, editor, imagery, language):
     """Base queryset for the raw (filtered) path all three views fall back
-    to when a contributor/editor/imagery filter is given — the rollup
-    tables don't carry those dimensions. Half-open range on the raw
+    to when a contributor/editor/imagery/language filter is given — the
+    rollup tables don't carry those dimensions. Half-open range on the raw
     datetime (not created_at__date) so the created_at index can be used
     directly — created_at__date forces a sequential scan since it's a
     function of the column, not the column itself."""
@@ -278,6 +277,8 @@ def _filtered_changesets(start_date, end_date, contributor, editor, imagery):
         changesets = changesets.filter(created_by_family__iexact=editor)
     if imagery:
         changesets = changesets.filter(imagery_family__iexact=imagery)
+    if language:
+        changesets = changesets.filter(locale_family__iexact=language)
     return changesets
 
 
@@ -287,6 +288,7 @@ _FILTER_PARAMS = [
     OpenApiParameter('contributor', OpenApiTypes.STR, description='Restrict to one OSM username (case-insensitive).'),
     OpenApiParameter('editor', OpenApiTypes.STR, description='Restrict to one editor family (case-insensitive).'),
     OpenApiParameter('imagery', OpenApiTypes.STR, description='Restrict to one imagery family (case-insensitive).'),
+    OpenApiParameter('language', OpenApiTypes.STR, description='Restrict to one language/locale, as recorded in the changeset (case-insensitive).'),
 ]
 
 
@@ -298,7 +300,7 @@ class TimeseriesView(APIView):
     back to once grouped).
 
     Backed by continuous aggregates (see migration 0020) when unfiltered, and
-    also when exactly one of contributor/editor/imagery is set with no
+    also when exactly one of contributor/editor/imagery/language is set with no
     group_by (that dimension's own CA, filtered by name — daily grain, same
     as the grouped case). group_by combined with a filter is cross-dimension
     (e.g. "top editors, filtered by imagery") and falls back to the raw
@@ -313,13 +315,13 @@ class TimeseriesView(APIView):
             'over the range). Defaults to the last 7 days if no dates are given.'
         ),
         parameters=_FILTER_PARAMS + [
-            OpenApiParameter('group_by', OpenApiTypes.STR, description='Split into per-name series: contributor, editor, imagery, or locale. Omit for plain hourly volume.'),
+            OpenApiParameter('group_by', OpenApiTypes.STR, description='Split into per-name series: contributor, editor, imagery, or language. Omit for plain hourly volume.'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
         examples=[OpenApiExample(
             'Plain hourly volume',
             value={
-                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'group_by': None},
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'group_by': None},
                 'dates': ['2026-09-01 0:00'], 'series': [{'name': 'changesets', 'counts': [2100]}],
             },
             response_only=True,
@@ -330,11 +332,11 @@ class TimeseriesView(APIView):
         if group_by not in (None, *DIMENSION_FIELDS):
             return Response({'error': f'group_by must be one of: {", ".join(DIMENSION_FIELDS)}'}, status=status.HTTP_400_BAD_REQUEST)
 
-        start_date, end_date, contributor, editor, imagery, filters = _resolve_range_and_filters(request)
+        start_date, end_date, contributor, editor, imagery, language, filters = _resolve_range_and_filters(request)
         filters = {**filters, 'group_by': group_by}
-        single = _single_filter_dimension(contributor, editor, imagery)
+        single = _single_filter_dimension(contributor, editor, imagery, language)
 
-        if not (contributor or editor or imagery):
+        if not (contributor or editor or imagery or language):
             data = self._from_rollups(start_date, end_date, group_by)
         elif single and group_by is None:
             # Plain volume-over-time for exactly one filtered dimension is
@@ -346,7 +348,7 @@ class TimeseriesView(APIView):
             dimension, value = single
             data = self._from_rollups_single_filtered(start_date, end_date, dimension, value)
         else:
-            data = self._from_raw(start_date, end_date, contributor, editor, imagery, group_by)
+            data = self._from_raw(start_date, end_date, contributor, editor, imagery, language, group_by)
         return Response({'filters': filters, **data})
 
     def _from_rollups_single_filtered(self, start_date, end_date, dimension, value):
@@ -395,8 +397,8 @@ class TimeseriesView(APIView):
         series = [{'name': name, 'counts': [per_name_day[name].get(d, 0) for d in dates]} for name in names]
         return {'dates': dates, 'series': series}
 
-    def _from_raw(self, start_date, end_date, contributor, editor, imagery, group_by):
-        changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery)
+    def _from_raw(self, start_date, end_date, contributor, editor, imagery, language, group_by):
+        changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery, language)
 
         if group_by is None:
             rows = list(
@@ -435,10 +437,11 @@ class SummaryView(APIView):
     """Single-number KPIs for a date range: total_changesets, total_objects
     (objects changed), avg_objects (objects per changeset). Backed by the
     cagg_volume_hourly continuous aggregate when unfiltered, or the matching
-    per-dimension CA when exactly one of contributor/editor/imagery is set
-    (it just needs a scalar total, which that CA already has pre-aggregated).
-    Two or more filters together still fall back to the raw Changeset table
-    — no CA covers that shape, each one only tracks its own dimension."""
+    per-dimension CA when exactly one of contributor/editor/imagery/language is
+    set (it just needs a scalar total, which that CA already has
+    pre-aggregated). Two or more filters together still fall back to the raw
+    Changeset table — no CA covers that shape, each one only tracks its own
+    dimension."""
 
     @extend_schema(
         tags=['changesets'],
@@ -449,18 +452,18 @@ class SummaryView(APIView):
         examples=[OpenApiExample(
             'Sample',
             value={
-                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': ''},
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': ''},
                 'total_changesets': 350000, 'total_objects': 12500000, 'avg_objects': 35.7,
             },
             response_only=True,
         )],
     )
     def get(self, request):
-        start_date, end_date, contributor, editor, imagery, filters = _resolve_range_and_filters(request)
+        start_date, end_date, contributor, editor, imagery, language, filters = _resolve_range_and_filters(request)
         end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
-        single = _single_filter_dimension(contributor, editor, imagery)
+        single = _single_filter_dimension(contributor, editor, imagery, language)
 
-        if not (contributor or editor or imagery):
+        if not (contributor or editor or imagery or language):
             totals = CaggVolumeHourly.objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive).aggregate(
                 total_changesets=Sum('cnt'), total_objects=Sum('changes_sum'))
         elif single:
@@ -469,7 +472,7 @@ class SummaryView(APIView):
                 name__iexact=value, bucket__gte=start_date, bucket__lt=end_date_exclusive
             ).aggregate(total_changesets=Sum('cnt'), total_objects=Sum('changes_sum'))
         else:
-            changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery)
+            changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery, language)
             totals = changesets.aggregate(total_changesets=Count('id'), total_objects=Sum('changes_count'))
 
         total_changesets = totals['total_changesets'] or 0
@@ -487,10 +490,10 @@ class SummaryView(APIView):
 class ToplistView(APIView):
     """Top N by a metric, for one dimension (default N=20). Backed by that
     dimension's continuous aggregate when unfiltered; a contributor/editor/
-    imagery filter falls back to the raw Changeset table — no CA can answer
-    "top imagery, filtered by editor" (each CA only tracks its own single
-    dimension, not cross-dimension breakdowns), so filtering doesn't get a
-    fast path here the way SummaryView's scalar total does."""
+    imagery/language filter falls back to the raw Changeset table — no CA can
+    answer "top imagery, filtered by editor" (each CA only tracks its own
+    single dimension, not cross-dimension breakdowns), so filtering doesn't
+    get a fast path here the way SummaryView's scalar total does."""
 
     DEFAULT_LIMIT = 20
     MAX_LIMIT = 1000
@@ -504,7 +507,7 @@ class ToplistView(APIView):
             'dates are given.'
         ),
         parameters=_FILTER_PARAMS + [
-            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, locale.'),
+            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language.'),
             OpenApiParameter('metric', OpenApiTypes.STR, description='count (changesets) or objects (objects changed). Defaults to count.'),
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of results (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
         ],
@@ -512,7 +515,7 @@ class ToplistView(APIView):
         examples=[OpenApiExample(
             'Top editors by count',
             value={
-                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'dimension': 'editor', 'metric': 'count', 'limit': 20},
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'dimension': 'editor', 'metric': 'count', 'limit': 20},
                 'results': [{'name': 'iD', 'value': 180000}],
             },
             response_only=True,
@@ -537,13 +540,13 @@ class ToplistView(APIView):
             if not (1 <= limit <= self.MAX_LIMIT):
                 return Response({'error': f'limit must be between 1 and {self.MAX_LIMIT}'}, status=status.HTTP_400_BAD_REQUEST)
 
-        start_date, end_date, contributor, editor, imagery, filters = _resolve_range_and_filters(request)
+        start_date, end_date, contributor, editor, imagery, language, filters = _resolve_range_and_filters(request)
         filters = {**filters, 'dimension': dimension, 'metric': metric, 'limit': limit}
 
-        if not (contributor or editor or imagery):
+        if not (contributor or editor or imagery or language):
             results = self._from_rollups(start_date, end_date, dimension, metric, limit)
         else:
-            results = self._from_raw(start_date, end_date, contributor, editor, imagery, dimension, metric, limit)
+            results = self._from_raw(start_date, end_date, contributor, editor, imagery, language, dimension, metric, limit)
         return Response({'filters': filters, 'results': results})
 
     def _from_rollups(self, start_date, end_date, dimension, metric, limit):
@@ -555,8 +558,8 @@ class ToplistView(APIView):
         )
         return [{'name': r['name'], 'value': r['value']} for r in rows]
 
-    def _from_raw(self, start_date, end_date, contributor, editor, imagery, dimension, metric, limit):
-        changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery)
+    def _from_raw(self, start_date, end_date, contributor, editor, imagery, language, dimension, metric, limit):
+        changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery, language)
         field = DIMENSION_FIELDS[dimension]
         agg = Count('id') if metric == 'count' else Sum('changes_count')
         rows = (

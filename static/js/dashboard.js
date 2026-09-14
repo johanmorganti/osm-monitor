@@ -37,6 +37,18 @@ function shortDate(dateStr) {
     return m ? `${MONTH_ABBR[parseInt(m[2], 10) - 1]} ${parseInt(m[3], 10)}` : dateStr;
 }
 
+// KPI numbers (total changesets/objects) can run into the hundreds of
+// millions at full history scale — Intl's built-in compact notation ("14M",
+// "126K") instead of hand-rolled suffix logic. Full precision is still
+// available on hover via a small custom tooltip (elementId + '-tooltip' in
+// the template) rather than the native `title` attribute — title's hover
+// delay and complete absence on touch devices made it easy to miss.
+const compactNumber = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+function setKpiNumber(elementId, value) {
+    document.getElementById(elementId).textContent = compactNumber.format(value);
+    document.getElementById(`${elementId}-tooltip`).textContent = value.toLocaleString('en-US');
+}
+
 // Shared x-axis config for every time-series chart — a handful of short,
 // evenly-spaced date labels instead of Chart.js's default of showing (and
 // often rotating) every single one, which is what was crowding out the
@@ -91,7 +103,7 @@ function stackedBar(canvasId, dates, rawSeries) {
 }
 
 // Sets `field` to the clicked bar's name in the current URL and reloads —
-// every filter (start_date/end_date/contributor/editor/imagery) already
+// every filter (start_date/end_date/contributor/editor/imagery/language) already
 // lives in the URL and every fetch reads from it, so this needs no client-
 // side re-fetch orchestration, just a normal navigation to the new query.
 // Additive: only the clicked field changes, any other filter already set
@@ -101,6 +113,24 @@ function applyFilter(field, value) {
     params.set(field, value);
     window.location.search = params.toString();
 }
+
+// Same "URL is the single source of truth" navigation as applyFilter, but
+// for the Time Range presets — those set start_date *and* end_date together,
+// so they can't reuse applyFilter's single-field form. Any other filter
+// already set (contributor/editor/imagery/language) stays in place.
+function applyDateRangePreset(days) {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - days);
+    const iso = d => d.toISOString().slice(0, 10);
+    const params = new URLSearchParams(window.location.search);
+    params.set('start_date', iso(start));
+    params.set('end_date', iso(end));
+    window.location.search = params.toString();
+}
+document.querySelectorAll('.date-preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => applyDateRangePreset(parseInt(btn.dataset.days, 10)));
+});
 
 // A ranking list is one measure, not several series — every bar takes the
 // same identity color; order and label carry identity, not hue.
@@ -246,6 +276,7 @@ loadWidget('changesetChart', apiUrl('/api/changesets/timeseries/'), volume => {
 loadWidget('topEditorsChart', apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'count' }), topEditors => {
     showChart('topEditorsChart');
     horizontalBar('topEditorsChart', topEditors.results.map(r => r.name), topEditors.results.map(r => r.value), 'Changesets', 'editor');
+    setDatalistOptions('editor-list', topEditors.results.map(r => r.name));
 });
 loadWidget('topEditorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'editor' }), editorsTime => {
     showChart('topEditorsTimeChart');
@@ -255,17 +286,18 @@ loadWidget('topEditorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_
 loadWidget('topImageriesChart', apiUrl('/api/changesets/toplist/', { dimension: 'imagery', metric: 'count' }), topImageries => {
     showChart('topImageriesChart');
     horizontalBar('topImageriesChart', topImageries.results.map(r => r.name), topImageries.results.map(r => r.value), 'Changesets', 'imagery');
+    setDatalistOptions('imagery-list', topImageries.results.map(r => r.name));
 });
 loadWidget('topImageriesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'imagery' }), imageriesTime => {
     showChart('topImageriesTimeChart');
     stackedBar('topImageriesTimeChart', imageriesTime.dates, imageriesTime.series);
 });
 
-loadWidget('topLocalesChart', apiUrl('/api/changesets/toplist/', { dimension: 'locale', metric: 'count' }), topLocales => {
+loadWidget('topLocalesChart', apiUrl('/api/changesets/toplist/', { dimension: 'language', metric: 'count' }), topLocales => {
     showChart('topLocalesChart');
-    horizontalBar('topLocalesChart', topLocales.results.map(r => r.name), topLocales.results.map(r => r.value), 'Changesets');
+    horizontalBar('topLocalesChart', topLocales.results.map(r => r.name), topLocales.results.map(r => r.value), 'Changesets', 'language');
 });
-loadWidget('topLocalesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'locale' }), localesTime => {
+loadWidget('topLocalesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'language' }), localesTime => {
     showChart('topLocalesTimeChart');
     stackedBar('topLocalesTimeChart', localesTime.dates, localesTime.series);
 });
@@ -273,6 +305,11 @@ loadWidget('topLocalesTimeChart', apiUrl('/api/changesets/timeseries/', { group_
 loadWidget('topContributorsByObjectsChart', apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'objects' }), topContributorsByObjects => {
     showChart('topContributorsByObjectsChart');
     horizontalBar('topContributorsByObjectsChart', topContributorsByObjects.results.map(r => r.name), topContributorsByObjects.results.map(r => r.value), 'Objects changed', 'contributor');
+    // Contributor has no count-metric toplist widget on this page (only this
+    // objects-ranked one) — reused here too rather than firing a second,
+    // near-identical toplist request just to seed the datalist with the same
+    // set of top names in a different order.
+    setDatalistOptions('contributor-list', topContributorsByObjects.results.map(r => r.name));
 });
 loadWidget('topEditorsByObjectsChart', apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'objects' }), topEditorsByObjects => {
     showChart('topEditorsByObjectsChart');
@@ -290,9 +327,10 @@ fetchJson(apiUrl('/api/changesets/summary/'))
         document.getElementById('contributor').value = summary.filters.contributor;
         document.getElementById('editor').value = summary.filters.editor;
         document.getElementById('imagery').value = summary.filters.imagery;
+        document.getElementById('language').value = summary.filters.language;
 
-        document.getElementById('totalChangesets').textContent = summary.total_changesets;
-        document.getElementById('totalObjects').textContent = summary.total_objects;
+        setKpiNumber('totalChangesets', summary.total_changesets);
+        setKpiNumber('totalObjects', summary.total_objects);
         document.getElementById('avgObjects').textContent = summary.avg_objects;
     })
     .catch(err => {
@@ -304,16 +342,25 @@ fetchJson(apiUrl('/api/changesets/summary/'))
 
 // ── Filter autocomplete ─────────────────────────────────────────────────────
 
+// Shared by the on-load seeding above (top names from the ranking widgets'
+// own toplist responses) and wireAutocomplete below (narrowed /api/autocomplete/
+// matches once the user starts typing) — same <option> rendering either way.
+function setDatalistOptions(datalistId, names) {
+    document.getElementById(datalistId).innerHTML = names.map(v => `<option value="${v}"></option>`).join('');
+}
+
+// Datalists start pre-filled with each dimension's top ~20 names (set by the
+// loadWidget callbacks above, reusing the toplist responses already fetched
+// for the ranking charts — no extra request). This only replaces those
+// options once the user actually types something (q.length < 1 guard), so
+// the pre-filled list stays in place, unnarrowed, until then.
 function wireAutocomplete(inputId, datalistId, field) {
     document.getElementById(inputId).addEventListener('input', function () {
         const q = this.value;
         if (q.length < 1) return;
         fetch(`/api/autocomplete/?field=${field}&q=${encodeURIComponent(q)}`)
             .then(r => r.json())
-            .then(values => {
-                const dl = document.getElementById(datalistId);
-                dl.innerHTML = values.map(v => `<option value="${v}"></option>`).join('');
-            });
+            .then(values => setDatalistOptions(datalistId, values));
     });
 }
 wireAutocomplete('contributor', 'contributor-list', 'contributor');

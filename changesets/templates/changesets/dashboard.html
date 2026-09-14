@@ -4,20 +4,38 @@
 <div class="container mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold mb-8">OSM Changeset Dashboard</h1>
 
-    <!-- Filters -->
+    <!-- Time Range -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
-        <h2 class="text-xl font-semibold mb-4">Filters</h2>
-        <form method="get" class="flex flex-wrap gap-4">
+        <h2 class="text-xl font-semibold mb-4">Time Range</h2>
+        <div class="flex flex-wrap items-end gap-4">
+            <div>
+                <span class="block text-sm font-medium text-gray-700 mb-1">Presets</span>
+                <div class="flex flex-wrap gap-2">
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="7">7 days</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="28">4 weeks</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="90">3 months</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="180">6 months</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="365">1 year</button>
+                </div>
+            </div>
+            <div class="text-sm text-gray-400 pb-2">or custom:</div>
             <div>
                 <label for="start_date" class="block text-sm font-medium text-gray-700">Start Date</label>
-                <input type="date" name="start_date" id="start_date" value="{{ request.GET.start_date }}"
+                <input type="date" name="start_date" id="start_date" value="{{ request.GET.start_date }}" form="filter-form"
                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
             </div>
             <div>
                 <label for="end_date" class="block text-sm font-medium text-gray-700">End Date</label>
-                <input type="date" name="end_date" id="end_date" value="{{ request.GET.end_date }}"
+                <input type="date" name="end_date" id="end_date" value="{{ request.GET.end_date }}" form="filter-form"
                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
             </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+        <h2 class="text-xl font-semibold mb-4">Filters</h2>
+        <form method="get" id="filter-form" class="flex flex-wrap gap-4 items-end">
             <div>
                 <label for="contributor" class="block text-sm font-medium text-gray-700">Contributor</label>
                 <input type="text" name="contributor" id="contributor" value="{{ request.GET.contributor }}"
@@ -39,22 +57,39 @@
                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
                 <datalist id="imagery-list"></datalist>
             </div>
-            <div class="flex items-end">
+            <div>
+                <label for="language" class="block text-sm font-medium text-gray-700">Language</label>
+                <input type="text" name="language" id="language" value="{{ request.GET.language }}"
+                       autocomplete="off" placeholder="Search language…"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
                 <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600">
-                    Apply Filter
+                    Apply
                 </button>
             </div>
         </form>
     </div>
 
-    <!-- ══ Part 1: Changeset activity ══════════════════════════════════════ -->
-    <h2 class="text-2xl font-semibold mb-4">Part 1 — Changeset activity</h2>
+    <!-- ══ Changeset activity ══════════════════════════════════════════════ -->
+    <h2 class="text-2xl font-semibold mb-4 flex items-center gap-2">
+        Changeset activity
+        <span class="relative inline-block group cursor-help">
+            <span class="text-xs text-gray-400 border border-gray-300 rounded-full w-5 h-5 inline-flex items-center justify-center">?</span>
+            <span class="absolute left-0 top-full mt-2 hidden group-hover:block w-80 whitespace-normal text-xs font-normal leading-snug bg-gray-800 text-white rounded px-3 py-2 z-10">
+                A <strong>changeset</strong> is a single edit session in OpenStreetMap — one or more map edits (adding, moving, or deleting roads, buildings, POIs, etc.) submitted together under one comment. This section tracks how many changesets are happening, and by whom or with what editing tool.
+            </span>
+        </span>
+    </h2>
 
     <!-- KPI + time series -->
     <div class="grid grid-cols-6 gap-8 mb-8">
         <div class="col-span-1 bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
             <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Total Changesets</h3>
-            <div id="totalChangesets" class="text-4xl font-bold text-blue-600">–</div>
+            <div class="relative inline-block group w-fit cursor-help">
+                <div id="totalChangesets" class="text-4xl font-bold text-blue-600 border-b border-dotted border-blue-300">–</div>
+                <div id="totalChangesets-tooltip" class="absolute left-0 bottom-full mb-2 hidden group-hover:block whitespace-nowrap bg-gray-800 text-white text-xs rounded px-2 py-1 z-10"></div>
+            </div>
         </div>
         <div class="col-span-5 bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-4">Changesets Over Time</h3>
@@ -109,7 +144,8 @@
 
         <!-- Language -->
         <div class="bg-white rounded-lg shadow-lg p-6">
-            <h3 class="text-lg font-semibold mb-4">Top 20 Languages</h3>
+            <h3 class="text-lg font-semibold mb-1">Top 20 Languages</h3>
+            <p class="text-xs text-gray-400 mb-3">Click a bar to filter by language</p>
             <div class="relative" style="height: 560px">
                 <div id="topLocalesChart-spinner" class="absolute inset-0 flex items-center justify-center">
                     <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
@@ -126,14 +162,25 @@
         </div>
     </div>
 
-    <!-- ══ Part 2: Objects changed ══════════════════════════════════════════ -->
-    <h2 class="text-2xl font-semibold mb-4">Part 2 — Objects changed</h2>
+    <!-- ══ Objects changed ═════════════════════════════════════════════════ -->
+    <h2 class="text-2xl font-semibold mb-4 flex items-center gap-2">
+        Objects changed
+        <span class="relative inline-block group cursor-help">
+            <span class="text-xs text-gray-400 border border-gray-300 rounded-full w-5 h-5 inline-flex items-center justify-center">?</span>
+            <span class="absolute left-0 top-full mt-2 hidden group-hover:block w-80 whitespace-normal text-xs font-normal leading-snug bg-gray-800 text-white rounded px-3 py-2 z-10">
+                An <strong>object</strong> is a single OSM map element — a node, way, or relation (a point, a road/building outline, or a group of other elements). This counts how many objects were added, modified, or deleted across changesets — a rough measure of actual mapping work, since one changeset can touch anywhere from 1 to thousands of objects.
+            </span>
+        </span>
+    </h2>
 
     <!-- KPIs -->
     <div class="grid grid-cols-2 gap-8 mb-8">
         <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
             <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Total Objects Changed</h3>
-            <div id="totalObjects" class="text-4xl font-bold text-blue-600">–</div>
+            <div class="relative inline-block group w-fit cursor-help">
+                <div id="totalObjects" class="text-4xl font-bold text-blue-600 border-b border-dotted border-blue-300">–</div>
+                <div id="totalObjects-tooltip" class="absolute left-0 bottom-full mb-2 hidden group-hover:block whitespace-nowrap bg-gray-800 text-white text-xs rounded px-2 py-1 z-10"></div>
+            </div>
         </div>
         <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
             <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Avg Objects per Changeset</h3>
@@ -169,21 +216,4 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 {% load static %}
 <script src="{% static 'js/dashboard.js' %}"></script>
-<script>
-function wireAutocomplete(inputId, datalistId, field) {
-    document.getElementById(inputId).addEventListener('input', function () {
-        const q = this.value;
-        if (q.length < 1) return;
-        fetch(`/api/autocomplete/?field=${field}&q=${encodeURIComponent(q)}`)
-            .then(r => r.json())
-            .then(values => {
-                const dl = document.getElementById(datalistId);
-                dl.innerHTML = values.map(v => `<option value="${v}"></option>`).join('');
-            });
-    });
-}
-wireAutocomplete('contributor', 'contributor-list', 'contributor');
-wireAutocomplete('editor',      'editor-list',      'editor');
-wireAutocomplete('imagery',     'imagery-list',     'imagery');
-</script>
 {% endblock %}

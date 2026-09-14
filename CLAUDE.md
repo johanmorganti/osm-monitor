@@ -48,9 +48,9 @@ layout or charts, and the data was only reachable by loading the HTML page. The 
 everything (daily counts, every top-N breakdown, object totals) in one bundled response. Split by
 resource *shape* (analogous to Datadog's widget types), not by business concept: `timeseries`
 handles anything date-bucketed (plain volume via `group_by=none`, or per-name series via
-`group_by=editor|imagery|locale|contributor`), `toplist` handles any ranked list
+`group_by=editor|imagery|language|contributor`), `toplist` handles any ranked list
 (`dimension` × `metric=count|objects`), `summary` is the handful of single-number KPIs. This
-means a `contributor`×`count` or `locale`×`objects` toplist — combinations the old bundled
+means a `contributor`×`count` or `language`×`objects` toplist — combinations the old bundled
 endpoint never exposed — are just other parameter values on the same endpoint, not new code.
 Shared filter-resolution/queryset logic lives in module-level helpers in `views.py`
 (`_resolve_range_and_filters`, `_filtered_changesets`, `DIMENSION_FIELDS`) rather than being
@@ -63,6 +63,38 @@ endpoint had stayed.
 All DRF views carry `@extend_schema` annotations (drf-spectacular) so `/api/docs/` stays
 accurate as new endpoints/params are added — update the annotation in `views.py` alongside any
 signature change, don't just rely on the docstring.
+
+### Dimension naming: DB column vs. API param vs. UI label
+Three separate names can exist for the same dimension, and they're allowed to differ — but each
+layer's name must be used *consistently everywhere at that layer*, not decided ad hoc per file.
+This came up concretely: the dashboard's chart title has said "Top 20 Languages" for a while, but
+when the matching filter was added it was labeled "Locale" in the filter form, "locale" in the
+click-to-filter hint text, and `locale` as the API query param — three different UI-facing spots
+disagreeing with the one that had already shipped.
+
+The convention, and the current mapping for every dimension:
+
+| DB column (`Changeset` field) | API param / `DIMENSION_FIELDS` key | UI label |
+|---|---|---|
+| `user` | `contributor` | Contributor |
+| `created_by_family` | `editor` | Editor |
+| `imagery_family` | `imagery` | Imagery provider |
+| `locale_family` | `language` | Language |
+
+Rules:
+- The **DB column** is internal and never exposed directly — it can stay whatever legacy/technical
+  name it already has (`user`, `locale_family`, ...). Renaming it is a real migration, not a
+  find-and-replace, so don't do it just to chase a display-name preference.
+- The **API param** (`DIMENSION_FIELDS` key, query string name, `CAGG_MODELS` key) is the one
+  stable public identifier — it's what `/api/docs/` documents and what external callers would use.
+  Pick the word a human would naturally use for the concept (`contributor`, not `user`; `language`,
+  not `locale`), and once it's public, treat renaming it as a breaking API change, not a quick fix.
+- The **UI label** (form `<label>`, placeholder, click-to-filter hint text, chart title) should
+  read naturally and may add words the API param doesn't need (e.g. "Imagery provider" for
+  `imagery`), but every UI-facing string for the same dimension must agree — if the chart title
+  says "Language," the filter label, placeholder, and hint text must too. When adding or changing
+  a filter, grep the template and `dashboard.js` for every existing string tied to that dimension
+  before picking new wording, rather than inventing a label in just the one spot being touched.
 
 ### imagery_used stored as JSON array
 `Changeset.imagery_used` is a `JSONField` holding a list of strings (e.g. `["Bing", "Mapbox"]`).
