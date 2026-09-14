@@ -52,29 +52,25 @@ pass — see below) or accepting that cross-dimension-filtered toplists stay slo
 (e.g. UI disables or caps the range for that combination). Needs a decision before doing more work
 here.
 
-### Per-dimension CAs silently drop NULL-tag volume (large campaigns can vanish from breakdowns)
-Confirmed via investigation (2026-09-14) into a real symptom: the main "Changesets Over Time"
-chart (`cagg_volume_hourly`, no filter) showed a clear volume spike on 2026-08-30, but none of the
-"Top Imagery/Language Over Time" breakdown charts showed any corresponding movement. Root cause:
-`cagg_imagery_daily`/`cagg_locale_daily`/`cagg_editor_daily` are each defined with a
-`WHERE <field> IS NOT NULL` clause (see migration `0020_continuous_aggregates`), while
-`cagg_volume_hourly` has no such filter. The spike was a ~9,000-changeset MapRoulette campaign
-(challenge 56565, bulk-updating Italian municipality population from ANPR open data, mostly two
-users) — a scripted one-object-per-task edit pattern that never sets `imagery_used`/`locale`, so
-100% of it has `imagery_family`/`locale_family` NULL. Those changesets count fully toward total
-volume but are structurally invisible to the imagery/language breakdowns no matter how large the
-campaign — not a bug in the CA backfill (editor breakdown *does* show it correctly, since
-`created_by_family` is populated; verified the imagery/locale CAs' non-NULL totals for that day
-match raw data almost exactly, i.e. nothing is actually missing/stale, the NULL rows are just
-excluded by design). Any future large NULL-tag campaign (bulk imports, other MapRoulette-style
-bot edits) will reproduce this same "spike with no explanation" experience.
-Fix, if these breakdowns are meant to explain "why did total volume move": drop the
-`IS NOT NULL` filter on `cagg_imagery_daily`/`cagg_locale_daily` and add a `COALESCE(name, '(none)')`
-bucket instead, so NULL-tag volume shows up as its own explicit series rather than silently
-vanishing. Related to the "Dashboard: new graph/section ideas" hashtags/campaign toplist entry
-below — a hashtag-based campaign breakdown would make cases like this MapRoulette campaign
-directly attributable by name instead of just "(none)". Not urgent (understood gap, not active
-data corruption), but low-effort once picked up.
+### ~~Per-dimension CAs silently drop NULL-tag volume~~ — FIXED
+Was: `cagg_imagery_daily`/`cagg_locale_daily` excluded NULL-tag changesets entirely (`WHERE <field>
+IS NOT NULL`, migration `0020`), so a large campaign that never sets that tag (e.g. the ~9,000-
+changeset MapRoulette campaign, challenge 56565, that caused a 2026-08-30 volume spike invisible in
+every per-dimension breakdown) counted toward total volume but vanished from the Imagery/Language
+"Over Time" and toplist widgets no matter how large it got.
+Fixed in migration `0022_cagg_imagery_locale_none_bucket`: both CAs were dropped and recreated with
+`COALESCE(<field>, '(none)')` instead of the `NOT NULL` filter, so untagged volume now shows up as
+its own explicit `"(none)"` series/bar. `views.py`'s `_filtered_changesets` special-cases the
+`NONE_BUCKET = '(none)'` sentinel to filter on `<field>__isnull=True` instead of `__iexact` (so
+clicking that bar / filtering by it matches the real NULL rows, not the literal string), and
+`dashboard.js` styles it with the same neutral gray as "Other" rather than a random hue. Both CAs
+were fully re-backfilled month-by-month (2025-08 through today) after the rebuild and verified to
+sum to the exact raw row count for a sample month (1,153,395 = 1,153,395 = 1,153,395, no rows
+silently dropped). `cagg_editor_daily`/`cagg_contributor_daily` were deliberately left unchanged —
+`created_by_family`/`user` are essentially always populated in practice, so there's no equivalent
+gap there.
+Still related, not done: the "Dashboard: new graph/section ideas" hashtags/campaign toplist entry
+below would let a campaign like this MapRoulette one show up by name instead of just "(none)".
 
 ### Compression backlog not yet compressed — policy manually paused
 `changesets_changeset` has compression enabled (`0019_compress_changesets`, segmented by

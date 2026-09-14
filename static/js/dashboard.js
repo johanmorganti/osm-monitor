@@ -13,6 +13,7 @@ const CATEGORICAL = [
     '#4a3aa7', // violet
 ];
 const OTHER_COLOR = '#c3c2b7';   // neutral gray — "Other" isn't an identity, so it doesn't spend a hue
+const NONE_BUCKET = '(none)';   // cagg_imagery_daily/cagg_locale_daily's bucket for changesets with no tag (see views.py) — same "not an identity" treatment as "Other"
 const RANKING_COLOR = CATEGORICAL[0]; // single-series ranking bars all take one slot, per the nominal-categorical rule
 
 const INK_SECONDARY = '#52514e';
@@ -82,7 +83,7 @@ function stackedBar(canvasId, dates, rawSeries) {
             datasets: series.map((s, i) => ({
                 label: s.name,
                 data: s.counts,
-                backgroundColor: s.name === 'Other' ? OTHER_COLOR : CATEGORICAL[i],
+                backgroundColor: (s.name === 'Other' || s.name === NONE_BUCKET) ? OTHER_COLOR : CATEGORICAL[i],
                 borderWidth: 0,
                 maxBarThickness: 24,
             })),

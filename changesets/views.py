@@ -206,6 +206,17 @@ class DashboardView(TemplateView):
     template_name = 'changesets/dashboard.html'
 
 
+# cagg_imagery_daily/cagg_locale_daily (migration 0022) bucket changesets with
+# no imagery/language tag under this literal name instead of excluding them —
+# a large NULL-tag campaign (e.g. a MapRoulette bulk edit) would otherwise be
+# fully invisible in those two breakdowns despite counting toward total volume
+# (see TODO.md). Clicking that bar / filtering by it needs to match real
+# NULL rows, not the literal string, hence the isnull check in
+# _filtered_changesets below. cagg_editor_daily/cagg_contributor_daily were
+# left excluding NULLs — created_by_family/user are essentially always
+# populated in practice, so there's no equivalent gap there.
+NONE_BUCKET = '(none)'
+
 # Dimension name (as used in the public API and in CAGG_MODELS below) -> the
 # raw Changeset field it corresponds to. Shared by TimeseriesView's group_by
 # and ToplistView's dimension.
@@ -276,9 +287,9 @@ def _filtered_changesets(start_date, end_date, contributor, editor, imagery, lan
     if editor:
         changesets = changesets.filter(created_by_family__iexact=editor)
     if imagery:
-        changesets = changesets.filter(imagery_family__iexact=imagery)
+        changesets = changesets.filter(imagery_family__isnull=True) if imagery == NONE_BUCKET else changesets.filter(imagery_family__iexact=imagery)
     if language:
-        changesets = changesets.filter(locale_family__iexact=language)
+        changesets = changesets.filter(locale_family__isnull=True) if language == NONE_BUCKET else changesets.filter(locale_family__iexact=language)
     return changesets
 
 
