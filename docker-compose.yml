@@ -1,35 +1,48 @@
 services:
   db:
-    image: timescale/timescaledb:latest-pg16
+    # Switched from timescale/timescaledb:latest-pg16 (Alpine) to this
+    # Ubuntu-based image specifically to get PostGIS bundled alongside
+    # TimescaleDB in the same Postgres instance — same exact Postgres
+    # version (16.15) as before, migrated via a full logical dump/restore
+    # (not a physical volume swap) specifically to avoid the Alpine/musl vs.
+    # Ubuntu/glibc collation mismatch that a raw data-directory copy between
+    # those two libc's would risk corrupting text indexes on.
+    image: timescale/timescaledb-ha:pg16
     restart: unless-stopped
     env_file: .env
-    # This host is 3.8GB total, shared with several unrelated apps — the
-    # stock postgres defaults (effective_cache_size=4GB, i.e. "assume the
-    # whole box is free for caching") and unbounded parallel workers were
-    # contributing to swap pressure. mem_limit is a hard ceiling so a heavy
-    # query/index build can't single-handedly starve the other apps on the
-    # box; effective_cache_size is sized to fit under it.
-    # shared_preload_libraries needs both timescaledb (hypertables) and
-    # pg_stat_statements (Datadog Database Monitoring's query-level metrics/
-    # samples/explain plans) — the extensions themselves still need
-    # `CREATE EXTENSION ...;` run once against the app database after this
-    # takes effect, since they can't be preloaded and self-installed in the
-    # same step (see changesets/migrations/0018_timescale_hypertable.py and
-    # db/init/01-datadog-dbm.sql).
-    # work_mem=32MB: default 4MB was forcing GROUP BY aggregates over the
+    # This host is 3.8GB total, shared with several unrelated apps.
+    # Unlike the old Alpine image, this one auto-tunes shared_buffers/
+    # effective_cache_size/work_mem from the container's own memory cgroup
+    # limit at first init (see mem_limit below) — no manual
+    # effective_cache_size override needed. The settings below are ones the
+    # auto-tuner doesn't set: shared_preload_libraries needs both
+    # timescaledb (hypertables) and pg_stat_statements (Datadog Database
+    # Monitoring's query-level metrics/samples/explain plans) — the
+    # extensions themselves still need `CREATE EXTENSION ...;` run once
+    # against the app database after this takes effect, since they can't be
+    # preloaded and self-installed in the same step (see changesets/
+    # migrations/0018_timescale_hypertable.py and db/init/01-datadog-dbm.sql).
+    # work_mem=32MB: default was forcing GROUP BY aggregates over the
     # rollup tables (e.g. ToplistView's contributor breakdown, ~223K groups)
     # to spill to disk mid-query — pure wasted I/O on an already I/O-
     # constrained host. 32MB comfortably covers what we've observed spilling
     # (~16MB) without risking the container's mem_limit under normal
     # concurrency (this host serves one gunicorn worker + the poller, not a
-    # high-concurrency pool).
-    command: postgres -c effective_cache_size=768MB -c max_parallel_workers_per_gather=1 -c shared_preload_libraries=timescaledb,pg_stat_statements -c track_io_timing=on -c track_activity_query_size=4096 -c work_mem=32MB
-    mem_limit: 1200m
+    # high-concurrency pool). Passed via `command:`, not postgresql.conf:
+    # this image's entrypoint still execs `postgres` directly (confirmed via
+    # `ps aux` inside the container — PID 1 is `postgres`, not a Patroni/
+    # supervisor wrapper), so plain `-c` flags apply the same way they did
+    # on the old image, and take precedence over the auto-tuner's own
+    # postgresql.conf values.
+    command: postgres -c shared_preload_libraries=timescaledb,pg_stat_statements -c track_io_timing=on -c track_activity_query_size=4096 -c work_mem=32MB
+    mem_limit: 1400m
     mem_reservation: 512m
     ports:
       - "5007:5432"
     volumes:
-      - timescale-data:/var/lib/postgresql/data
+      # Note the different data path vs. the old Alpine image
+      # (/var/lib/postgresql/data) — this image's own convention.
+      - timescale-ha-data:/home/postgres/pgdata/data
       # Only runs on a genuinely fresh data directory — see db/init/'s own
       # comments for what still needs doing manually on the existing volume.
       - ./db/init:/docker-entrypoint-initdb.d:ro
@@ -126,4 +139,7 @@ services:
 
 volumes:
   postgres-data:
-  timescale-data:
+  timescale-data: # old Alpine-image data dir, kept (unused) as a rollback fallback — see timescale-ha-data
+  timescale-ha-data:
+    external: true
+    name: osm-monitor-pg16ha-data
