@@ -279,6 +279,49 @@ class CaggContributorHourly(_CaggHourly):
         db_table = 'cagg_contributor_hourly'
 
 
+class CaggGeoDaily(models.Model):
+    """Unmanaged mapping onto the cagg_geo_daily continuous aggregate (see
+    migration 0025) — grid-cell (0.5-degree) changeset density per day, for
+    GeoView. grid_lat/grid_lon are NULL for changesets whose bbox diagonal
+    exceeds ~200km (see the migration for the exact expression): a stray
+    far-away edited object blowing up an otherwise-local changeset's bbox
+    means its centroid can't be trusted, so it's excluded from the map
+    rather than plotted somewhere misleading. Not a subclass of _CaggDaily
+    since it needs two dimension columns (lat/lon) instead of one (name).
+    bucket as primary_key isn't a real uniqueness claim — see _CaggDaily's
+    identical caveat; never relied on for .get()/pk lookups."""
+    bucket = models.DateTimeField(primary_key=True)
+    grid_lat = models.FloatField(null=True)
+    grid_lon = models.FloatField(null=True)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_geo_daily'
+
+
+class CaggGeoFineDaily(models.Model):
+    """Unmanaged mapping onto the cagg_geo_fine_daily continuous aggregate
+    (see migration 0027) — same shape as CaggGeoDaily, but at a finer grid
+    (changesets/geo.py's FINE_GRID_SIZE_DEGREES, ~0.05°) for GeoView's
+    zoomed-in map view. Always viewport-scoped by GeoView (filtered on
+    grid_lat/grid_lon) rather than fetched globally like the coarse CAgg —
+    even pre-aggregated, shipping every fine cell on Earth for one zoomed-in
+    view would be excessive."""
+    bucket = models.DateTimeField(primary_key=True)
+    grid_lat = models.FloatField(null=True)
+    grid_lon = models.FloatField(null=True)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_geo_fine_daily'
+
+
 class FilterValue(models.Model):
     """Distinct known values for the dashboard's contributor/editor/imagery
     autocomplete. Deduplicated globally — unlike DailyBreakdown, there's no

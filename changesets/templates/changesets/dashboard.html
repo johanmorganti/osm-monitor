@@ -71,6 +71,18 @@
         </form>
     </div>
 
+    <!-- Changeset activity map -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-12">
+        <h3 class="text-lg font-semibold mb-1">Changeset Activity Map</h3>
+        <p class="text-xs text-gray-400 mb-3">Changeset density by location — zoom in for finer detail. Grid cells with an unreliable bounding box are omitted</p>
+        <div class="relative" style="height: 500px">
+            <div id="geoMap-spinner" class="absolute inset-0 flex items-center justify-center">
+                <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+            </div>
+            <div id="geoMap" style="height: 500px" hidden></div>
+        </div>
+    </div>
+
     <!-- ══ Changeset activity ══════════════════════════════════════════════ -->
     <h2 class="text-2xl font-semibold mb-4 flex items-center gap-2">
         Changeset activity
@@ -98,6 +110,32 @@
                     <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
                 </div>
                 <canvas id="changesetChart" hidden></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contributors — single full-width widget, shown first: usernames need
+         more horizontal room than editor/imagery/language names do. -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-12">
+        <div class="grid grid-cols-2 gap-8">
+            <div>
+                <h3 class="text-lg font-semibold mb-1">Top 20 Contributors</h3>
+                <p class="text-xs text-gray-400 mb-3">Click a bar to filter by contributor</p>
+                <div class="relative" style="height: 400px">
+                    <div id="topContributorsChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                        <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                    </div>
+                    <canvas id="topContributorsChart" hidden></canvas>
+                </div>
+            </div>
+            <div>
+                <h3 class="text-lg font-semibold mb-1">Over Time</h3>
+                <div class="relative" style="height: 400px; margin-top: 2.25rem">
+                    <div id="topContributorsTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                        <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                    </div>
+                    <canvas id="topContributorsTimeChart" hidden></canvas>
+                </div>
             </div>
         </div>
     </div>
@@ -214,6 +252,10 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 {% load static %}
 <script src="{% static 'js/dashboard.js' %}"></script>
 {% endblock %}

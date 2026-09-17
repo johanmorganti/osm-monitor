@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from django.views.generic import TemplateView
 from django.db.models import Count, Sum
+from django.db.models.expressions import RawSQL
 from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, OpenApiTypes
@@ -12,9 +13,14 @@ from .models import (
     CaggVolumeHourly, CaggVolumeDaily,
     CaggEditorDaily, CaggImageryDaily, CaggLocaleDaily, CaggContributorDaily,
     CaggEditorHourly, CaggImageryHourly, CaggLocaleHourly, CaggContributorHourly,
+    CaggGeoDaily, CaggGeoFineDaily,
 )
 from .serializers import ChangesetSerializer
 from .osm_fetcher import fetch_and_process_changesets
+from .geo import (
+    GRID_SIZE_DEGREES, GRID_LAT_GATED_SQL, GRID_LON_GATED_SQL,
+    FINE_GRID_SIZE_DEGREES, FINE_GRID_LAT_GATED_SQL, FINE_GRID_LON_GATED_SQL,
+)
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -681,6 +687,111 @@ class ToplistView(APIView):
             .values(field).annotate(value=agg).order_by('-value')[:limit]
         )
         return [{'name': r[field], 'value': r['value']} for r in rows]
+
+
+class GeoView(APIView):
+    """Changeset density per grid cell (see changesets/geo.py for the exact
+    cell sizes), for the dashboard's map. Two resolutions:
+
+    - resolution=coarse (default): global, 0.5° cells, backed by
+      cagg_geo_daily (migration 0025) when unfiltered; a contributor/
+      editor/imagery/language filter falls back to the raw Changeset
+      table — same accepted cross-dimension tradeoff as ToplistView (no CA
+      covers a filtered geo breakdown, and building one per dimension would
+      repeat the "CA per dimension pair doesn't scale" anti-pattern already
+      flagged in TODO.md for the toplist case).
+    - resolution=fine: requires `bbox` (same "min_lon,min_lat,max_lon,max_lat"
+      format as ChangesetQueryView's), ~0.05° cells, backed by
+      cagg_geo_fine_daily (migration 0027) when unfiltered, same raw-table
+      fallback pattern when filtered. Scoped to `bbox` even though
+      pre-aggregated — shipping every fine cell on Earth would be excessive
+      payload for one zoomed-in view.
+
+    Changesets whose bounding box is too large to trust (a stray far-away
+    edited object can balloon an otherwise-local changeset's bbox — see
+    changesets/geo.py) are excluded from `cells` at both resolutions,
+    though they still count normally in SummaryView/TimeseriesView/
+    ToplistView — so this endpoint's total can be slightly below those
+    endpoints' totals for the same range.
+    """
+
+    @extend_schema(
+        tags=['changesets'],
+        summary='Changeset density by grid cell',
+        description=(
+            'Changeset count and objects-changed, bucketed into grid cells (see '
+            '`grid_size_degrees` in the response), for a date range. Defaults to the last 7 '
+            'days if no dates are given. resolution=fine requires `bbox` (the viewport to scope '
+            'cells to) and returns a finer grid than the default resolution=coarse. Changesets '
+            'with an unreliably large bounding box (see the view docstring) are excluded from '
+            '`cells`.'
+        ),
+        parameters=_FILTER_PARAMS + [
+            OpenApiParameter('resolution', OpenApiTypes.STR, description='coarse (default, global) or fine (requires bbox below).'),
+            OpenApiParameter('bbox', OpenApiTypes.STR, description='Viewport as "min_lon,min_lat,max_lon,max_lat". Required when resolution=fine.'),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Grid cells for the default range',
+            value={
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': ''},
+                'grid_size_degrees': 0.5,
+                'cells': [{'lat': 51.5, 'lon': -0.5, 'count': 1234, 'objects': 45210}],
+            },
+            response_only=True,
+        )],
+    )
+    def get(self, request):
+        start_date, end_date, contributor, editor, imagery, language, filters = _resolve_range_and_filters(request)
+
+        resolution = request.query_params.get('resolution', 'coarse')
+        if resolution not in ('coarse', 'fine'):
+            return Response({'error': "resolution must be 'coarse' or 'fine'"}, status=status.HTTP_400_BAD_REQUEST)
+
+        bounds = None
+        if resolution == 'fine':
+            bbox = request.query_params.get('bbox')
+            if not bbox:
+                return Response({'error': 'bbox is required for resolution=fine'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                min_lon, min_lat, max_lon, max_lat = [float(v) for v in bbox.split(',')]
+            except ValueError:
+                return Response({'error': 'bbox must be min_lon,min_lat,max_lon,max_lat'}, status=status.HTTP_400_BAD_REQUEST)
+            bounds = (min_lat, max_lat, min_lon, max_lon)
+
+        model = CaggGeoFineDaily if resolution == 'fine' else CaggGeoDaily
+        grid_size = FINE_GRID_SIZE_DEGREES if resolution == 'fine' else GRID_SIZE_DEGREES
+        grid_lat_sql = FINE_GRID_LAT_GATED_SQL if resolution == 'fine' else GRID_LAT_GATED_SQL
+        grid_lon_sql = FINE_GRID_LON_GATED_SQL if resolution == 'fine' else GRID_LON_GATED_SQL
+
+        if not (contributor or editor or imagery or language):
+            cells = self._from_rollups(start_date, end_date, model, bounds)
+        else:
+            cells = self._from_raw(start_date, end_date, contributor, editor, imagery, language, grid_lat_sql, grid_lon_sql, bounds)
+        return Response({'filters': filters, 'grid_size_degrees': grid_size, 'cells': cells})
+
+    def _from_rollups(self, start_date, end_date, model, bounds):
+        end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+        rows = model.objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive, grid_lat__isnull=False)
+        if bounds:
+            min_lat, max_lat, min_lon, max_lon = bounds
+            rows = rows.filter(grid_lat__gte=min_lat, grid_lat__lte=max_lat, grid_lon__gte=min_lon, grid_lon__lte=max_lon)
+        rows = rows.values('grid_lat', 'grid_lon').annotate(count=Sum('cnt'), objects=Sum('changes_sum'))
+        return [{'lat': r['grid_lat'], 'lon': r['grid_lon'], 'count': r['count'], 'objects': r['objects']} for r in rows]
+
+    def _from_raw(self, start_date, end_date, contributor, editor, imagery, language, grid_lat_sql, grid_lon_sql, bounds):
+        changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery, language)
+        changesets = (
+            changesets.filter(min_lat__isnull=False, max_lat__isnull=False, min_lon__isnull=False, max_lon__isnull=False)
+            .annotate(grid_lat=RawSQL(grid_lat_sql, []), grid_lon=RawSQL(grid_lon_sql, []))
+            .filter(grid_lat__isnull=False)
+        )
+        if bounds:
+            min_lat, max_lat, min_lon, max_lon = bounds
+            changesets = changesets.filter(grid_lat__gte=min_lat, grid_lat__lte=max_lat, grid_lon__gte=min_lon, grid_lon__lte=max_lon)
+        rows = changesets.values('grid_lat', 'grid_lon').annotate(count=Count('id'), objects=Sum('changes_count'))
+        return [{'lat': r['grid_lat'], 'lon': r['grid_lon'], 'count': r['count'], 'objects': r['objects']} for r in rows]
+
 
 class BatchProgressView(APIView):
     @extend_schema(

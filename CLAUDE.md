@@ -15,6 +15,7 @@ Key entry points:
 - `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped)
 - `/api/changesets/summary/` → `SummaryView` (total_changesets/total_objects/avg_objects)
 - `/api/changesets/toplist/` → `ToplistView` (top 20 by dimension × metric)
+- `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`)
 - `/api/sequence/<start>/<end>/` → `ChangesetListView` (one-shot import)
 - `/api/docs/` → Swagger UI (drf-spectacular) for the public API, `/api/schema/` for the raw OpenAPI schema
 - `/changeset_import/` → `APILandingPageView` (import helper UI)
@@ -131,10 +132,11 @@ over periodic full-table rebuilds.
 | `osm_changeset_api/urls.py` | Root URL conf (mounts API + dashboard) |
 | `changesets/osm_fetcher.py` | Fetches & parses OSM replication XML |
 | `changesets/rollups.py` | Precomputed daily aggregates behind the unfiltered dashboard view |
+| `changesets/geo.py` | Shared grid-cell/bbox-quality SQL for the geo heatmap (`cagg_geo_daily`/`cagg_geo_fine_daily` + `GeoView`) |
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |
 | `changesets/management/commands/import_from_dump.py` | Bulk planet-dump importer |
 | `changesets/templates/changesets/dashboard.html` | Dashboard HTML shell only |
-| `static/js/dashboard.js` | All Chart.js chart initialisation |
+| `static/js/dashboard.js` | Dashboard widget initialisation (Chart.js charts + the Leaflet activity map) |
 | `static/output.css` | Compiled Tailwind CSS |
 | `db/init/` | One-time Postgres setup (extensions, Datadog schema) for a fresh DB |
 | `docs/ARCHITECTURE.md` | Deep dive: data flow, why TimescaleDB, observability, deployment |

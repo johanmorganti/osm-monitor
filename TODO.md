@@ -8,6 +8,22 @@ add it here rather than letting it live only in conversation history.
 
 ## Known issues (deferred)
 
+### Stats CAggs only cover Aug 2025+, unlike the raw table's growing history
+`cagg_volume_hourly`/`cagg_volume_daily` and all four `cagg_{editor,imagery,locale,contributor}_
+{daily,hourly}` views only have data from **2025-08-03/12 onward** (confirmed via `min(bucket)` on
+each) — they were backfilled once, back when "past year" was the practical scope. The background
+historical import has since walked further back (raw `changesets_changeset` goes back to
+2005-10-06, in 138 chunks), but nobody re-backfilled these 10 CAggs to match. Result: any unfiltered
+dashboard widget (`TimeseriesView`/`SummaryView`/`ToplistView`'s CAgg-backed fast path) silently
+returns empty/zero for a date range before ~Aug 2025, even though real data exists there — reproduced
+directly: `changesets_changeset` has 8 rows for 2025-07-01..07, but
+`/api/changesets/timeseries/?start_date=2025-07-01&end_date=2025-07-07` returns `dates: []`. No
+fallback to the raw table exists for this case (unlike the filtered path, which already falls back).
+`cagg_geo_daily` (the geo heatmap's CAgg) does NOT have this gap — it was backfilled for the full
+2005-2026 range from the start. Fix, when this matters: backfill all 10 CAggs to full history the
+same way (`CALL refresh_continuous_aggregate(...)`, one chunk at a time) — set aside for now since
+today's real usage only queries the past year.
+
 ### TimescaleDB continuous aggregates (replace the hand-rolled rollup system) — MOSTLY DONE
 Migration `0020_continuous_aggregates` created 5 CAs (`cagg_volume_hourly` + one daily CA per
 dimension: editor/imagery/language/contributor), meant to eventually replace `DailyVolume`/
@@ -164,10 +180,42 @@ Discussed, not yet decided on a direction — revisit and pick one rather than l
 - **Discussion activity** — `comments_count` exists but is never surfaced; either a "most-discussed
   changesets" list or a discussion-volume-over-time line would show where contentious/active edits
   are happening.
-- **Geographic map** — every changeset carries a bbox (`min_lat`/`max_lat`/`min_lon`/`max_lon`); a
-  world map showing edit density by region would likely be the most compelling addition for a
-  "changeset monitor," but is a bigger, separate piece of work (needs a mapping library — Leaflet,
-  most likely — and a real design pass on aggregation: heatmap tiles vs. clustered markers).
+- ~~**Geographic map**~~ — DONE. `GeoView` (`/api/changesets/geo/`, `changesets/views.py`) +
+  `cagg_geo_daily` (migration `0025_cagg_geo_daily`) + a Leaflet grid map on the dashboard
+  (`dashboard.js`'s `renderGeoMap` — one `L.rectangle` per cell, colored by a log-scale sequential
+  blue ramp with a legend, not a Leaflet.heat blurred/interpolated blob layer: rectangles show the
+  true cell boundary/color rather than an approximated surface between sparse points, which was
+  the actual cause of "hard to see detail" — see below for the resolution itself, 0.5°, being a
+  separate, bigger lever). Grid-cell (0.5°) and bbox-quality-gate expressions live in
+  `changesets/geo.py`, shared between the CAgg's defining query and `GeoView`'s raw-fallback path
+  so they can't drift. Bbox-quality threshold (200km bbox diagonal, excluding changesets whose
+  bbox is too big to trust a centroid from) came from a live sample (6h, n=3000): p50=0.2km,
+  p99=49km, max=477km — should be re-validated on a bigger/multi-day sample before being treated
+  as final; retuning means dropping+recreating the CAgg (can't `ALTER` a CA's defining query) plus
+  redoing the backfill. Migrated, backfilled (all 138 chunks, 2005-2026), and verified: 0 day-level
+  gaps vs. `cagg_volume_daily`, ~1.12% of changesets excluded (NULL bbox or over the 200km
+  threshold) — in line with the empirical estimate.
+
+  **Zoom-dependent resolution + metric toggle, also DONE.** A second CAgg, `cagg_geo_fine_daily`
+  (migration `0027_cagg_geo_fine_daily`, `FINE_GRID_SIZE_DEGREES = 0.05°` in `changesets/geo.py`),
+  backs `GeoView`'s `resolution=fine` mode — same bbox-quality gate, same "CAgg when unfiltered,
+  raw fallback when filtered" split as the coarse path, but always scoped to a `bbox` viewport
+  param (required for `fine`) since shipping every 0.05° cell on Earth would be excessive payload
+  for one zoomed-in view. Chosen over computing fine cells live from the raw table per-request
+  (an earlier design) because this host's DB is slow enough under load that paying the cost in
+  storage (a second full-history CAgg) beats paying it in query latency — disk space was the
+  cheaper resource here. Backfilled (137 more `refresh_continuous_aggregate` calls; the 138th
+  chunk was already covered by an earlier timing test), verified the same way as the coarse CAgg:
+  0 day-level gaps, ~1.16% excluded. `dashboard.js`'s `renderGeoMap` switches between a `coarseLayer`
+  and `fineLayer` `L.layerGroup` at `GEO_FINE_ZOOM_THRESHOLD` (zoom 7), fetching fine data for the
+  current viewport (debounced 400ms) only once zoomed in past that — the coarse layer's initial
+  fetch is cached and reused, never refetched. A segmented control (`GEO_METRICS`, top-right on the
+  map) switches which value (`count` vs. `objects`) drives cell color/legend — pure client-side
+  restyle of whichever cells are already fetched, no refetch, since both values are in every cell.
+
+  Noted while backfilling `cagg_geo_fine_daily`: dense recent months take ~2-3 minutes each at this
+  grid size (vs. ~20-60s for the coarse 0.5° grid) — expect a similar multi-batch, monitored
+  backfill if this grid is ever made finer still.
 - **New vs. returning contributor trend** — needs a "first ever seen per user" concept not
   currently tracked, so more of a schema addition than a pure UI change.
 

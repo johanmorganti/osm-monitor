@@ -13,7 +13,7 @@ const CATEGORICAL = [
     '#4a3aa7', // violet
 ];
 const OTHER_COLOR = '#c3c2b7';   // neutral gray — "Other" isn't an identity, so it doesn't spend a hue
-const NONE_BUCKET = '(none)';   // cagg_imagery_daily/cagg_locale_daily's bucket for changesets with no tag (see views.py) — same "not an identity" treatment as "Other"
+const NONE_BUCKET = '(none)';   // cagg_imagery_daily/cagg_locale_daily's bucket for changesets with no tag (see views.py) — gets a normal categorical color, not OTHER_COLOR: it's real, often-dominant volume (not a leftover-tail catch-all like "Other"), so graying it out would hide exactly the spikes it exists to reveal
 const RANKING_COLOR = CATEGORICAL[0]; // single-series ranking bars all take one slot, per the nominal-categorical rule
 
 const INK_SECONDARY = '#52514e';
@@ -83,13 +83,14 @@ function stackedBar(canvasId, dates, rawSeries) {
             datasets: series.map((s, i) => ({
                 label: s.name,
                 data: s.counts,
-                backgroundColor: (s.name === 'Other' || s.name === NONE_BUCKET) ? OTHER_COLOR : CATEGORICAL[i],
+                backgroundColor: s.name === 'Other' ? OTHER_COLOR : CATEGORICAL[i],
                 borderWidth: 0,
                 maxBarThickness: 24,
             })),
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
             // No legend here — the ranking chart directly above this one
             // (horizontalBar, same palette, same top-N order) already shows
             // every name's color, so a second legend on this smaller chart
@@ -274,6 +275,166 @@ loadWidget('changesetChart', apiUrl('/api/changesets/timeseries/'), volume => {
     renderVolumeChart(volume);
 });
 
+// Grid cells with an unreliable bbox are already excluded server-side (see
+// GeoView) — geo.cells is safe to plot as-is.
+//
+// Drawn as actual rectangles (one per cell, exact bounds from
+// grid_size_degrees), not a Leaflet.heat blurred/interpolated blob layer —
+// a heat blob only approximates a smooth surface *between* cell centers,
+// which reads as "imprecise" and gives zooming in no real extra detail
+// past the cell resolution. Rectangles show the true cell boundary and
+// color, and make it visually honest that 0.5° is the actual resolution
+// of the underlying data (see TODO.md if that resolution itself needs to
+// change — that's a CAgg rebuild, not a rendering choice).
+//
+// Sequential blue ramp, light→dark, one hue not a rainbow (dataviz skill's
+// palette.md) — quantized into GEO_COLOR_RAMP.length bins on a log scale:
+// raw counts are heavily skewed (a few dense urban cells vs. many sparse
+// ones), so equal-width bins on the raw count would put nearly every cell
+// in the lightest bucket. `preferCanvas` (set on the map, below) renders
+// the (potentially thousands of) rectangles on canvas instead of one SVG
+// element each, which matters once cell count climbs into the thousands.
+const GEO_COLOR_RAMP = ['#cde2fb', '#9ec5f4', '#5598e7', '#2a78d6', '#1c5cab', '#0d366b'];
+
+// Two resolutions, one metric choice — see GeoView/changesets/geo.py.
+// Coarse (0.5°, global) loads once at page load; fine (~0.05°, scoped to
+// the current viewport) is fetched on demand once the user zooms in past
+// GEO_FINE_ZOOM_THRESHOLD, debounced so panning/zooming rapidly doesn't
+// fire a request per frame. Only one resolution is ever shown at a time —
+// switching between already-fetched coarse/fine data is instant (no
+// refetch); only a *new* viewport while already zoomed in triggers one.
+// The metric toggle (count vs. objects) never refetches either — both
+// values are already in every cell, so it just restyles whichever
+// layer is currently on screen.
+const GEO_FINE_ZOOM_THRESHOLD = 7;
+const GEO_FINE_FETCH_DEBOUNCE_MS = 400;
+const GEO_METRICS = { count: 'Changesets', objects: 'Objects changed' };
+
+function geoColorScale(cells, metric) {
+    const logMax = Math.log1p(Math.max(...cells.map(c => c[metric]), 0)) || 1;
+    return cell => GEO_COLOR_RAMP[Math.min(GEO_COLOR_RAMP.length - 1, Math.floor((Math.log1p(cell[metric]) / logMax) * GEO_COLOR_RAMP.length))];
+}
+
+function drawGeoCells(layerGroup, cells, gridSizeDegrees, metric) {
+    layerGroup.clearLayers();
+    const half = gridSizeDegrees / 2;
+    const colorFor = geoColorScale(cells, metric);
+    cells.forEach(c => {
+        L.rectangle([[c.lat - half, c.lon - half], [c.lat + half, c.lon + half]], {
+            stroke: false,
+            fillColor: colorFor(c),
+            fillOpacity: 0.85,
+        })
+            .bindTooltip(`${c.count.toLocaleString()} changesets<br>${c.objects.toLocaleString()} objects`, { sticky: true })
+            .addTo(layerGroup);
+    });
+}
+
+// Bins are log-scale, so a bare color swatch would be uninterpretable —
+// label each with the real value (relative to this view's own max, same
+// as the color scale itself) it tops out at.
+function updateGeoLegend(legendDiv, cells, metric) {
+    const logMax = Math.log1p(Math.max(...cells.map(c => c[metric]), 0)) || 1;
+    legendDiv.innerHTML = `<div class="font-medium text-gray-700 mb-1">${GEO_METRICS[metric]}</div>` + GEO_COLOR_RAMP.map((color, i) => {
+        const upper = Math.round(Math.expm1((i + 1) / GEO_COLOR_RAMP.length * logMax));
+        return `<div class="flex items-center gap-1.5"><span style="display:inline-block;width:12px;height:12px;background:${color}"></span>up to ${upper.toLocaleString()}</div>`;
+    }).join('');
+}
+
+function renderGeoMap(initialGeo) {
+    const map = L.map('geoMap', { preferCanvas: true }).setView([20, 0], 2);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        maxZoom: 19,
+        detectRetina: true,
+    }).addTo(map);
+
+    const coarseLayer = L.layerGroup().addTo(map);
+    const fineLayer = L.layerGroup();
+    const coarseCells = initialGeo.cells;
+    const coarseGridSize = initialGeo.grid_size_degrees;
+    let fineCells = [];
+    let fineGridSize = null;
+    let metric = 'count';
+    let showingFine = false;
+
+    let legendDiv;
+    const legend = L.control({ position: 'bottomright' });
+    legend.onAdd = () => {
+        legendDiv = L.DomUtil.create('div', 'bg-white rounded-md shadow-lg px-3 py-2 text-xs leading-relaxed');
+        return legendDiv;
+    };
+    legend.addTo(map);
+
+    function redraw() {
+        const cells = showingFine ? fineCells : coarseCells;
+        const gridSize = showingFine ? fineGridSize : coarseGridSize;
+        drawGeoCells(showingFine ? fineLayer : coarseLayer, cells, gridSize, metric);
+        updateGeoLegend(legendDiv, cells, metric);
+    }
+
+    // Segmented control, top-right: switch which value drives cell color.
+    // disableClickPropagation so a click/scroll on the control doesn't
+    // also pan/zoom the map underneath it.
+    const metricControl = L.control({ position: 'topright' });
+    metricControl.onAdd = () => {
+        const div = L.DomUtil.create('div', 'bg-white rounded-md shadow-lg text-xs overflow-hidden flex');
+        L.DomEvent.disableClickPropagation(div);
+        div.innerHTML = Object.entries(GEO_METRICS).map(([key, label]) =>
+            `<button type="button" data-metric="${key}" class="geo-metric-btn px-2 py-1.5 ${key === metric ? 'bg-blue-500 text-white' : 'text-gray-700 hover:bg-gray-100'}">${label}</button>`
+        ).join('');
+        div.querySelectorAll('.geo-metric-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                metric = btn.dataset.metric;
+                div.querySelectorAll('.geo-metric-btn').forEach(b => {
+                    const active = b.dataset.metric === metric;
+                    b.classList.toggle('bg-blue-500', active);
+                    b.classList.toggle('text-white', active);
+                    b.classList.toggle('text-gray-700', !active);
+                });
+                redraw();
+            });
+        });
+        return div;
+    };
+    metricControl.addTo(map);
+
+    redraw();
+
+    let fineFetchTimer = null;
+    function scheduleFineFetch() {
+        clearTimeout(fineFetchTimer);
+        fineFetchTimer = setTimeout(() => {
+            const b = map.getBounds();
+            const bbox = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`;
+            fetchJson(apiUrl('/api/changesets/geo/', { resolution: 'fine', bbox }))
+                .then(geo => {
+                    fineCells = geo.cells;
+                    fineGridSize = geo.grid_size_degrees;
+                    if (showingFine) redraw();
+                })
+                .catch(err => console.error('Failed to load fine-resolution geo data', err));
+        }, GEO_FINE_FETCH_DEBOUNCE_MS);
+    }
+
+    map.on('zoomend moveend', () => {
+        const isFine = map.getZoom() >= GEO_FINE_ZOOM_THRESHOLD;
+        if (isFine !== showingFine) {
+            showingFine = isFine;
+            if (showingFine) { coarseLayer.remove(); fineLayer.addTo(map); }
+            else { fineLayer.remove(); coarseLayer.addTo(map); }
+            redraw();
+        }
+        if (showingFine) scheduleFineFetch();
+    });
+
+    map.invalidateSize(); // container was `hidden` (zero-size) at construction time
+}
+loadWidget('geoMap', apiUrl('/api/changesets/geo/'), geo => {
+    showChart('geoMap');
+    renderGeoMap(geo);
+});
+
 loadWidget('topEditorsChart', apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'count' }), topEditors => {
     showChart('topEditorsChart');
     horizontalBar('topEditorsChart', topEditors.results.map(r => r.name), topEditors.results.map(r => r.value), 'Changesets', 'editor');
@@ -303,14 +464,19 @@ loadWidget('topLocalesTimeChart', apiUrl('/api/changesets/timeseries/', { group_
     stackedBar('topLocalesTimeChart', localesTime.dates, localesTime.series);
 });
 
+loadWidget('topContributorsChart', apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'count' }), topContributors => {
+    showChart('topContributorsChart');
+    horizontalBar('topContributorsChart', topContributors.results.map(r => r.name), topContributors.results.map(r => r.value), 'Changesets', 'contributor');
+    setDatalistOptions('contributor-list', topContributors.results.map(r => r.name));
+});
+loadWidget('topContributorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'contributor' }), contributorsTime => {
+    showChart('topContributorsTimeChart');
+    stackedBar('topContributorsTimeChart', contributorsTime.dates, contributorsTime.series);
+});
+
 loadWidget('topContributorsByObjectsChart', apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'objects' }), topContributorsByObjects => {
     showChart('topContributorsByObjectsChart');
     horizontalBar('topContributorsByObjectsChart', topContributorsByObjects.results.map(r => r.name), topContributorsByObjects.results.map(r => r.value), 'Objects changed', 'contributor');
-    // Contributor has no count-metric toplist widget on this page (only this
-    // objects-ranked one) — reused here too rather than firing a second,
-    // near-identical toplist request just to seed the datalist with the same
-    // set of top names in a different order.
-    setDatalistOptions('contributor-list', topContributorsByObjects.results.map(r => r.name));
 });
 loadWidget('topEditorsByObjectsChart', apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'objects' }), topEditorsByObjects => {
     showChart('topEditorsByObjectsChart');
