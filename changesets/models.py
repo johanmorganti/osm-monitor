@@ -101,15 +101,22 @@ class Changeset(models.Model):
 
     class Meta:
         app_label = 'changesets'
-        # The dashboard's contributor/editor/imagery filters use __iexact,
-        # which Postgres implements as UPPER(col) = UPPER(val) — without a
-        # matching expression index that forces a sequential scan even when
-        # the date range is also filtered, since a date range spanning most
-        # of the table's history isn't selective enough on its own.
+        # The dashboard's contributor/editor/imagery/language filters use
+        # __iexact, which Postgres implements as UPPER(col) = UPPER(val) —
+        # without a matching expression index that forces a sequential scan
+        # even when the date range is also filtered, since a date range
+        # spanning most of the table's history isn't selective enough on its
+        # own. locale_family's copy of this index (migration 0040) was added
+        # later than the other three (migration 0015) — it predates
+        # `language` becoming a real dashboard filter, so the raw-table
+        # fallback used by ToplistView/GeoView for any active filter (see
+        # CLAUDE.md) silently sequential-scanned on language specifically
+        # until this was caught.
         indexes = [
             models.Index(Upper('user'), name='changeset_user_upper_idx'),
             models.Index(Upper('created_by_family'), name='changeset_editor_upper_idx'),
             models.Index(Upper('imagery_family'), name='changeset_imagery_upper_idx'),
+            models.Index(Upper('locale_family'), name='changeset_locale_upper_idx'),
             models.Index(fields=['geohash'], name='changeset_geohash_idx'),
             models.Index(fields=['country_code'], name='changeset_country_code_idx'),
         ]

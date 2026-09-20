@@ -37,3 +37,33 @@ full history" principle); the real fix is either widening `compress_segmentby` (
 compression ratio, and a backlog-recompression pass) or accepting that cross-dimension-filtered
 toplists stay slow/degrade gracefully (e.g. UI disables or caps the range for that combination).
 Needs a decision before doing more work here.
+
+**2026-09-20 addendum — reproduces even with zero compression involved.** Root-caused a live
+report of `?start_date=2026-03-24&end_date=2026-09-20&language=ES` timing out most of the
+dashboard's widgets. Found and fixed a real, separate bug on the way: `locale_family` was missing
+the `UPPER()` expression index its sibling dimensions (`user`/`created_by_family`/`imagery_family`)
+all got in migration 0015 — that migration predates `language` becoming a dashboard filter, and
+nobody added the matching index when it was wired up later. Every `ToplistView`/`GeoView` call
+with a `language` filter was forcing a full parallel sequential scan of every chunk (cost ~1.4M).
+Fixed in migration 0040 (built per-chunk with `CREATE INDEX CONCURRENTLY`, since TimescaleDB
+rejects `CONCURRENTLY` directly against a hypertable — see that migration's comment).
+
+That fix is real (cost dropped ~26x, chunk exclusion works again) but did **not** fully resolve the
+report: the identical query shape still exceeds the 30s statement timeout after the index fix, and
+the same is true substituting `imagery=Bing` for `language=ES` over the same 6-month range —
+confirmed on chunks `timescaledb_information.chunks.is_compressed = false` (this project's
+compression backlog has only recompressed 1 of ~13 chunks, so the segmentby explanation above
+doesn't apply to what was tested here). Cause: `EXPLAIN` shows a `Bitmap Heap Scan` rather than an
+`Index Only Scan` even for a bare `count(*)` — the matched rows (~7-9K per chunk out of chunks
+this size) are scattered essentially randomly across each chunk's data pages, since physical
+row order is chronological (insertion order) and has no correlation with locale/imagery. Low
+selectivity at low physical clustering means the index still has to drive on the order of
+thousands of individual random page reads per chunk, and this host's shared/HDD-backed I/O can't
+absorb that within 30s regardless of which single dimension is filtered. In other words: this
+project's *general* "any one filter + a wide-enough date range falls back to raw scanning" trade-
+off (documented above, already accepted for the compression-exclusion reason) has a second,
+independent cause that would persist even after a `compress_segmentby` fix — needs to be part of
+the same decision, not solved by the index fix alone. A covering/`INCLUDE` index matching a given
+toplist's exact `(filter dimension, grouped dimension)` pair would let that one shape become an
+Index Only Scan, but that's the same "one index per dimension pair" combinatorial-explosion problem
+already rejected above for CAs.

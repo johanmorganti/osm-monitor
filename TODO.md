@@ -16,7 +16,6 @@ history.
 - [Filter dropdown pre-population not working](docs/todo/dashboard-filter-dropdown-prepopulation.md) — not yet root-caused.
 - [Poller SequenceState checkpoint granularity](docs/todo/sequencestate-write-amplification.md) — checkpoints every sequence; every-N would cut write count but changes crash-recovery granularity, needs its own decision.
 - [Editor family `Organic` → `Organic Maps` data backfill](docs/todo/editor-family-organic-maps-fix.md) — code fixed; 209,579 already-imported rows still need a monitored backfill + CAgg refresh.
-- `locale_family` missing its own `UPPER()` expression index despite being filtered with `__iexact` — real gap, forces a sequential scan on that filter; `user`/`created_by_family`/`imagery_family` all have one.
 - Datadog log pipeline severity remapping — Postgres `LOG:` lines showing as `status:error` in Datadog. Cosmetic; user fixing directly in the Datadog UI.
 - Favicon — dashboard has none; needs an actual design.
 
