@@ -7,7 +7,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from changesets.models import SequenceState
 from changesets.osm_fetcher import process_sequence
-from changesets.rollups import refresh_rollups_reconcile, refresh_rollups_incremental
+from changesets.rollups import refresh_filter_values_incremental
 
 logger = logging.getLogger(__name__)
 
@@ -56,14 +56,8 @@ class Command(BaseCommand):
             help='Max backfill sequences to process before re-checking for new live sequences (default: 1000)'
         )
         parser.add_argument(
-            '--rollup-interval', type=int, default=120,
-            help='Minimum seconds between incremental rollup merges (default: 120)'
-        )
-        parser.add_argument(
-            '--rollup-full-interval', type=int, default=21600,
-            help='Minimum seconds between bounded rollup reconciliation passes (last few days '
-                 'only, see refresh_rollups_reconcile), which correct any drift the incremental '
-                 'merge leaves behind (default: 21600, i.e. 6h)'
+            '--filter-values-interval', type=int, default=120,
+            help='Minimum seconds between incremental FilterValue refreshes (default: 120)'
         )
         parser.add_argument(
             '--reset', action='store_true',
@@ -79,8 +73,7 @@ class Command(BaseCommand):
         backfill_days = options['backfill_days']
         sequences_per_day = options['sequences_per_day']
         backfill_batch_size = options['backfill_batch_size']
-        rollup_interval = options['rollup_interval']
-        rollup_full_interval = options['rollup_full_interval']
+        filter_values_interval = options['filter_values_interval']
 
         if options['reset']:
             self._reset(start_arg, backfill_days, sequences_per_day)
@@ -88,17 +81,20 @@ class Command(BaseCommand):
 
         logger.info("Starting sequence poller")
 
-        # Start the reconciliation timer as "just refreshed" rather than "due
-        # immediately", so a restart/deploy doesn't force one right away on
-        # top of whatever else startup is doing. The incremental refresh
-        # below keeps rollups reasonably fresh in the meantime; the
-        # reconciliation pass just waits for its normal rollup_full_interval
-        # cadence instead.
-        last_rollup_refresh = 0.0
-        last_rollup_full_refresh = time.monotonic()
+        last_filter_values_refresh = 0.0
 
         while True:
             try:
+                # The app role now defaults to a bounded statement_timeout
+                # (db/init/02-role-statement-timeout.sh) so an abandoned
+                # ad-hoc query can't run forever — but this poller
+                # legitimately runs long queries (backfill batches, rollup
+                # refreshes) and must opt out. Issued every iteration, not
+                # once at startup: the except block below calls
+                # connection.close() on error, and the fresh reconnect after
+                # that would otherwise pick the role default back up.
+                connection.cursor().execute("SET statement_timeout = 0")
+
                 latest = fetch_latest_sequence()
 
                 state = SequenceState.objects.first()
@@ -119,7 +115,7 @@ class Command(BaseCommand):
                 if state.backfill_sequence is None:
                     state.backfill_sequence = state.last_sequence
                     state.backfill_floor = max(1, state.last_sequence - sequences_per_day * backfill_days)
-                    state.save()
+                    state.save(update_fields=['backfill_sequence', 'backfill_floor', 'updated_at'])
                     logger.info(
                         "Initialized backfill window",
                         extra={
@@ -135,13 +131,19 @@ class Command(BaseCommand):
                     live_from = state.last_sequence + 1
                     state.batch_start = state.last_sequence
                     state.batch_target = latest
-                    state.save()
+                    state.save(update_fields=['batch_start', 'batch_target', 'updated_at'])
 
                     for seq in range(live_from, latest + 1):
                         logger.debug("Processing sequence (live)", extra={'osm.sequence_number': seq})
                         process_sequence(seq)
                         state.last_sequence = seq
-                        state.save()
+                        # update_fields: this fires once per sequence (up to
+                        # backfill_batch_size times per outer loop iteration)
+                        # — a full-row UPDATE + WAL for every column on a
+                        # 1-row table was pure write amplification on a disk
+                        # that has none to spare (see docs/todo/
+                        # sequencestate-write-amplification.md).
+                        state.save(update_fields=['last_sequence', 'updated_at'])
 
                     logger.info(
                         "Live polling caught up",
@@ -165,7 +167,7 @@ class Command(BaseCommand):
                         logger.debug("Processing sequence (backfill)", extra={'osm.sequence_number': seq})
                         process_sequence(seq)
                         state.backfill_sequence = seq - 1
-                        state.save()
+                        state.save(update_fields=['backfill_sequence', 'updated_at'])
 
                     logger.info(
                         "Backfill batch processed",
@@ -183,23 +185,15 @@ class Command(BaseCommand):
                         extra={'osm.sequence.backfill_floor': state.backfill_floor},
                     )
                     state.backfill_floor = None
-                    state.save()
+                    state.save(update_fields=['backfill_floor', 'updated_at'])
 
-                if time.monotonic() - last_rollup_full_refresh >= rollup_full_interval:
+                if time.monotonic() - last_filter_values_refresh >= filter_values_interval:
                     refresh_start = time.monotonic()
-                    refresh_rollups_reconcile()
-                    last_rollup_refresh = last_rollup_full_refresh = time.monotonic()
+                    refresh_filter_values_incremental()
+                    last_filter_values_refresh = time.monotonic()
                     logger.info(
-                        "Rollups refreshed (reconcile)",
-                        extra={'osm.rollup_refresh_seconds': round(last_rollup_refresh - refresh_start, 2)},
-                    )
-                elif time.monotonic() - last_rollup_refresh >= rollup_interval:
-                    refresh_start = time.monotonic()
-                    refresh_rollups_incremental()
-                    last_rollup_refresh = time.monotonic()
-                    logger.info(
-                        "Rollups refreshed (incremental)",
-                        extra={'osm.rollup_refresh_seconds': round(last_rollup_refresh - refresh_start, 2)},
+                        "FilterValue refreshed",
+                        extra={'osm.filter_values_refresh_seconds': round(last_filter_values_refresh - refresh_start, 2)},
                     )
 
                 if not did_work:

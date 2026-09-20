@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import ChangesetListView, ChangesetQueryView, AutocompleteView, BatchProgressView, ImportJobView, TimeseriesView, SummaryView, ToplistView, GeoView, redirect_to_landing_page
+from .views import ChangesetQueryView, AutocompleteView, BatchProgressView, TimeseriesView, SummaryView, ToplistView, GeoView
 
 
 urlpatterns = [
@@ -10,8 +10,4 @@ urlpatterns = [
     path('changesets/summary/', SummaryView.as_view(), name='changeset-summary'),
     path('changesets/toplist/', ToplistView.as_view(), name='changeset-toplist'),
     path('changesets/geo/', GeoView.as_view(), name='changeset-geo'),
-    path('sequence/<int:seq_start>/<int:seq_end>/', ChangesetListView.as_view(), name='changeset-list'),
-    path('import-job/<int:job_id>/', ImportJobView.as_view(), name='import-job'),
-    path('sequence/', redirect_to_landing_page),
-    path('', redirect_to_landing_page),
 ]

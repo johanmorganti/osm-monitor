@@ -1,4 +1,5 @@
 from django.core.management.base import BaseCommand
+from django.db import connection
 from changesets.models import Changeset
 from urllib.parse import urlparse
 
@@ -18,6 +19,11 @@ class Command(BaseCommand):
     help = 'Backfill imagery_family for changesets that have imagery_used but no imagery_family'
 
     def handle(self, *args, **options):
+        # The app role defaults to a bounded statement_timeout (see
+        # db/init/02-role-statement-timeout.sh) — this command legitimately
+        # scans/updates the whole table, so opt out.
+        connection.cursor().execute("SET statement_timeout = 0")
+
         qs = Changeset.objects.filter(imagery_used__isnull=False, imagery_family__isnull=True)
         total = qs.count()
         self.stdout.write(f'Backfilling {total} changesets...')

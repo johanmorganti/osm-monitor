@@ -68,15 +68,7 @@ python manage.py runserver
 
 ## Getting data in
 
-Three ways, from smallest to largest:
-
-**One-shot sequence range** (for testing, or backfilling a small window):
-```
-GET /api/sequence/<seq_start>/<seq_end>/
-```
-`seq_start`/`seq_end` are OSM replication sequence numbers (find the latest at
-<https://planet.osm.org/replication/changesets/state.yaml>); max 10,000 sequences per call.
-Returns a job ID — poll `GET /api/import-job/<job_id>/` for progress.
+Two ways:
 
 **Continuous poller** (how this stays up to date in normal operation):
 ```bash
@@ -106,8 +98,8 @@ Full reference: `/api/docs/` (interactive) or `/api/schema/` (raw OpenAPI). High
 | `GET /api/changesets/timeseries/` | Volume over time, optionally split by dimension |
 | `GET /api/changesets/summary/` | Total changesets / objects changed / average, for a range |
 | `GET /api/changesets/toplist/` | Top N by count or objects changed, for one dimension |
+| `GET /api/changesets/geo/` | Changeset density per geohash-derived grid cell, for the map |
 | `GET /api/autocomplete/` | Known contributor/editor/imagery values matching a partial query |
-| `GET /api/sequence/<start>/<end>/`, `GET /api/import-job/<id>/` | One-shot import + progress |
 
 All the aggregate endpoints share the same filters (`start_date`, `end_date`, `contributor`,
 `editor`, `imagery`) and default to the last 7 days if no dates are given.
@@ -121,12 +113,15 @@ changesets/
   serializers.py                 # DRF serializer for Changeset
   urls.py                        # /api/... URL patterns
   osm_fetcher.py                 # Fetches & parses OSM replication XML, batched upsert logic
-  rollups.py                     # Precomputed daily aggregates behind the unfiltered dashboard view
+  rollups.py                     # FilterValue autocomplete incremental refresh
+  geo.py                         # Geohash/grid SQL fragments shared by GeoView and its CAgg
   migrations/                    # Includes 0018_timescale_hypertable (the Timescale conversion)
+  data/                          # country_boundaries.geojson (loaded by load_country_boundaries)
   management/commands/
     poll_sequences.py            # Continuous poller (live + one-time backfill)
     import_from_dump.py          # Bulk planet-dump importer
     backfill_filter_values.py    # One-time FilterValue seed for existing data
+    load_country_boundaries.py   # Loads country_boundaries from the committed GeoJSON
     refresh_rollups.py           # Manual full-rebuild escape hatch (rarely needed)
   templates/changesets/
     dashboard.html                # HTML shell only — no server-rendered data
@@ -137,6 +132,7 @@ osm_changeset_api/
 db/init/                          # One-time Postgres setup (extensions, Datadog schema) for a fresh DB
 docs/
   ARCHITECTURE.md                 # Deep dive: data flow, why TimescaleDB, observability, deployment
-  db-benchmark-plan.md            # Partitioned-Postgres-vs-TimescaleDB benchmark brief (historical)
+  hashtag-campaign-data.md        # Research backing the hashtags/campaign toplist TODO item
+  todo/                           # Detail files for TODO.md's index (one per open item)
 docker-compose.yml, Dockerfile, entrypoint.sh, deploy.sh
 ```

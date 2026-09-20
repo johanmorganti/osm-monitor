@@ -123,7 +123,6 @@ def _parse_changeset_element(changeset, log_extra):
         </osm>
     """
     changeset_to_add = {}
-    changeset_to_add["tags"] = {}
 
     for attribute, value in changeset.attrib.items():
         if attribute in COLUMNS_MAPPING:
@@ -153,9 +152,6 @@ def _parse_changeset_element(changeset, log_extra):
             if 'k' in element.attrib:
                 tag_key = element.attrib["k"]
                 tag_value = element.attrib["v"]
-
-                # Store in tags JSON field
-                changeset_to_add["tags"][tag_key] = tag_value
 
                 # Populate dedicated columns for common tags
                 if tag_key == 'created_by':
@@ -188,7 +184,7 @@ def _parse_changeset_element(changeset, log_extra):
                             elif family == 'Every':
                                 family = 'Every Door'
                             elif family == 'Organic':
-                                family == 'Organic Maps'
+                                family = 'Organic Maps'
                             elif family == 'Votre':
                                 family = 'Ubiflow'
                             elif family == None:

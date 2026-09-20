@@ -1,5 +1,6 @@
 import time
 from django.core.management.base import BaseCommand
+from django.db import connection
 from changesets.rollups import refresh_rollups
 
 
@@ -14,6 +15,11 @@ class Command(BaseCommand):
     )
 
     def handle(self, *args, **options):
+        # The app role defaults to a bounded statement_timeout (see
+        # db/init/02-role-statement-timeout.sh) — a full-table rebuild
+        # legitimately runs long, so opt out.
+        connection.cursor().execute("SET statement_timeout = 0")
+
         start = time.monotonic()
         refresh_rollups()
         self.stdout.write(self.style.SUCCESS(f'Rollups refreshed in {time.monotonic() - start:.2f}s'))

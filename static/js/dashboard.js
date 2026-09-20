@@ -234,8 +234,8 @@ function apiUrl(path, extraParams) {
     return `${path}?${params.toString()}`;
 }
 
-function fetchJson(url) {
-    return fetch(url).then(r => {
+function fetchJson(url, options) {
+    return fetch(url, options).then(r => {
         if (!r.ok) return r.json().then(body => { throw new Error(body.error || `HTTP ${r.status} for ${url}`); });
         return r.json();
     });
@@ -279,13 +279,15 @@ loadWidget('changesetChart', apiUrl('/api/changesets/timeseries/'), volume => {
 // GeoView) — geo.cells is safe to plot as-is.
 //
 // Drawn as actual rectangles (one per cell, exact bounds from
-// grid_size_degrees), not a Leaflet.heat blurred/interpolated blob layer —
-// a heat blob only approximates a smooth surface *between* cell centers,
-// which reads as "imprecise" and gives zooming in no real extra detail
-// past the cell resolution. Rectangles show the true cell boundary and
-// color, and make it visually honest that 0.5° is the actual resolution
-// of the underlying data (see TODO.md if that resolution itself needs to
-// change — that's a CAgg rebuild, not a rendering choice).
+// lat_size_degrees/lon_size_degrees), not a Leaflet.heat blurred/
+// interpolated blob layer — a heat blob only approximates a smooth surface
+// *between* cell centers, which reads as "imprecise" and gives zooming in
+// no real extra detail past the cell resolution. Rectangles show the true
+// (geohash-derived, not square — see drawGeoCells) cell boundary and color,
+// and make it visually honest that this is the actual resolution of the
+// underlying data (see changesets/geo.py's GEOHASH_PREFIX_LENGTH if that
+// resolution itself needs to change — that's a CAgg-key change, not a
+// rendering choice).
 //
 // Sequential blue ramp, light→dark, one hue not a rainbow (dataviz skill's
 // palette.md) — quantized into GEO_COLOR_RAMP.length bins on a log scale:
@@ -297,17 +299,28 @@ loadWidget('changesetChart', apiUrl('/api/changesets/timeseries/'), volume => {
 const GEO_COLOR_RAMP = ['#cde2fb', '#9ec5f4', '#5598e7', '#2a78d6', '#1c5cab', '#0d366b'];
 
 // Two resolutions, one metric choice — see GeoView/changesets/geo.py.
-// Coarse (0.5°, global) loads once at page load; fine (~0.05°, scoped to
-// the current viewport) is fetched on demand once the user zooms in past
-// GEO_FINE_ZOOM_THRESHOLD, debounced so panning/zooming rapidly doesn't
-// fire a request per frame. Only one resolution is ever shown at a time —
-// switching between already-fetched coarse/fine data is instant (no
-// refetch); only a *new* viewport while already zoomed in triggers one.
-// The metric toggle (count vs. objects) never refetches either — both
-// values are already in every cell, so it just restyles whichever
-// layer is currently on screen.
+// Coarse (global, cell size adapts to viewport) loads once at page load;
+// fine (viewport-scoped, cell size also adapts — see
+// geohash_precision_for_bbox in geo.py) is fetched on demand once the user
+// zooms in past GEO_FINE_ZOOM_THRESHOLD. Only one resolution is ever shown
+// at a time — switching between already-fetched coarse/fine data is
+// instant (no refetch). The metric toggle (count vs. objects) never
+// refetches either — both values are already in every cell, so it just
+// restyles whichever layer is currently on screen.
+//
+// Panning/zooming while in fine mode does NOT fetch on every settle — see
+// scheduleFineFetch's own comments for why a naive "fetch on every
+// moveend" was found to be sending enough requests to strain the DB on
+// this host's shared, resource-constrained server.
 const GEO_FINE_ZOOM_THRESHOLD = 7;
-const GEO_FINE_FETCH_DEBOUNCE_MS = 400;
+const GEO_FINE_FETCH_DEBOUNCE_MS = 600;
+// Fetch this much extra area beyond the visible viewport (as a fraction of
+// its own size, per Leaflet's LatLngBounds.pad) so a small pan/zoom-out
+// within territory already covered needs no new request at all — reused
+// straight from `fineCells` instead. 0.5 = fetch 50% extra on every side,
+// i.e. a viewport-sized area of slack in every direction before the next
+// pan forces a real fetch.
+const GEO_FINE_PREFETCH_PAD = 0.5;
 const GEO_METRICS = { count: 'Changesets', objects: 'Objects changed' };
 
 function geoColorScale(cells, metric) {
@@ -315,12 +328,18 @@ function geoColorScale(cells, metric) {
     return cell => GEO_COLOR_RAMP[Math.min(GEO_COLOR_RAMP.length - 1, Math.floor((Math.log1p(cell[metric]) / logMax) * GEO_COLOR_RAMP.length))];
 }
 
-function drawGeoCells(layerGroup, cells, gridSizeDegrees, metric) {
+// latSizeDegrees/lonSizeDegrees, not one square size: geohash cells aren't
+// square (a 6-char cell is ~1.2km wide x ~0.6km tall everywhere on Earth,
+// unlike the old fixed-degree grid which was square by construction) — see
+// GeoView/changesets/geo.py's geohash_cell_size_degrees. Drawing a square
+// here would misrepresent the true cell shape.
+function drawGeoCells(layerGroup, cells, latSizeDegrees, lonSizeDegrees, metric) {
     layerGroup.clearLayers();
-    const half = gridSizeDegrees / 2;
+    const halfLat = latSizeDegrees / 2;
+    const halfLon = lonSizeDegrees / 2;
     const colorFor = geoColorScale(cells, metric);
     cells.forEach(c => {
-        L.rectangle([[c.lat - half, c.lon - half], [c.lat + half, c.lon + half]], {
+        L.rectangle([[c.lat - halfLat, c.lon - halfLon], [c.lat + halfLat, c.lon + halfLon]], {
             stroke: false,
             fillColor: colorFor(c),
             fillOpacity: 0.85,
@@ -352,11 +371,25 @@ function renderGeoMap(initialGeo) {
     const coarseLayer = L.layerGroup().addTo(map);
     const fineLayer = L.layerGroup();
     const coarseCells = initialGeo.cells;
-    const coarseGridSize = initialGeo.grid_size_degrees;
+    const coarseLatSize = initialGeo.lat_size_degrees;
+    const coarseLonSize = initialGeo.lon_size_degrees;
     let fineCells = [];
-    let fineGridSize = null;
+    let fineLatSize = null;
+    let fineLonSize = null;
     let metric = 'count';
     let showingFine = false;
+    // The (padded) bounds fineCells actually covers, the zoom level it was
+    // fetched at, and the in-flight request for it if any — see
+    // scheduleFineFetch. The zoom level matters as much as the bounds:
+    // cell size adapts to the viewport (geohash_precision_for_bbox in
+    // geo.py), so a cached fetch only remains valid while zoomed in *no
+    // further* than when it was made — otherwise "still geographically
+    // contained" alone would keep reusing the same coarser cells forever
+    // as the user zooms in deeper, since zooming in stays within the old
+    // (larger, padded) area without ever leaving it.
+    let fineFetchedBounds = null;
+    let fineFetchedZoom = null;
+    let fineFetchAbort = null;
 
     let legendDiv;
     const legend = L.control({ position: 'bottomright' });
@@ -368,8 +401,9 @@ function renderGeoMap(initialGeo) {
 
     function redraw() {
         const cells = showingFine ? fineCells : coarseCells;
-        const gridSize = showingFine ? fineGridSize : coarseGridSize;
-        drawGeoCells(showingFine ? fineLayer : coarseLayer, cells, gridSize, metric);
+        const latSize = showingFine ? fineLatSize : coarseLatSize;
+        const lonSize = showingFine ? fineLonSize : coarseLonSize;
+        drawGeoCells(showingFine ? fineLayer : coarseLayer, cells, latSize, lonSize, metric);
         updateGeoLegend(legendDiv, cells, metric);
     }
 
@@ -401,19 +435,56 @@ function renderGeoMap(initialGeo) {
 
     redraw();
 
+    // Naive "fetch the exact viewport on every moveend/zoomend, debounced
+    // 400ms" was found (2026-09-19) to send a real DB query for every
+    // single pan/zoom settle while browsing — on this host's shared,
+    // resource-constrained server, normal map exploration alone was enough
+    // to strain the DB. Two changes fix that without changing what's drawn:
+    //
+    // 1. Fetch a PADDED area (GEO_FINE_PREFETCH_PAD extra on every side),
+    //    not just the exact visible viewport, and skip the fetch entirely
+    //    whenever the current viewport is still inside the padded area the
+    //    last fetch already covered (`fineFetchedBounds.contains(...)`).
+    //    Panning around within already-explored territory then costs zero
+    //    requests — only a pan/zoom that actually leaves covered ground
+    //    triggers a real fetch, same principle as how tile layers only
+    //    fetch tiles that scroll into view.
+    // 2. Cancel a still-in-flight fetch (AbortController) when a newer one
+    //    is needed, instead of letting both run — otherwise fast browsing
+    //    (faster than a request round-trip) can pile up multiple concurrent
+    //    DB queries whose results arrive out of order and get thrown away
+    //    anyway once a newer one lands.
     let fineFetchTimer = null;
     function scheduleFineFetch() {
         clearTimeout(fineFetchTimer);
         fineFetchTimer = setTimeout(() => {
-            const b = map.getBounds();
-            const bbox = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`;
-            fetchJson(apiUrl('/api/changesets/geo/', { resolution: 'fine', bbox }))
+            const viewBounds = map.getBounds();
+            const currentZoom = map.getZoom();
+            // Reuse the cache only when not zoomed in past where it was
+            // fetched — zooming in further always needs a real fetch, even
+            // if the new (smaller) viewport is still geographically inside
+            // the old padded area, since finer cells are owed at a deeper
+            // zoom and "still contained" alone can't tell the difference.
+            if (fineFetchedBounds && fineFetchedBounds.contains(viewBounds) && currentZoom <= fineFetchedZoom) return;
+
+            const fetchBounds = viewBounds.pad(GEO_FINE_PREFETCH_PAD);
+            const bbox = `${fetchBounds.getWest()},${fetchBounds.getSouth()},${fetchBounds.getEast()},${fetchBounds.getNorth()}`;
+
+            if (fineFetchAbort) fineFetchAbort.abort();
+            fineFetchAbort = new AbortController();
+
+            fetchJson(apiUrl('/api/changesets/geo/', { resolution: 'fine', bbox }), { signal: fineFetchAbort.signal })
                 .then(geo => {
                     fineCells = geo.cells;
-                    fineGridSize = geo.grid_size_degrees;
+                    fineLatSize = geo.lat_size_degrees;
+                    fineLonSize = geo.lon_size_degrees;
+                    fineFetchedBounds = fetchBounds;
+                    fineFetchedZoom = currentZoom;
                     if (showingFine) redraw();
                 })
-                .catch(err => console.error('Failed to load fine-resolution geo data', err));
+                .catch(err => {
+                    if (err.name !== 'AbortError') console.error('Failed to load fine-resolution geo data', err);
+                });
         }, GEO_FINE_FETCH_DEBOUNCE_MS);
     }
 

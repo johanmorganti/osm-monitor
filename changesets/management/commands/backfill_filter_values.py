@@ -36,6 +36,10 @@ class Command(BaseCommand):
         self.stdout.write('Backfilling FilterValue from all existing changesets — this scans the whole table, expect it to take a while...')
         start = time.monotonic()
         with connection.cursor() as cursor:
+            # The app role defaults to a bounded statement_timeout (see
+            # db/init/02-role-statement-timeout.sh) — this command
+            # legitimately scans the whole table, so opt out.
+            cursor.execute("SET statement_timeout = 0")
             cursor.execute(_BACKFILL_SQL)
             cursor.execute("SELECT field, COUNT(*) FROM changesets_filtervalue GROUP BY field ORDER BY field")
             counts = dict(cursor.fetchall())

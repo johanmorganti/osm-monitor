@@ -22,35 +22,24 @@ class SequenceState(models.Model):
 
 
 class RollupState(models.Model):
-    """Singleton watermark for refresh_rollups_incremental() (see
-    changesets.rollups): the highest Changeset.id already merged into the
-    DailyVolume/DailyBreakdown rollup tables."""
+    """Singleton watermark row. `last_id` is refresh_rollups_incremental()'s
+    watermark (see changesets.rollups) — the highest Changeset.id already
+    merged into the now-unused DailyVolume/DailyBreakdown rollup tables;
+    kept only for the manual refresh_rollups escape hatch, no longer
+    advanced automatically (`docs/todo/continuous-aggregates-migration.md`).
+
+    `last_created_at` is refresh_filter_values_incremental()'s watermark —
+    deliberately a *different* column on a *different* field (`created_at`,
+    the hypertable's partitioning column) rather than reusing `last_id`:
+    filtering on `id` can't use chunk exclusion (confirmed cause of the
+    dead-rollup-loop cost above), filtering on `created_at` can. NULL means
+    "never run" (first call covers everything, not just rows after some
+    default value)."""
     last_id = models.IntegerField(default=0)
+    last_created_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         app_label = 'changesets'
-
-
-class ImportJob(models.Model):
-    seq_start   = models.IntegerField()
-    seq_end     = models.IntegerField()
-    current_seq = models.IntegerField(null=True, blank=True)
-    total       = models.IntegerField()
-    status      = models.CharField(max_length=20, default='pending')  # pending, running, done, error
-    error       = models.TextField(null=True, blank=True)
-    created_at  = models.DateTimeField(auto_now_add=True)
-
-    @property
-    def done(self):
-        if self.current_seq is None:
-            return 0
-        return self.current_seq - self.seq_start + 1
-
-    @property
-    def pct(self):
-        if self.total == 0:
-            return 0
-        return round(self.done / self.total * 100, 1)
 
 
 class Changeset(models.Model):
@@ -70,8 +59,7 @@ class Changeset(models.Model):
     min_lon = models.FloatField(null=True)
     max_lon = models.FloatField(null=True)
     comments_count = models.IntegerField(null=True)
-    tags = models.JSONField(null=True)
-    
+
     # New dedicated columns for common tags
     created_by = models.CharField(max_length=255, null=True, blank=True)
     created_by_family = models.CharField(max_length=255, null=True, blank=True, db_index=True)  # Base name of created_by (e.g., "StreetComplete")
@@ -88,6 +76,14 @@ class Changeset(models.Model):
     review_requested = models.BooleanField(null=True, blank=True)
     remaining_tags = models.JSONField(null=True, blank=True)  # Store all other tags
 
+    # Derived from centroid by a database trigger (migration 0032), same as
+    # centroid itself (migration 0029) — see changesets/geo.py. No
+    # db_index=True here: the matching btree indexes already exist at the
+    # DB level under custom names (see Meta.indexes below) rather than a
+    # Django-auto-named one.
+    geohash = models.CharField(max_length=12, null=True, blank=True)
+    country_code = models.CharField(max_length=2, null=True, blank=True)
+
     @property
     def imagery_list(self):
         """Returns a list of imageries used in this changeset"""
@@ -103,11 +99,6 @@ class Changeset(models.Model):
         """Returns a dictionary of remaining tags"""
         return self.remaining_tags or {}
 
-    @property
-    def tags_dict(self):
-        """Returns a dictionary of all tags"""
-        return self.tags or {}
-
     class Meta:
         app_label = 'changesets'
         # The dashboard's contributor/editor/imagery filters use __iexact,
@@ -119,6 +110,8 @@ class Changeset(models.Model):
             models.Index(Upper('user'), name='changeset_user_upper_idx'),
             models.Index(Upper('created_by_family'), name='changeset_editor_upper_idx'),
             models.Index(Upper('imagery_family'), name='changeset_imagery_upper_idx'),
+            models.Index(fields=['geohash'], name='changeset_geohash_idx'),
+            models.Index(fields=['country_code'], name='changeset_country_code_idx'),
         ]
         # Replaces changeset_id's old standalone unique=True — TimescaleDB
         # requires the partitioning column (created_at) in any UNIQUE
@@ -279,47 +272,24 @@ class CaggContributorHourly(_CaggHourly):
         db_table = 'cagg_contributor_hourly'
 
 
-class CaggGeoDaily(models.Model):
-    """Unmanaged mapping onto the cagg_geo_daily continuous aggregate (see
-    migration 0025) — grid-cell (0.5-degree) changeset density per day, for
-    GeoView. grid_lat/grid_lon are NULL for changesets whose bbox diagonal
-    exceeds ~200km (see the migration for the exact expression): a stray
-    far-away edited object blowing up an otherwise-local changeset's bbox
-    means its centroid can't be trusted, so it's excluded from the map
-    rather than plotted somewhere misleading. Not a subclass of _CaggDaily
-    since it needs two dimension columns (lat/lon) instead of one (name).
+class CaggGeoHashedDaily(models.Model):
+    """Unmanaged mapping onto the cagg_geo_hashed_daily continuous aggregate
+    (see migration 0033) — replaces CaggGeoDaily/CaggGeoFineDaily's two-
+    CAgg/two-column (grid_lat/grid_lon) design with one CAgg keyed by the
+    geohash column (migration 0032). A coarser cell is a shorter *prefix* of
+    a finer one, so GeoView serves every zoom level by truncating `geohash`
+    at query time rather than choosing between two pre-materialized grids.
     bucket as primary_key isn't a real uniqueness claim — see _CaggDaily's
     identical caveat; never relied on for .get()/pk lookups."""
     bucket = models.DateTimeField(primary_key=True)
-    grid_lat = models.FloatField(null=True)
-    grid_lon = models.FloatField(null=True)
+    geohash = models.CharField(max_length=12)
     cnt = models.BigIntegerField()
     changes_sum = models.BigIntegerField()
 
     class Meta:
         app_label = 'changesets'
         managed = False
-        db_table = 'cagg_geo_daily'
-
-
-class CaggGeoFineDaily(models.Model):
-    """Unmanaged mapping onto the cagg_geo_fine_daily continuous aggregate
-    (see migration 0027) — same shape as CaggGeoDaily, but at a finer grid
-    (changesets/geo.py's FINE_GRID_SIZE_DEGREES, ~0.05°) for GeoView's
-    zoomed-in map view. Always viewport-scoped by GeoView (filtered on
-    grid_lat/grid_lon) rather than fetched globally like the coarse CAgg —
-    even pre-aggregated, shipping every fine cell on Earth for one zoomed-in
-    view would be excessive."""
-    bucket = models.DateTimeField(primary_key=True)
-    grid_lat = models.FloatField(null=True)
-    grid_lon = models.FloatField(null=True)
-    cnt = models.BigIntegerField()
-    changes_sum = models.BigIntegerField()
-
-    class Meta:
-        app_label = 'changesets'
-        managed = False
-        db_table = 'cagg_geo_fine_daily'
+        db_table = 'cagg_geo_hashed_daily'
 
 
 class FilterValue(models.Model):

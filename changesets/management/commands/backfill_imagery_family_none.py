@@ -20,6 +20,11 @@ class Command(BaseCommand):
     )
 
     def handle(self, *args, **options):
+        # The app role defaults to a bounded statement_timeout (see
+        # db/init/02-role-statement-timeout.sh) — this command legitimately
+        # scans/updates the whole table, so opt out.
+        connection.cursor().execute("SET statement_timeout = 0")
+
         non_value_filter = Q()
         for v in NON_VALUES:
             non_value_filter |= Q(imagery_family__iexact=v)

@@ -172,10 +172,15 @@ LOGGING = {
 
 # Rest Framwork
 REST_FRAMEWORK = {
-    'DEFAULT_RENDERER_CLASSES': [
-        'rest_framework.renderers.JSONRenderer',
-        'rest_framework.renderers.BrowsableAPIRenderer',
-    ],
+    # BrowsableAPIRenderer renders every response through a full HTML
+    # template when content negotiation asks for it — including a
+    # 1000-record page — which is a real cost for no benefit once
+    # /api/docs/ (drf-spectacular) already covers "explore the API in a
+    # browser". Only enabled under DEBUG; production stays JSON-only.
+    'DEFAULT_RENDERER_CLASSES': (
+        ['rest_framework.renderers.JSONRenderer', 'rest_framework.renderers.BrowsableAPIRenderer']
+        if DEBUG else ['rest_framework.renderers.JSONRenderer']
+    ),
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'EXCEPTION_HANDLER': 'changesets.exceptions.api_exception_handler',
 }

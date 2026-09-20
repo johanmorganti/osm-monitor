@@ -11,7 +11,7 @@ stands; it doesn't track day-to-day changes.
 planet.osm.org (minutely replication)  ──┐
                                           ├──> changesets_changeset (TimescaleDB hypertable)
 OSM full changesets dump (bulk import) ──┘             │
-                                                         ├──> DailyVolume / DailyBreakdown (rollups)
+                                                         ├──> cagg_* (continuous aggregates)
                                                          ├──> FilterValue (autocomplete)
                                                          │
                                           API (timeseries/summary/toplist/changesets) ──> dashboard.js
@@ -59,47 +59,48 @@ Queries and Django ORM code are otherwise unaffected — TimescaleDB is a Postgr
 different query interface. `changesets/rollups.py`'s raw SQL and every `Changeset.objects...`
 query in `views.py` work exactly as they would against a plain table.
 
-## Rollups: precomputed aggregates, not query-time aggregation
+## Aggregates: precomputed via TimescaleDB continuous aggregates, not query-time aggregation
 
-The dashboard's *unfiltered* view (no contributor/editor/imagery filter — the common case) reads
-from two small precomputed tables instead of aggregating the raw table on every request:
+The dashboard's *unfiltered* view, and any query filtered on exactly one of
+contributor/editor/imagery/language, reads from TimescaleDB continuous aggregates (`cagg_*`
+materialized views — migration `0020` onward) instead of aggregating the raw table on every
+request. There's one CAgg per (dimension × grain): `cagg_volume_{hourly,daily}` for plain volume,
+and `cagg_{editor,imagery,locale,contributor}_{hourly,daily}` for per-dimension breakdowns — see
+`changesets/models.py`'s `Cagg*` classes (all `managed=False`; TimescaleDB owns their schema and
+refresh, Django only maps onto them for querying) and `changesets/views.py`'s `CAGG_MODELS` /
+`CAGG_MODELS_HOURLY` mapping.
 
-- **`DailyVolume`** (`date`, `hour`, `count`, `changes_sum`) — per-hour changeset volume.
-- **`DailyBreakdown`** (`date`, `category`, `name`, `count`, `changes_sum`) — per-day counts by
-  editor/imagery/locale/contributor.
+A query filtered by *two or more* of those dimensions at once (e.g. a toplist filtered by
+`imagery`, grouped by `editor`) has no matching CAgg — each one only tracks its own single
+dimension — and falls back to querying `Changeset` directly (`changesets/views.py`'s
+`_filtered_changesets`). This is a real, currently-unsolved performance cliff for that specific
+query shape; see `docs/todo/continuous-aggregates-migration.md`.
 
-As soon as any contributor/editor/imagery filter is applied, the API falls back to querying
-`Changeset` directly (`changesets/views.py`'s `_filtered_changesets`) — the rollups don't carry
-those dimensions, and a filtered result set is usually a small enough slice of the table (helped
-by the hypertable's partition pruning plus expression indexes on `UPPER(user)` /
-`UPPER(created_by_family)` / `UPPER(imagery_family)`, since filters are case-insensitive) that
-this stays fast without needing a rollup per filter combination.
-
-Rollups are kept fresh by `changesets/rollups.py`, called from the poller's own loop on two
-cadences:
-
-- **`refresh_rollups_incremental()`** (every ~2 minutes): merges only `Changeset` rows inserted
-  since the last call (tracked via `RollupState.last_id`, an index range scan regardless of table
-  size) into the existing rollup rows with an UPSERT.
-- **`refresh_rollups_reconcile()`** (every ~6 hours): corrects drift the incremental path can
-  leave behind (`osm_fetcher.py` sometimes deletes and recreates a changeset that grew more edits
-  before closing — the recreated row's contribution gets added correctly, but the deleted row's
-  old contribution can briefly linger). Rather than recomputing from the *entire* table like the
-  original design did (prohibitively slow once the table is large — see `TODO.md`'s history),
-  this only recomputes the last few days: OSM changesets close within at most a few days in
-  practice, so drift can't exist further back than that.
-
-`refresh_rollups()` (the original full-table rebuild) still exists as a manual escape hatch
-(`manage.py refresh_rollups`) for when something broader than the recent window needs correcting
-— not called automatically.
+CAggs refresh themselves via TimescaleDB's own background job scheduler
+(`add_continuous_aggregate_policy`, registered per-CAgg in each migration) — no application code
+triggers this. Each policy's `start_offset` (7 days on every CAgg here) assumes normal live
+polling, where the only thing that can change after a row is inserted is `changes_count` growing
+while the changeset is still open (bounded by OSM's 24h max open time) — see `CLAUDE.md`'s
+"Old-dated rows in the replication stream are normal" section before assuming this window is too
+narrow or too wide. A deliberate bulk/backward import lands outside that window and needs an
+explicit `CALL refresh_continuous_aggregate(<view>, <lo>, <hi>)` — not yet automated for
+`import_from_dump.py`, see `docs/todo/continuous-aggregates-migration.md`.
 
 **`FilterValue`** (distinct known contributor/editor/imagery values, globally deduplicated — no
-date dimension) backs the dashboard's autocomplete inputs the same way: populated incrementally
-alongside the rollups, backfilled once for pre-existing data via
-`manage.py backfill_filter_values`. Its size tracks the number of distinct values ever seen, not
-the number of changesets, so it stays small (editor/imagery) or slow-growing (contributor)
-regardless of how much history is imported — unlike querying `Changeset` directly for
-autocomplete, which would be a full-table scan on every keystroke.
+date dimension) backs the dashboard's autocomplete inputs. Populated incrementally by
+`changesets/rollups.py`'s `refresh_filter_values_incremental()`, called from the poller's own loop
+every ~120s (watermarked on `created_at` — the hypertable's partitioning column, so this gets real
+chunk exclusion), and backfilled once for pre-existing data via `manage.py
+backfill_filter_values`. Its size tracks the number of distinct values ever seen, not the number
+of changesets, so it stays small (editor/imagery) or slow-growing (contributor) regardless of how
+much history is imported — unlike querying `Changeset` directly for autocomplete, which would be
+a full-table scan on every keystroke.
+
+**Not live, but still on disk**: `DailyVolume`/`DailyBreakdown` tables and three rollup functions
+in `changesets/rollups.py` predate the CAgg design above and nothing reads them anymore —
+`refresh_rollups()` remains callable only as a manual escape hatch (`manage.py refresh_rollups`).
+Dropping them outright is a pending follow-up migration — see
+`docs/todo/continuous-aggregates-migration.md`.
 
 ## API design
 

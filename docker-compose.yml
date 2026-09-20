@@ -37,6 +37,19 @@ services:
     command: postgres -c shared_preload_libraries=timescaledb,pg_stat_statements -c track_io_timing=on -c track_activity_query_size=4096 -c work_mem=32MB
     mem_limit: 1400m
     mem_reservation: 512m
+    # Docker's default /dev/shm is 64MB, shared by every parallel-worker's
+    # dynamic shared memory segment (Postgres's default
+    # dynamic_shared_memory_type=posix backs these with /dev/shm, not the
+    # mem_limit-backed shared_buffers). A `VACUUM ANALYZE` on
+    # changesets_changeset hit this directly: one parallel worker's segment
+    # alone needed ~112MB, blowing past the 64MB default with "could not
+    # resize shared memory segment: No space left on device" — and because
+    # that happens inside Postgres's own shared memory, the postmaster
+    # treated it as a possible-corruption crash and force-restarted the
+    # whole server (~15min WAL redo) rather than just failing the one
+    # statement. 256m leaves comfortable headroom over the observed need
+    # while staying well inside the 1400m mem_limit (shm counts against it).
+    shm_size: 256m
     ports:
       - "5007:5432"
     volumes:
@@ -51,6 +64,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Re-enabled 2026-09-19 (second time this session) now that the
+    # cagg_geo_hashed_daily CAgg backfill has finished (docs/todo/geo-
+    # spatial-key-and-country.md). query_samples stays permanently disabled
+    # below — it was the confirmed trigger for the *first* round of crashes
+    # earlier this session (EXPLAIN-ing the live geohash/country UPDATE).
+    # The *second* round of crashes (this CAgg backfill) turned out to
+    # persist even with query_samples already off and the check's label
+    # removed entirely, and was root-caused instead to Postgres's own
+    # parallel-worker /dev/shm exhaustion under refresh_continuous_
+    # aggregate on this host's tight memory — see the backfill script's own
+    # `max_parallel_workers_per_gather=0` fix in the implementation log.
+    # I.e. the check being off for round two turned out to be incidental,
+    # not curative — but there's no reason to re-enable query_samples now
+    # that it's confirmed as a real, separate risk for any future
+    # long-running bulk operation in this project.
     labels:
       com.datadoghq.ad.checks: |
         {
@@ -67,7 +95,7 @@ services:
                 "dbm": true,
                 "min_collection_interval": 60,
                 "query_metrics": {"collection_interval": 60},
-                "query_samples": {"collection_interval": 60}
+                "query_samples": {"enabled": false}
               }
             ]
           }
@@ -80,6 +108,13 @@ services:
   migrate:
     build: .
     env_file: .env
+    environment:
+      # The app role now defaults to a bounded statement_timeout (see
+      # db/init/02-role-statement-timeout.sh) — a migration's DDL (e.g. an
+      # index build over the full hypertable) can legitimately run past
+      # that, so exempt this service the same way `web` is exempted in the
+      # other direction (30s cap there; 0 = no cap here).
+      DB_STATEMENT_TIMEOUT_MS: "0"
     depends_on:
       db:
         condition: service_healthy

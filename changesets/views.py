@@ -5,23 +5,22 @@ from rest_framework.pagination import PageNumberPagination
 from django.views.generic import TemplateView
 from django.db.models import Count, Sum
 from django.db.models.expressions import RawSQL
-from django.db.models.functions import TruncDate, TruncHour
+from django.db.models.functions import TruncDate, TruncHour, Substr
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, OpenApiTypes
 from .models import (
-    Changeset, SequenceState, ImportJob, FilterValue,
+    Changeset, SequenceState, FilterValue,
     CaggVolumeHourly, CaggVolumeDaily,
     CaggEditorDaily, CaggImageryDaily, CaggLocaleDaily, CaggContributorDaily,
     CaggEditorHourly, CaggImageryHourly, CaggLocaleHourly, CaggContributorHourly,
-    CaggGeoDaily, CaggGeoFineDaily,
+    CaggGeoHashedDaily,
 )
 from .serializers import ChangesetSerializer
-from .osm_fetcher import fetch_and_process_changesets
 from .geo import (
-    GRID_SIZE_DEGREES, GRID_LAT_GATED_SQL, GRID_LON_GATED_SQL,
-    FINE_GRID_SIZE_DEGREES, FINE_GRID_LAT_GATED_SQL, FINE_GRID_LON_GATED_SQL,
+    GEOHASH_PREFIX_LENGTH, viewport_overlap_sql,
+    geohash_cell_size_degrees, geohash_decode_center, geohash_precision_for_bbox,
+    geohash_bbox_prefix, geohash_prefix_range_sql, GEOHASH_PREFIX_UPPER_BOUND_CHAR,
 )
-import threading
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -117,95 +116,6 @@ class ChangesetQueryView(APIView):
         serializer = ChangesetSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-
-def _run_import_job(job_id, seq_start, seq_end):
-    import django
-    django.setup()
-    job = ImportJob.objects.get(id=job_id)
-    job.status = 'running'
-    job.save(update_fields=['status'])
-    try:
-        def on_progress(seq):
-            ImportJob.objects.filter(id=job_id).update(current_seq=seq)
-
-        fetch_and_process_changesets(seq_start, seq_end, on_progress=on_progress)
-
-        job.status = 'done'
-        job.current_seq = seq_end
-        job.save(update_fields=['status', 'current_seq'])
-    except Exception as e:
-        ImportJob.objects.filter(id=job_id).update(status='error', error=str(e))
-
-
-class ChangesetListView(APIView):
-    """Kicks off a one-shot background import of a replication sequence
-    range and returns a job to poll via ImportJobView — not itself the
-    changeset data. See poll_sequences (manage.py) for continuous ingestion."""
-
-    @extend_schema(
-        tags=['import'],
-        summary='Import a sequence range',
-        description=(
-            'Starts a background import of OSM replication sequences seq_start..seq_end '
-            '(inclusive), capped at 10000 sequences per call. Returns a job to poll via '
-            'GET /api/import-job/{job_id}/.'
-        ),
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
-        examples=[OpenApiExample(
-            'Job started', value={'job_id': 42, 'seq_start': 1000, 'seq_end': 1010, 'total': 11},
-            response_only=True,
-        )],
-    )
-    def get(self, request, seq_start, seq_end):
-        seq_start = int(seq_start)
-        seq_end = int(seq_end)
-
-        max_range = 10000
-        if seq_end - seq_start > max_range:
-            return Response(
-                {"error": f"The range between seq_start and seq_end should not exceed {max_range}."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        total = abs(seq_end - seq_start) + 1
-        job = ImportJob.objects.create(seq_start=seq_start, seq_end=seq_end, total=total)
-
-        t = threading.Thread(target=_run_import_job, args=(job.id, seq_start, seq_end), daemon=True)
-        t.start()
-
-        return Response({"job_id": job.id, "seq_start": seq_start, "seq_end": seq_end, "total": total})
-
-
-class ImportJobView(APIView):
-    @extend_schema(
-        tags=['import'],
-        summary='Import job status',
-        description='Progress of a background sequence-range import started via GET /api/sequence/{seq_start}/{seq_end}/.',
-        responses={200: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
-        examples=[OpenApiExample(
-            'In progress',
-            value={
-                'job_id': 42, 'status': 'running', 'seq_start': 1000, 'seq_end': 1010,
-                'current_seq': 1004, 'total': 11, 'done': 5, 'pct': 45.5, 'error': None,
-            },
-            response_only=True,
-        )],
-    )
-    def get(self, request, job_id):
-        job = ImportJob.objects.filter(id=job_id).first()
-        if job is None:
-            return Response({'error': 'Job not found'}, status=status.HTTP_404_NOT_FOUND)
-        return Response({
-            'job_id':      job.id,
-            'status':      job.status,
-            'seq_start':   job.seq_start,
-            'seq_end':     job.seq_end,
-            'current_seq': job.current_seq,
-            'total':       job.total,
-            'done':        job.done,
-            'pct':         job.pct,
-            'error':       job.error,
-        })
 
 class DashboardView(TemplateView):
     """Thin HTML shell — no DB access. Chart data is fetched client-side from
@@ -338,7 +248,7 @@ def _resolve_range_and_filters(request):
     start_date = request.query_params.get('start_date')
     end_date = request.query_params.get('end_date')
     if not start_date or not end_date:
-        today = datetime.now().date()
+        today = timezone.now().date()
         end_date = today.strftime('%Y-%m-%d')
         start_date = (today - timedelta(days=7)).strftime('%Y-%m-%d')
 
@@ -690,41 +600,59 @@ class ToplistView(APIView):
 
 
 class GeoView(APIView):
-    """Changeset density per grid cell (see changesets/geo.py for the exact
-    cell sizes), for the dashboard's map. Two resolutions:
+    """Changeset density per geohash cell (see changesets/geo.py), for the
+    dashboard's map. Two resolutions, both backed by the single
+    cagg_geo_hashed_daily CAgg (migration 0033) truncated to a different
+    geohash prefix length (GEOHASH_PREFIX_LENGTH in geo.py) — a coarse cell
+    is just a shorter prefix of a fine one, so one stored key serves every
+    zoom level instead of choosing between two pre-materialized grids (the
+    old cagg_geo_daily/cagg_geo_fine_daily design, retired in migration
+    0038 — see CLAUDE.md's "Geo storage: a single geohash key" section):
 
-    - resolution=coarse (default): global, 0.5° cells, backed by
-      cagg_geo_daily (migration 0025) when unfiltered; a contributor/
-      editor/imagery/language filter falls back to the raw Changeset
-      table — same accepted cross-dimension tradeoff as ToplistView (no CA
-      covers a filtered geo breakdown, and building one per dimension would
-      repeat the "CA per dimension pair doesn't scale" anti-pattern already
-      flagged in TODO.md for the toplist case).
+    - resolution=coarse (default): global, ~156km x 156km cells.
     - resolution=fine: requires `bbox` (same "min_lon,min_lat,max_lon,max_lat"
-      format as ChangesetQueryView's), ~0.05° cells, backed by
-      cagg_geo_fine_daily (migration 0027) when unfiltered, same raw-table
-      fallback pattern when filtered. Scoped to `bbox` even though
+      format as ChangesetQueryView's). Cell size adapts to the bbox itself
+      (`geohash_precision_for_bbox()` in geo.py, up to ~1.2km x 0.6km at the
+      finest stored precision) rather than one fixed size — a fixed fine
+      size can't be right at every zoom level fine mode might be triggered
+      at (see that function's docstring for the "looked blank until zooming
+      much further" bug this replaced). Scoped to `bbox` even though
       pre-aggregated — shipping every fine cell on Earth would be excessive
       payload for one zoomed-in view.
 
+    A contributor/editor/imagery/language filter falls back to the raw
+    Changeset table (its own `geohash` column, migration 0032) — same
+    accepted cross-dimension tradeoff as ToplistView (no CA covers a
+    filtered geo breakdown, and building one per dimension would repeat the
+    "CA per dimension pair doesn't scale" anti-pattern already flagged in
+    TODO.md for the toplist case). That fallback path's viewport scoping
+    still uses the real, GiST-indexed `centroid` column (migration 0029) via
+    the `&&` overlap operator, rather than decoding geohash back to lat/lon
+    per row — cheaper, and centroid was already the source geohash was
+    derived from.
+
+    Cell coordinates (`lat`/`lon` in the response) are the geohash cell's
+    *center*, decoded in Python from each returned cell's key — at most a
+    few hundred rows per request, not a per-row database computation.
+
     Changesets whose bounding box is too large to trust (a stray far-away
     edited object can balloon an otherwise-local changeset's bbox — see
-    changesets/geo.py) are excluded from `cells` at both resolutions,
-    though they still count normally in SummaryView/TimeseriesView/
-    ToplistView — so this endpoint's total can be slightly below those
-    endpoints' totals for the same range.
+    changesets/geo.py) have no `centroid`/`geohash` and are excluded from
+    `cells` at both resolutions, though they still count normally in
+    SummaryView/TimeseriesView/ToplistView — so this endpoint's total can be
+    slightly below those endpoints' totals for the same range.
     """
 
     @extend_schema(
         tags=['changesets'],
         summary='Changeset density by grid cell',
         description=(
-            'Changeset count and objects-changed, bucketed into grid cells (see '
-            '`grid_size_degrees` in the response), for a date range. Defaults to the last 7 '
-            'days if no dates are given. resolution=fine requires `bbox` (the viewport to scope '
-            'cells to) and returns a finer grid than the default resolution=coarse. Changesets '
-            'with an unreliably large bounding box (see the view docstring) are excluded from '
-            '`cells`.'
+            'Changeset count and objects-changed, bucketed into geohash-derived grid cells (see '
+            '`lat_size_degrees`/`lon_size_degrees` in the response), for a date range. Defaults '
+            'to the last 7 days if no dates are given. resolution=fine requires `bbox` (the '
+            'viewport to scope cells to) and returns a finer grid than the default '
+            'resolution=coarse. Changesets with an unreliably large bounding box (see the view '
+            'docstring) are excluded from `cells`.'
         ),
         parameters=_FILTER_PARAMS + [
             OpenApiParameter('resolution', OpenApiTypes.STR, description='coarse (default, global) or fine (requires bbox below).'),
@@ -735,7 +663,7 @@ class GeoView(APIView):
             'Grid cells for the default range',
             value={
                 'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': ''},
-                'grid_size_degrees': 0.5,
+                'lat_size_degrees': 1.40625, 'lon_size_degrees': 1.40625,
                 'cells': [{'lat': 51.5, 'lon': -0.5, 'count': 1234, 'objects': 45210}],
             },
             response_only=True,
@@ -759,38 +687,84 @@ class GeoView(APIView):
                 return Response({'error': 'bbox must be min_lon,min_lat,max_lon,max_lat'}, status=status.HTTP_400_BAD_REQUEST)
             bounds = (min_lat, max_lat, min_lon, max_lon)
 
-        model = CaggGeoFineDaily if resolution == 'fine' else CaggGeoDaily
-        grid_size = FINE_GRID_SIZE_DEGREES if resolution == 'fine' else GRID_SIZE_DEGREES
-        grid_lat_sql = FINE_GRID_LAT_GATED_SQL if resolution == 'fine' else GRID_LAT_GATED_SQL
-        grid_lon_sql = FINE_GRID_LON_GATED_SQL if resolution == 'fine' else GRID_LON_GATED_SQL
+        if resolution == 'fine':
+            # Adapts to the actual viewport size rather than one fixed
+            # precision — see geohash_precision_for_bbox()'s docstring for
+            # why a fixed fine precision looked blank until zooming well
+            # past the point fine mode was supposed to already show detail.
+            prefix_len = geohash_precision_for_bbox(min_lat, min_lon, max_lat, max_lon)
+        else:
+            prefix_len = GEOHASH_PREFIX_LENGTH[resolution]
+        lat_size, lon_size = geohash_cell_size_degrees(prefix_len)
 
         if not (contributor or editor or imagery or language):
-            cells = self._from_rollups(start_date, end_date, model, bounds)
+            cells = self._from_rollups(start_date, end_date, prefix_len, bounds)
         else:
-            cells = self._from_raw(start_date, end_date, contributor, editor, imagery, language, grid_lat_sql, grid_lon_sql, bounds)
-        return Response({'filters': filters, 'grid_size_degrees': grid_size, 'cells': cells})
+            cells = self._from_raw(start_date, end_date, contributor, editor, imagery, language, prefix_len, bounds)
+        return Response({
+            'filters': filters,
+            'lat_size_degrees': lat_size, 'lon_size_degrees': lon_size,
+            'cells': cells,
+        })
 
-    def _from_rollups(self, start_date, end_date, model, bounds):
+    def _from_rollups(self, start_date, end_date, prefix_len, bounds):
         end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
-        rows = model.objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive, grid_lat__isnull=False)
+        rows = CaggGeoHashedDaily.objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive)
         if bounds:
+            # The CAgg only stores the hashed key, not lat/lon or a real
+            # geometry column, so it can't bbox-overlap like _from_raw does
+            # against `centroid` — but a covering geohash prefix (the
+            # longest common prefix of the bbox's SW/NE corners) still lets
+            # this stay a sargable range scan instead of pulling every
+            # geohash for the date range globally before cropping in Python.
+            # Measured 2026-09-19: an unfiltered fine (viewport) request
+            # with no SQL-level bbox filter at all scanned ~870K distinct
+            # geohashes for a 1.5-month range — this prefix cuts that down
+            # to whatever the covering cell actually contains.
             min_lat, max_lat, min_lon, max_lon = bounds
-            rows = rows.filter(grid_lat__gte=min_lat, grid_lat__lte=max_lat, grid_lon__gte=min_lon, grid_lon__lte=max_lon)
-        rows = rows.values('grid_lat', 'grid_lon').annotate(count=Sum('cnt'), objects=Sum('changes_sum'))
-        return [{'lat': r['grid_lat'], 'lon': r['grid_lon'], 'count': r['count'], 'objects': r['objects']} for r in rows]
-
-    def _from_raw(self, start_date, end_date, contributor, editor, imagery, language, grid_lat_sql, grid_lon_sql, bounds):
-        changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery, language)
-        changesets = (
-            changesets.filter(min_lat__isnull=False, max_lat__isnull=False, min_lon__isnull=False, max_lon__isnull=False)
-            .annotate(grid_lat=RawSQL(grid_lat_sql, []), grid_lon=RawSQL(grid_lon_sql, []))
-            .filter(grid_lat__isnull=False)
+            prefix = geohash_bbox_prefix(min_lat, min_lon, max_lat, max_lon)
+            if prefix:
+                rows = rows.annotate(
+                    in_prefix=RawSQL(geohash_prefix_range_sql(), [prefix, prefix + GEOHASH_PREFIX_UPPER_BOUND_CHAR]),
+                ).filter(in_prefix=True)
+        rows = (
+            rows.annotate(cell=Substr('geohash', 1, prefix_len))
+            .values('cell').annotate(count=Sum('cnt'), objects=Sum('changes_sum'))
         )
+        cells = []
+        for r in rows:
+            lat, lon = geohash_decode_center(r['cell'])
+            # The covering prefix above only guarantees containing the
+            # bbox, not being tight to it, so the exact crop still has to
+            # happen here in Python — same as before, just over far fewer
+            # candidate rows now.
+            if bounds:
+                min_lat, max_lat, min_lon, max_lon = bounds
+                if not (min_lat <= lat <= max_lat and min_lon <= lon <= max_lon):
+                    continue
+            cells.append({'lat': lat, 'lon': lon, 'count': r['count'], 'objects': r['objects']})
+        return cells
+
+    def _from_raw(self, start_date, end_date, contributor, editor, imagery, language, prefix_len, bounds):
+        # Sourced from the real `geohash` column (migration 0032) rather
+        # than recomputing anything per row. Viewport scoping still goes
+        # through the real, GiST-indexed `centroid` column (migration 0029)
+        # via the `&&` overlap operator — cheaper than decoding geohash back
+        # to lat/lon per row just to filter, and centroid is what geohash
+        # was derived from in the first place.
+        changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery, language)
+        changesets = changesets.filter(geohash__isnull=False).annotate(cell=Substr('geohash', 1, prefix_len))
         if bounds:
             min_lat, max_lat, min_lon, max_lon = bounds
-            changesets = changesets.filter(grid_lat__gte=min_lat, grid_lat__lte=max_lat, grid_lon__gte=min_lon, grid_lon__lte=max_lon)
-        rows = changesets.values('grid_lat', 'grid_lon').annotate(count=Count('id'), objects=Sum('changes_count'))
-        return [{'lat': r['grid_lat'], 'lon': r['grid_lon'], 'count': r['count'], 'objects': r['objects']} for r in rows]
+            changesets = changesets.annotate(
+                in_viewport=RawSQL(viewport_overlap_sql(), [min_lon, min_lat, max_lon, max_lat]),
+            ).filter(in_viewport=True)
+        rows = changesets.values('cell').annotate(count=Count('id'), objects=Sum('changes_count'))
+        cells = []
+        for r in rows:
+            lat, lon = geohash_decode_center(r['cell'])
+            cells.append({'lat': lat, 'lon': lon, 'count': r['count'], 'objects': r['objects']})
+        return cells
 
 
 class BatchProgressView(APIView):
@@ -875,17 +849,10 @@ class AutocompleteView(APIView):
 from django.views.generic import TemplateView
 
 class APILandingPageView(TemplateView):
+    """Poller status page — shows the poller's live catch-up batch progress
+    (BatchProgressView/`/api/batch-progress/`, polled client-side). Used to
+    also host a one-shot manual-import form; that form and its backing
+    ChangesetListView/ImportJobView/ImportJob APIs were removed 2026-09-19
+    — poll_sequences and import_from_dump are this project's only ingestion
+    paths now (see CLAUDE.md)."""
     template_name = 'changesets/changesets.html'
-
-    def get_context_data(self, **kwargs):
-        import yaml, requests
-        context = super().get_context_data(**kwargs)
-        context['last_changeset_id'] = int(yaml.load(requests.get("https://planet.osm.org/replication/changesets/state.yaml", stream=True).raw.read(),Loader=yaml.FullLoader)["sequence"])
-        return context
-
-## Redirect to landing page
-from django.http import HttpResponseRedirect
-from django.urls import reverse
-
-def redirect_to_landing_page(request):
-    return HttpResponseRedirect(reverse('changeset-import'))
