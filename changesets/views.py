@@ -14,6 +14,7 @@ from .models import (
     CaggEditorDaily, CaggImageryDaily, CaggLocaleDaily, CaggContributorDaily,
     CaggEditorHourly, CaggImageryHourly, CaggLocaleHourly, CaggContributorHourly,
     CaggGeoHashedDaily,
+    CaggEditorImageryDaily, CaggEditorLocaleDaily, CaggImageryLocaleDaily,
 )
 from .serializers import ChangesetSerializer
 from .geo import (
@@ -241,6 +242,42 @@ def _single_filter_dimension(contributor, editor, imagery, language):
     return set_filters[0] if len(set_filters) == 1 else None
 
 
+# Three cross-dimension CAggs (migration 0041) — "filter by one of {editor,
+# imagery, language}, broken out by another" directly, the shape
+# ToplistView's dimension param and TimeseriesView's group_by+filter both
+# need and that no single-dimension CAgg can answer. Keyed by
+# frozenset({dim_a, dim_b}) so a lookup works regardless of which side is
+# the filter and which is the group/dimension. No pair involves
+# contributor — deliberately deferred, see
+# docs/todo/continuous-aggregates-migration.md (344K distinct values vs.
+# low hundreds for the other three, and every CAgg's recurring refresh
+# cost on an already I/O-constrained host) — so a lookup naming contributor
+# always returns None and callers fall back to _from_raw, same as before.
+PAIR_CAGGS = {
+    frozenset({'editor', 'imagery'}): CaggEditorImageryDaily,
+    frozenset({'editor', 'language'}): CaggEditorLocaleDaily,
+    frozenset({'imagery', 'language'}): CaggImageryLocaleDaily,
+}
+
+# API dimension name -> the pair CAgg's own column name for it. Only
+# 'language' differs (the CAgg columns follow this project's DB-ish naming,
+# "locale", matching cagg_locale_daily — see CLAUDE.md's dimension-naming
+# table for why the API param and the internal name are allowed to
+# diverge). 'contributor' has no entry since it's never part of a pair.
+_PAIR_CAGG_COLUMN = {'editor': 'editor', 'imagery': 'imagery', 'language': 'locale'}
+
+
+def _pair_cagg_lookup(dim_a, dim_b):
+    """(model, column_for_dim_a, column_for_dim_b) if a pair CAgg covers
+    these two (distinct) dimensions, else None."""
+    if dim_a == dim_b:
+        return None
+    model = PAIR_CAGGS.get(frozenset({dim_a, dim_b}))
+    if model is None:
+        return None
+    return model, _PAIR_CAGG_COLUMN[dim_a], _PAIR_CAGG_COLUMN[dim_b]
+
+
 def _resolve_range_and_filters(request):
     """start_date/end_date/contributor/editor/imagery/language, shared by
     TimeseriesView, SummaryView, and ToplistView — same query params,
@@ -308,9 +345,14 @@ class TimeseriesView(APIView):
     language is set with no group_by (that dimension's own hourly-or-daily
     CA, filtered by name — same fast path as the grouped case). group_by
     combined with a filter is cross-dimension (e.g. "top editors, filtered
-    by imagery") and falls back to the raw Changeset table, since no CA
-    carries two filter dimensions at once — this still returns a correct
-    `interval`, just without the CA-backed speed."""
+    by imagery") — backed by that pair's own daily CAgg (migration 0041,
+    see PAIR_CAGGS above) when the pair is editor/imagery/language and
+    interval resolves to 'day' (these 3 CAggs are daily-only, unlike the
+    single-dimension ones — see docs/todo/continuous-aggregates-migration.md
+    for why an hourly grain and a contributor pair aren't built yet).
+    Anything else in this shape (a contributor filter or group_by, or
+    interval=hour) falls back to the raw Changeset table — this still
+    returns a correct `interval`, just without the CA-backed speed."""
 
     @extend_schema(
         tags=['changesets'],
@@ -363,6 +405,7 @@ class TimeseriesView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         single = _single_filter_dimension(contributor, editor, imagery, language)
+        pair = _pair_cagg_lookup(single[0], group_by) if single and group_by is not None and interval == 'day' else None
 
         if not (contributor or editor or imagery or language):
             data = self._from_rollups(start_date, end_date, group_by, interval)
@@ -375,6 +418,8 @@ class TimeseriesView(APIView):
             # editors, filtered by imagery") and stays on the raw fallback.
             dimension, value = single
             data = self._from_rollups_single_filtered(start_date, end_date, dimension, value, interval)
+        elif pair:
+            data = self._from_pair_rollups(start_date, end_date, single[1], pair, group_by)
         else:
             data = self._from_raw(start_date, end_date, contributor, editor, imagery, language, group_by, interval)
         return Response({'filters': filters, **data})
@@ -388,6 +433,41 @@ class TimeseriesView(APIView):
         )
         dates = [_format_bucket(r.bucket, interval) for r in rows]
         return {'interval': interval, 'dates': dates, 'series': [{'name': 'changesets', 'counts': [r.cnt for r in rows]}]}
+
+    def _from_pair_rollups(self, start_date, end_date, filter_value, pair, group_by):
+        """`pair` is (model, filter_column, group_by_column) from
+        _pair_cagg_lookup(filtered_dimension, group_by) — same top-20 +
+        per-name-bucket pivot as _from_rollups' grouped branch, just against
+        the pair CAgg's two columns instead of one. Daily-only (see the
+        class docstring), so interval is always 'day' here."""
+        model, filter_col, group_col = pair
+        end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+        filter_kwargs = {f'{filter_col}__iexact': filter_value}
+
+        top = list(
+            model.objects.filter(bucket__gte=start_date, bucket__lt=end_date_exclusive, **filter_kwargs)
+            .values(group_col).annotate(total_count=Sum('cnt')).order_by('-total_count')[:20]
+        )
+        names = [row[group_col] for row in top]
+        if not names:
+            return {'interval': 'day', 'dates': [], 'series': []}
+
+        rows = (
+            model.objects.filter(
+                bucket__gte=start_date, bucket__lt=end_date_exclusive,
+                **{f'{group_col}__in': names}, **filter_kwargs,
+            )
+            .values('bucket', group_col, 'cnt')
+        )
+        per_name_bucket = defaultdict(dict)
+        dates = set()
+        for r in rows:
+            label = _format_bucket(r['bucket'], 'day')
+            per_name_bucket[r[group_col]][label] = r['cnt']
+            dates.add(label)
+        dates = sorted(dates)
+        series = [{'name': name, 'counts': [per_name_bucket[name].get(d, 0) for d in dates]} for name in names]
+        return {'interval': 'day', 'dates': dates, 'series': series}
 
     def _from_rollups(self, start_date, end_date, group_by, interval):
         end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
@@ -519,11 +599,15 @@ class SummaryView(APIView):
 
 class ToplistView(APIView):
     """Top N by a metric, for one dimension (default N=20). Backed by that
-    dimension's continuous aggregate when unfiltered; a contributor/editor/
-    imagery/language filter falls back to the raw Changeset table — no CA can
-    answer "top imagery, filtered by editor" (each CA only tracks its own
-    single dimension, not cross-dimension breakdowns), so filtering doesn't
-    get a fast path here the way SummaryView's scalar total does."""
+    dimension's continuous aggregate when unfiltered. A single editor/
+    imagery/language filter paired with a *different* one of those three as
+    `dimension` is backed by that pair's own CAgg (migration 0041 — see
+    PAIR_CAGGS/_pair_cagg_lookup above and
+    docs/todo/continuous-aggregates-migration.md). Anything else — a
+    contributor filter, `dimension=contributor`, 2+ filters at once, or
+    filter == dimension — falls back to the raw Changeset table; no CA
+    covers those shapes (contributor pairs deliberately don't exist yet,
+    and no CA tracks 2+ filter dimensions simultaneously)."""
 
     DEFAULT_LIMIT = 20
     MAX_LIMIT = 1000
@@ -573,8 +657,13 @@ class ToplistView(APIView):
         start_date, end_date, contributor, editor, imagery, language, filters = _resolve_range_and_filters(request)
         filters = {**filters, 'dimension': dimension, 'metric': metric, 'limit': limit}
 
+        single = _single_filter_dimension(contributor, editor, imagery, language)
+        pair = _pair_cagg_lookup(single[0], dimension) if single else None
+
         if not (contributor or editor or imagery or language):
             results = self._from_rollups(start_date, end_date, dimension, metric, limit)
+        elif pair:
+            results = self._from_pair_rollups(start_date, end_date, single[1], pair, dimension, metric, limit)
         else:
             results = self._from_raw(start_date, end_date, contributor, editor, imagery, language, dimension, metric, limit)
         return Response({'filters': filters, 'results': results})
@@ -587,6 +676,24 @@ class ToplistView(APIView):
             .values('name').annotate(value=Sum(agg_field)).order_by('-value')[:limit]
         )
         return [{'name': r['name'], 'value': r['value']} for r in rows]
+
+    def _from_pair_rollups(self, start_date, end_date, filter_value, pair, dimension, metric, limit):
+        """`pair` is (model, filter_column, dimension_column) from
+        _pair_cagg_lookup(filtered_dimension, dimension) — same shape as
+        _from_rollups above, just filtered by the pair CAgg's other column
+        first. iexact on the filter side matches _filtered_changesets'
+        case-insensitivity for the same filter params."""
+        model, filter_col, dimension_col = pair
+        end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+        agg_field = 'cnt' if metric == 'count' else 'changes_sum'
+        rows = (
+            model.objects.filter(
+                bucket__gte=start_date, bucket__lt=end_date_exclusive,
+                **{f'{filter_col}__iexact': filter_value},
+            )
+            .values(dimension_col).annotate(value=Sum(agg_field)).order_by('-value')[:limit]
+        )
+        return [{'name': r[dimension_col], 'value': r['value']} for r in rows]
 
     def _from_raw(self, start_date, end_date, contributor, editor, imagery, language, dimension, metric, limit):
         changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery, language)
@@ -621,15 +728,17 @@ class GeoView(APIView):
       payload for one zoomed-in view.
 
     A contributor/editor/imagery/language filter falls back to the raw
-    Changeset table (its own `geohash` column, migration 0032) — same
-    accepted cross-dimension tradeoff as ToplistView (no CA covers a
-    filtered geo breakdown, and building one per dimension would repeat the
-    "CA per dimension pair doesn't scale" anti-pattern already flagged in
-    TODO.md for the toplist case). That fallback path's viewport scoping
-    still uses the real, GiST-indexed `centroid` column (migration 0029) via
-    the `&&` overlap operator, rather than decoding geohash back to lat/lon
-    per row — cheaper, and centroid was already the source geohash was
-    derived from.
+    Changeset table (its own `geohash` column, migration 0032) — unlike
+    ToplistView (see PAIR_CAGGS above), no CA covers a filtered geo
+    breakdown here, deliberately not built yet: a dimension x geohash CAgg
+    is a different shape from ToplistView's dimension x dimension pairs (geo
+    cells aren't a small fixed set of names the way editor/imagery/language
+    are), so it wasn't included in that same pass — see
+    docs/todo/continuous-aggregates-migration.md. That fallback path's
+    viewport scoping still uses the real, GiST-indexed `centroid` column
+    (migration 0029) via the `&&` overlap operator, rather than decoding
+    geohash back to lat/lon per row — cheaper, and centroid was already the
+    source geohash was derived from.
 
     Cell coordinates (`lat`/`lon` in the response) are the geohash cell's
     *center*, decoded in Python from each returned cell's key — at most a

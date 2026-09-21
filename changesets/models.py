@@ -299,6 +299,56 @@ class CaggGeoHashedDaily(models.Model):
         db_table = 'cagg_geo_hashed_daily'
 
 
+# Three cross-dimension CAggs (migration 0041) answering "filter by one of
+# {editor, imagery, language}, broken out by another" directly — the shape
+# ToplistView's dimension param and TimeseriesView's group_by+filter both
+# need. Deliberately not abstracted into a shared base like _CaggDaily/
+# _CaggHourly: each pair's two name columns are named after their own
+# dimension (editor/imagery/locale) for readability at the query site
+# (views.py), so the field names genuinely differ per pair rather than
+# being interchangeable. No pair involves contributor — see
+# docs/todo/continuous-aggregates-migration.md for why (344K distinct
+# values vs. low hundreds for the other three, and every CAgg's recurring
+# refresh cost on an already I/O-constrained host).
+class CaggEditorImageryDaily(models.Model):
+    bucket = models.DateTimeField(primary_key=True)  # not a real uniqueness claim — see _CaggDaily's comment
+    editor = models.CharField(max_length=255)
+    imagery = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_editor_imagery_daily'
+
+
+class CaggEditorLocaleDaily(models.Model):
+    bucket = models.DateTimeField(primary_key=True)
+    editor = models.CharField(max_length=255)
+    locale = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_editor_locale_daily'
+
+
+class CaggImageryLocaleDaily(models.Model):
+    bucket = models.DateTimeField(primary_key=True)
+    imagery = models.CharField(max_length=255)
+    locale = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_imagery_locale_daily'
+
+
 class FilterValue(models.Model):
     """Distinct known values for the dashboard's contributor/editor/imagery
     autocomplete. Deduplicated globally — unlike DailyBreakdown, there's no

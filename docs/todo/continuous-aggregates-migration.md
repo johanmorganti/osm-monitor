@@ -3,15 +3,21 @@
 The old hand-rolled rollup system (`DailyVolume`/`DailyBreakdown` +
 `refresh_rollups_incremental()`/`refresh_rollups_reconcile()` in `changesets/rollups.py`) has been
 fully replaced by TimescaleDB continuous aggregates (see "Aggregates" in `docs/ARCHITECTURE.md`)
-— `views.py` reads only the CAggs now. Two things from that migration are still open:
+— `views.py` reads only the CAggs now.
+
+Neither ingestion path needs its own CAgg-refresh code for *live* data: every CAgg (including the
+3 pair CAggs below) carries its own `add_continuous_aggregate_policy`, a Timescale-managed
+background job that refreshes on its own schedule regardless of what inserted the underlying rows
+— `poll_sequences.py` (the always-running poller) never touches CAggs at all. `import_from_dump.py`
+is the one path that *does* need an explicit call, since a historical bulk import routinely lands
+outside every policy's 7-day `start_offset` window (see CLAUDE.md's "Old-dated rows..." section) —
+it already makes one, over the imported range, using `cagg_maintenance.ALL_CAGG_NAMES` (confirmed
+2026-09-21 still current: adding a new CAgg to that one list, as the pair CAggs below did, is
+sufficient — no per-command changes needed).
 
 ## Remaining steps
 
-1. Add auto-refresh to `import_from_dump.py` (track first `created_at` seen, `CALL
-   refresh_continuous_aggregate` over the imported range at the end of the run) — otherwise a
-   future bulk historical import lands outside every CA policy's `start_offset` window and stays
-   silently unmaterialized until someone remembers to backfill by hand.
-2. Follow-up migration to drop the now-fully-dead old rollup machinery: `DailyVolume`/
+1. Follow-up migration to drop the now-fully-dead old rollup machinery: `DailyVolume`/
    `DailyBreakdown` tables (414 MB + 1 MB), `changesets_changeset_id_idx` (758 MB — nothing queries
    `Changeset.id` directly once the tables above are gone; this index alone projects to ~8 GB at
    full 190M-row history), `RollupState.last_id`, and the three old rollup functions in
@@ -67,3 +73,53 @@ the same decision, not solved by the index fix alone. A covering/`INCLUDE` index
 toplist's exact `(filter dimension, grouped dimension)` pair would let that one shape become an
 Index Only Scan, but that's the same "one index per dimension pair" combinatorial-explosion problem
 already rejected above for CAs.
+
+**2026-09-21 — editor/imagery/language now have real pair CAggs; contributor + geo are the
+remaining gap.** Reconsidered the "not fixable by adding more CAs" conclusion above: it's true as
+a blanket statement across *all* dimension pairs, but not uniformly — the 4 dimensions have very
+different cardinalities (confirmed via `count(DISTINCT name)` on each single-dimension CAgg):
+
+| Dimension | Distinct values |
+|---|---|
+| contributor | 344,304 |
+| editor | 824 |
+| imagery | 773 |
+| language | 121 |
+
+`editor`/`imagery`/`language` are all low-cardinality — a pair CAgg between any two of them is
+small and bounded. `contributor` is the outlier: not necessarily explosive in row count (most
+contributors stick to ~1 editor/imagery/language, so a contributor-crossed CAgg wouldn't approach
+a full cross-product), but every CAgg also carries a *recurring* refresh cost every time its
+policy fires (not just a one-time build cost), and this host is already I/O-constrained (see
+CLAUDE.md's statement_timeout / VACUUM-crash notes) — 3 more contributor-crossed CAggs would
+meaningfully add to that ongoing load.
+
+Built the 3 pairs *not* involving contributor — `cagg_editor_imagery_daily`,
+`cagg_editor_locale_daily`, `cagg_imagery_locale_daily` (migration 0041, daily-grain only; models
+in `changesets/models.py`; `PAIR_CAGGS`/`_pair_cagg_lookup` in `views.py` wire them into
+`ToplistView` and `TimeseriesView`'s `group_by`+filter path). Backfilled from 2025-08-01 (matching
+the single-dimension CAggs' own coverage — see `docs/todo/cagg-history-coverage-gap.md`) via the
+new `backfill_dimension_pair_caggs` management command, in small 7-day batches (default is smaller
+than `refresh_caggs_over_range`'s usual 30 — this host was already showing memory pressure the same
+session, see the `--batch-days` flag to widen it later once proven safe).
+
+**What this fixes:** `ToplistView`/`TimeseriesView` calls where the filtered dimension and the
+requested `dimension`/`group_by` are two *different* ones of {editor, imagery, language} — e.g. the
+original bug report's `toplist?language=ES&dimension=editor` and `&dimension=imagery` calls.
+
+**What's still open** (unchanged from above, now precisely scoped rather than "any cross-dimension
+query"):
+- Any call involving **contributor** as either the filter or the requested dimension — e.g.
+  `toplist?language=ES&dimension=contributor`, or `toplist?contributor=X&dimension=editor` when
+  `contributor` doesn't happen to be selective (a single username is usually selective enough to
+  already be fast via `changeset_user_upper_idx`, so this mostly bites the "filter by a common
+  editor/imagery/language, group by contributor" direction). Needs the cardinality/refresh-cost
+  tradeoff above resolved with an actual decision before building it.
+- **`GeoView`** with any active filter — a different shape entirely (dimension x geohash, not
+  dimension x dimension; geo cells aren't a small fixed set of names the way editor/imagery/
+  language are), not attempted in this pass. See `GeoView`'s docstring in `views.py`.
+- The degenerate case where the filtered dimension *equals* the requested `dimension`/`group_by`
+  (e.g. `toplist?language=ES&dimension=language`) — answerable today from the existing
+  single-dimension CAgg directly (it's just that one filtered value's own total), but
+  `ToplistView`/`TimeseriesView` don't special-case it yet and still fall back to raw scanning.
+  Minor; not part of this pass.
