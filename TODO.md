@@ -15,12 +15,8 @@ history.
 - [Gunicorn gthread — unverified under real traffic](docs/todo/gunicorn-gthread.md) — parked until there's real load to check against.
 - [Filter dropdown pre-population not working](docs/todo/dashboard-filter-dropdown-prepopulation.md) — not yet root-caused.
 - [Poller SequenceState checkpoint granularity](docs/todo/sequencestate-write-amplification.md) — checkpoints every sequence; every-N would cut write count but changes crash-recovery granularity, needs its own decision.
-- [Editor family `Organic` → `Organic Maps` data backfill](docs/todo/editor-family-organic-maps-fix.md) — code fixed; 209,579 already-imported rows still need a monitored backfill + CAgg refresh.
 - Datadog log pipeline severity remapping — Postgres `LOG:` lines showing as `status:error` in Datadog. Cosmetic; user fixing directly in the Datadog UI.
 - Favicon — dashboard has none; needs an actual design.
-
-## In progress
-
 
 ## Planned work
 
