@@ -20,22 +20,24 @@ from django.db import connection
 
 logger = logging.getLogger(__name__)
 
-# Every CAgg in the schema (migrations 0020, 0023, 0033, 0041, 0043) — kept
-# as one list specifically so nothing needs to remember to update more than
-# one place when a new one is added.
+# Every CAgg in the schema (migrations 0020, 0023, 0033, 0041, 0043, 0045,
+# 0048) — kept as one list specifically so nothing needs to remember to
+# update more than one place when a new one is added.
 ALL_CAGG_NAMES = [
     'cagg_volume_hourly', 'cagg_volume_daily',
     'cagg_editor_hourly', 'cagg_editor_daily',
     'cagg_imagery_hourly', 'cagg_imagery_daily',
     'cagg_locale_hourly', 'cagg_locale_daily',
     'cagg_contributor_hourly', 'cagg_contributor_daily',
+    'cagg_country_hourly', 'cagg_country_daily',
     'cagg_geo_hashed_daily',
     'cagg_editor_imagery_daily', 'cagg_editor_locale_daily', 'cagg_imagery_locale_daily',
     'cagg_contributor_editor_daily', 'cagg_contributor_imagery_daily', 'cagg_contributor_locale_daily',
+    'cagg_contributor_country_daily', 'cagg_country_editor_daily', 'cagg_country_imagery_daily',
 ]
 
 
-def refresh_caggs_over_range(start, end, cagg_names=ALL_CAGG_NAMES, batch_days=30, stdout=None):
+def refresh_caggs_over_range(start, end, cagg_names=ALL_CAGG_NAMES, batch_days=30, pause_seconds=0, stdout=None):
     """`CALL refresh_continuous_aggregate(cagg, batch_start, batch_end)` for
     every name in cagg_names, walking [start, end) in batch_days-sized
     chunks — never one call over the whole range: an earlier single-huge-
@@ -45,7 +47,18 @@ def refresh_caggs_over_range(start, end, cagg_names=ALL_CAGG_NAMES, batch_days=3
     aggregate over a large/dense range can trigger the same parallel-worker
     /dev/shm exhaustion crash `docker-compose.yml`'s `shm_size` comment
     documents for VACUUM ANALYZE — `max_parallel_workers_per_gather = 0`
-    below avoids it, same fix used there.
+    below avoids it, same fix used there. That guard is now also the role
+    default (db/init/03-role-parallel-workers.sh) so every connection gets
+    it, not just this one — but confirmed 2026-09-22 it isn't sufficient
+    alone: the country CAgg backfill still crashed Postgres mid-run even
+    with the role default in place, on cagg_country_hourly (a cheap,
+    low-cardinality CAgg, not the expensive contributor-crossed one) — this
+    host was simply out of headroom (~150MB free RAM, ~900MB swapped in
+    steady state all session) after ~20 minutes of continuous back-to-back
+    CALLs, not any one query. `pause_seconds` (default 0 — off for existing
+    callers) sleeps between date-batches, not between individual CALLs
+    within one, to give the host a real recovery window under sustained
+    pressure like that, at the cost of a much longer wall-clock backfill.
 
     Each CALL is its own statement — refresh_continuous_aggregate manages
     its own transaction internally and cannot run inside one (`ERROR:
@@ -102,3 +115,7 @@ def refresh_caggs_over_range(start, end, cagg_names=ALL_CAGG_NAMES, batch_days=3
                 },
             )
         cursor_start = batch_end
+        if pause_seconds and cursor_start < end:
+            if stdout:
+                stdout.write(f'Pausing {pause_seconds}s before next batch...')
+            time.sleep(pause_seconds)

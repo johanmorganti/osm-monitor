@@ -13,7 +13,7 @@ const CATEGORICAL = [
     '#4a3aa7', // violet
 ];
 const OTHER_COLOR = '#c3c2b7';   // neutral gray — "Other" isn't an identity, so it doesn't spend a hue
-const NONE_BUCKET = '(none)';   // cagg_imagery_daily/cagg_locale_daily's bucket for changesets with no tag (see views.py) — gets a normal categorical color, not OTHER_COLOR: it's real, often-dominant volume (not a leftover-tail catch-all like "Other"), so graying it out would hide exactly the spikes it exists to reveal
+const NONE_BUCKET = '(none)';   // cagg_imagery_daily/cagg_country_daily's bucket for changesets with no tag (see views.py) — gets a normal categorical color, not OTHER_COLOR: it's real, often-dominant volume (not a leftover-tail catch-all like "Other"), so graying it out would hide exactly the spikes it exists to reveal
 const RANKING_COLOR = CATEGORICAL[0]; // single-series ranking bars all take one slot, per the nominal-categorical rule
 
 const INK_SECONDARY = '#52514e';
@@ -105,7 +105,7 @@ function stackedBar(canvasId, dates, rawSeries) {
 }
 
 // Sets `field` to the clicked bar's name in the current URL and reloads —
-// every filter (start_date/end_date/contributor/editor/imagery/language) already
+// every filter (start_date/end_date/contributor/editor/imagery/country) already
 // lives in the URL and every fetch reads from it, so this needs no client-
 // side re-fetch orchestration, just a normal navigation to the new query.
 // Additive: only the clicked field changes, any other filter already set
@@ -119,7 +119,7 @@ function applyFilter(field, value) {
 // Same "URL is the single source of truth" navigation as applyFilter, but
 // for the Time Range presets — those set start_date *and* end_date together,
 // so they can't reuse applyFilter's single-field form. Any other filter
-// already set (contributor/editor/imagery/language) stays in place.
+// already set (contributor/editor/imagery/country) stays in place.
 function applyDateRangePreset(days) {
     const end = new Date();
     const start = new Date();
@@ -526,13 +526,13 @@ loadWidget('topImageriesTimeChart', apiUrl('/api/changesets/timeseries/', { grou
     stackedBar('topImageriesTimeChart', imageriesTime.dates, imageriesTime.series);
 });
 
-loadWidget('topLocalesChart', apiUrl('/api/changesets/toplist/', { dimension: 'language', metric: 'count' }), topLocales => {
-    showChart('topLocalesChart');
-    horizontalBar('topLocalesChart', topLocales.results.map(r => r.name), topLocales.results.map(r => r.value), 'Changesets', 'language');
+loadWidget('topCountriesChart', apiUrl('/api/changesets/toplist/', { dimension: 'country', metric: 'count' }), topCountries => {
+    showChart('topCountriesChart');
+    horizontalBar('topCountriesChart', topCountries.results.map(r => r.name), topCountries.results.map(r => r.value), 'Changesets', 'country');
 });
-loadWidget('topLocalesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'language' }), localesTime => {
-    showChart('topLocalesTimeChart');
-    stackedBar('topLocalesTimeChart', localesTime.dates, localesTime.series);
+loadWidget('topCountriesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'country' }), countriesTime => {
+    showChart('topCountriesTimeChart');
+    stackedBar('topCountriesTimeChart', countriesTime.dates, countriesTime.series);
 });
 
 loadWidget('topContributorsChart', apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'count' }), topContributors => {
@@ -565,7 +565,7 @@ fetchJson(apiUrl('/api/changesets/summary/'))
         document.getElementById('contributor').value = summary.filters.contributor;
         document.getElementById('editor').value = summary.filters.editor;
         document.getElementById('imagery').value = summary.filters.imagery;
-        document.getElementById('language').value = summary.filters.language;
+        document.getElementById('country').value = summary.filters.country;
 
         setKpiNumber('totalChangesets', summary.total_changesets);
         setKpiNumber('totalObjects', summary.total_objects);

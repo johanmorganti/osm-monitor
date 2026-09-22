@@ -138,3 +138,35 @@ dimension=contributor` calls both now return in under a second (previously 30s+ 
 
 All 4 dimensions are now fully cross-covered (6 pairs = C(4,2)) except `GeoView`, which remains
 the one open item above.
+
+**2026-09-22 — `country` added as the dashboard's 5th dimension, replacing `language` there.**
+`country_code` (migration 0032) had been schema + backfill only until now (see CLAUDE.md's "Geo
+storage" section) — added `cagg_country_daily`/`hourly` (migration 0045, same shape as the other
+single-dimension CAggs) and 3 new pairs — `cagg_contributor_country_daily`,
+`cagg_country_editor_daily`, `cagg_country_imagery_daily` (migration 0048; no country×language
+pair, since language has no dashboard caller left to cross it with) — bringing the total to 9
+pairs. `language` itself was deliberately left alone at the API layer (`DIMENSION_FIELDS`, its own
+CAggs, `/api/docs/`) — only removed from the dashboard UI — since it's a real, already-public API
+param and removing it would be a breaking change, not a side effect of a dashboard change.
+
+**This backfill is also the origin of a separate, more serious finding** — see
+`docs/todo/db-crash-instability.md`: backfilling the 5 country CAggs crashed Postgres mid-run
+repeatedly (5 times across ~2 hours), including once with *no* backfill or migration running at
+all. Root-caused (partially) to the same parallel-worker `/dev/shm` exhaustion mechanism already
+documented in CLAUDE.md's "Geo storage" section, but from a source that specific fix never
+covered: every CAgg's own automatic `add_continuous_aggregate_policy` background refresh runs
+through TimescaleDB's internal scheduler, not through `cagg_maintenance.py`, so it never got the
+`max_parallel_workers_per_gather = 0` guard that only explicit backfill scripts opted into. Now a
+role-level default instead (`db/init/03-role-parallel-workers.sh` + a live `ALTER ROLE`) — but
+this did **not** fully stop the crashes on its own, which is the open part of that finding.
+
+Also worth remembering for the next long-running backfill: the first, faster version of this
+session's `backfill_country_caggs` command tried to make crash-recovery automatic by re-deriving
+"how far did we get" from `MAX(bucket)` on each target CAgg after a crash — and got a silent
+false-positive "complete" the very first time it ran, because every CAgg's own 7-day auto-refresh
+policy keeps that value near "now" independent of the backfill's real progress, masking a real
+~4-month gap sitting earlier in the range. Fixed by tracking the resume point as plain Python
+state in the command's own retry loop instead (advanced only after a batch actually commits), not
+by querying any DB state that something else might also be touching. Verified this time by
+comparing `cagg_country_daily`'s monthly totals against `cagg_volume_daily`'s over the full
+range, not by trusting the command's own "complete" message.

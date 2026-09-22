@@ -83,7 +83,17 @@ The convention, and the current mapping for every dimension:
 | `user` | `contributor` | Contributor |
 | `created_by_family` | `editor` | Editor |
 | `imagery_family` | `imagery` | Imagery provider |
-| `locale_family` | `language` | Language |
+| `locale_family` | `language` | *(none — see below)* |
+| `country_code` | `country` | Country |
+
+`language` is the one exception to "every dimension has a UI label": it was the dashboard's 5th
+dimension until 2026-09-22, when `country` replaced it there (filter, toplist chart, "over time"
+chart). `language` itself was deliberately left alone at the API layer — `DIMENSION_FIELDS`, its
+CAggs, `/api/docs/` — since it's a real, already-public param and removing it would be a breaking
+API change per the API param rule below, not something to do as a side effect of a dashboard
+change. So `language` now has an API param and no UI label at all; don't take that as license to
+leave a *new* dimension's UI label out, that's specific to this one already-public, deliberately
+retained case.
 
 Rules:
 - The **DB column** is internal and never exposed directly — it can stay whatever legacy/technical
@@ -164,9 +174,16 @@ pass purely because both needed the same one-time full-history backfill pass and
 would have doubled the I/O cost on this host — **country is not "free" once geohash exists**: a
 geohash prefix is a regular-grid concept, country borders are irregular polygons, so it's resolved
 independently via `country_boundaries` (a loaded Natural Earth admin-0 table, GiST-indexed,
-point-in-polygon against `centroid`). `country` is schema + backfill only for now — no
-`DIMENSION_FIELDS` entry, no CAgg pair, no dashboard wiring — see the dimension-naming table above
-before adding one.
+point-in-polygon against `centroid`). `country` was schema + backfill only at first — no
+`DIMENSION_FIELDS` entry, no CAgg pair, no dashboard wiring — until 2026-09-22, when it replaced
+`language` as the dashboard's 5th dimension (see the dimension-naming table above): `cagg_country_
+daily`/`hourly` (migration 0045), an `UPPER(country_code)` expression index (migration 0047, same
+per-chunk `CONCURRENTLY` build as `locale_family`'s below), and 3 pair CAggs — country×editor,
+country×imagery, country×contributor (migration 0048, no country×language — see PAIR_CAGGS'
+comment in `views.py`). `language` itself was deliberately *not* removed from the API
+(`DIMENSION_FIELDS`, its CAggs) — only from the dashboard UI — since it's a real, documented public
+API param and CLAUDE.md's own dimension-naming rules treat removing one as a breaking change, not a
+quick fix.
 
 Five lessons from actually shipping this, worth remembering for the next schema change of this
 shape: (1) a plain `RunSQL`-only migration that adds a real column (here: `ADD COLUMN geohash`)
@@ -176,7 +193,17 @@ field — invisible until ORM code tries to `.filter()` on it, which is exactly 
 existed and been correctly populated in the database the whole time. (2) `CALL
 refresh_continuous_aggregate(...)` over a large/dense chunk on this host can trigger the same
 parallel-worker `/dev/shm` exhaustion crash documented in `docker-compose.yml`'s `shm_size` comment
-for `VACUUM ANALYZE` — `SET max_parallel_workers_per_gather = 0` around the call avoided it.
+for `VACUUM ANALYZE` — `SET max_parallel_workers_per_gather = 0` around the call avoided it. This
+guard only covered code that explicitly opted in (`cagg_maintenance.refresh_caggs_over_range`),
+though — every CAgg's own automatic `add_continuous_aggregate_policy` background refresh runs
+through TimescaleDB's internal scheduler under the same role, never through that function, so it
+never got the same protection. Confirmed as a real, independent crash trigger 2026-09-22 (Postgres
+crash-restarted with no backfill or migration running at all, shortly after several new CAggs —
+and their background policies — had been added the same session) — fixed by making the guard a
+role-level default instead (`db/init/03-role-parallel-workers.sh`, plus a live `ALTER ROLE` for the
+already-existing volume), so it's inherited by every connection under that role, background
+workers included. That fix alone did **not** fully stop the crashes, though — see
+`docs/todo/db-crash-instability.md` for the still-open investigation.
 (3) `GEOHASH_PREFIX_LENGTH['coarse']` shipped as `4` (~39km × 19.5km) on the assumption that it was
 "close enough" to the old design's 0.5° cells — it wasn't: geohash halving doesn't land near 0.5°
 at any integer precision, and 4 actually produced **~4x more cells globally** than the old grid

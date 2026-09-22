@@ -101,22 +101,25 @@ class Changeset(models.Model):
 
     class Meta:
         app_label = 'changesets'
-        # The dashboard's contributor/editor/imagery/language filters use
-        # __iexact, which Postgres implements as UPPER(col) = UPPER(val) —
-        # without a matching expression index that forces a sequential scan
-        # even when the date range is also filtered, since a date range
+        # The dashboard's contributor/editor/imagery/language/country filters
+        # use __iexact, which Postgres implements as UPPER(col) = UPPER(val)
+        # — without a matching expression index that forces a sequential
+        # scan even when the date range is also filtered, since a date range
         # spanning most of the table's history isn't selective enough on its
         # own. locale_family's copy of this index (migration 0040) was added
         # later than the other three (migration 0015) — it predates
         # `language` becoming a real dashboard filter, so the raw-table
         # fallback used by ToplistView/GeoView for any active filter (see
         # CLAUDE.md) silently sequential-scanned on language specifically
-        # until this was caught.
+        # until this was caught. country_code's (migration 0047) was added
+        # proactively alongside `country` becoming a filter, specifically to
+        # avoid repeating that mistake.
         indexes = [
             models.Index(Upper('user'), name='changeset_user_upper_idx'),
             models.Index(Upper('created_by_family'), name='changeset_editor_upper_idx'),
             models.Index(Upper('imagery_family'), name='changeset_imagery_upper_idx'),
             models.Index(Upper('locale_family'), name='changeset_locale_upper_idx'),
+            models.Index(Upper('country_code'), name='changeset_country_upper_idx'),
             models.Index(fields=['geohash'], name='changeset_geohash_idx'),
             models.Index(fields=['country_code'], name='changeset_country_code_idx'),
         ]
@@ -223,6 +226,14 @@ class CaggContributorDaily(_CaggDaily):
         db_table = 'cagg_contributor_daily'
 
 
+class CaggCountryDaily(_CaggDaily):
+    """Migration 0045 — replaces `language` as the dashboard's 5th
+    dimension (language stays a valid API param, just no longer on the
+    dashboard — see CLAUDE.md's dimension-naming table)."""
+    class Meta(_CaggDaily.Meta):
+        db_table = 'cagg_country_daily'
+
+
 class CaggVolumeDaily(models.Model):
     """Unmanaged mapping onto the cagg_volume_daily continuous aggregate (see
     migration 0023) — the daily-grain counterpart to CaggVolumeHourly, used
@@ -279,6 +290,11 @@ class CaggContributorHourly(_CaggHourly):
         db_table = 'cagg_contributor_hourly'
 
 
+class CaggCountryHourly(_CaggHourly):
+    class Meta(_CaggHourly.Meta):
+        db_table = 'cagg_country_hourly'
+
+
 class CaggGeoHashedDaily(models.Model):
     """Unmanaged mapping onto the cagg_geo_hashed_daily continuous aggregate
     (see migration 0033) — replaces CaggGeoDaily/CaggGeoFineDaily's two-
@@ -299,13 +315,13 @@ class CaggGeoHashedDaily(models.Model):
         db_table = 'cagg_geo_hashed_daily'
 
 
-# Six cross-dimension CAggs answering "filter by one dimension, broken out
+# Nine cross-dimension CAggs answering "filter by one dimension, broken out
 # by another" directly — the shape ToplistView's dimension param and
 # TimeseriesView's group_by+filter both need. Deliberately not abstracted
 # into a shared base like _CaggDaily/_CaggHourly: each pair's two name
 # columns are named after their own dimension (contributor/editor/imagery/
-# locale) for readability at the query site (views.py), so the field names
-# genuinely differ per pair rather than being interchangeable.
+# locale/country) for readability at the query site (views.py), so the
+# field names genuinely differ per pair rather than being interchangeable.
 #
 # The 3 editor/imagery/language pairs (migration 0041) shipped first;
 # the 3 contributor pairs (migration 0043) were deliberately deferred at
@@ -313,7 +329,10 @@ class CaggGeoHashedDaily(models.Model):
 # the other three, and every CAgg adds recurring refresh cost on this
 # I/O-constrained host — then built anyway once the contributor-grouped
 # toplist was confirmed to be the remaining slow path (see
-# docs/todo/continuous-aggregates-migration.md).
+# docs/todo/continuous-aggregates-migration.md). The 3 country pairs
+# (migration 0048) shipped alongside country replacing language as the
+# dashboard's 5th dimension — no country x language pair, since language
+# has no dashboard caller left to cross it with.
 class CaggEditorImageryDaily(models.Model):
     bucket = models.DateTimeField(primary_key=True)  # not a real uniqueness claim — see _CaggDaily's comment
     editor = models.CharField(max_length=255)
@@ -390,6 +409,45 @@ class CaggContributorLocaleDaily(models.Model):
         app_label = 'changesets'
         managed = False
         db_table = 'cagg_contributor_locale_daily'
+
+
+class CaggContributorCountryDaily(models.Model):
+    bucket = models.DateTimeField(primary_key=True)
+    contributor = models.CharField(max_length=255)
+    country = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_contributor_country_daily'
+
+
+class CaggCountryEditorDaily(models.Model):
+    bucket = models.DateTimeField(primary_key=True)
+    country = models.CharField(max_length=255)
+    editor = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_country_editor_daily'
+
+
+class CaggCountryImageryDaily(models.Model):
+    bucket = models.DateTimeField(primary_key=True)
+    country = models.CharField(max_length=255)
+    imagery = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_country_imagery_daily'
 
 
 class FilterValue(models.Model):

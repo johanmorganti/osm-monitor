@@ -58,9 +58,9 @@
                 <datalist id="imagery-list"></datalist>
             </div>
             <div>
-                <label for="language" class="block text-sm font-medium text-gray-700">Language</label>
-                <input type="text" name="language" id="language" value="{{ request.GET.language }}"
-                       autocomplete="off" placeholder="Search language…"
+                <label for="country" class="block text-sm font-medium text-gray-700">Country</label>
+                <input type="text" name="country" id="country" value="{{ request.GET.country }}"
+                       autocomplete="off" placeholder="Search country (e.g. FR)…"
                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
             </div>
             <div>
@@ -115,7 +115,7 @@
     </div>
 
     <!-- Contributors — single full-width widget, shown first: usernames need
-         more horizontal room than editor/imagery/language names do. -->
+         more horizontal room than editor/imagery/country names do. -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-12">
         <div class="grid grid-cols-2 gap-8">
             <div>
@@ -180,22 +180,22 @@
             </div>
         </div>
 
-        <!-- Language -->
+        <!-- Country -->
         <div class="bg-white rounded-lg shadow-lg p-6">
-            <h3 class="text-lg font-semibold mb-1">Top 20 Languages</h3>
-            <p class="text-xs text-gray-400 mb-3">Click a bar to filter by language</p>
+            <h3 class="text-lg font-semibold mb-1">Top 20 Countries</h3>
+            <p class="text-xs text-gray-400 mb-3">Click a bar to filter by country</p>
             <div class="relative" style="height: 560px">
-                <div id="topLocalesChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                <div id="topCountriesChart-spinner" class="absolute inset-0 flex items-center justify-center">
                     <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
                 </div>
-                <canvas id="topLocalesChart" hidden></canvas>
+                <canvas id="topCountriesChart" hidden></canvas>
             </div>
             <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time</h4>
             <div class="relative" style="min-height: 200px">
-                <div id="topLocalesTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                <div id="topCountriesTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
                     <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
                 </div>
-                <canvas id="topLocalesTimeChart" hidden></canvas>
+                <canvas id="topCountriesTimeChart" hidden></canvas>
             </div>
         </div>
     </div>

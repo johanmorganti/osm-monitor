@@ -21,12 +21,14 @@ than losing the list.
   are happening.
 - **New vs. returning contributor trend** — needs a "first ever seen per user" concept not
   currently tracked, so more of a schema addition than a pure UI change.
-- **Per-country breakdown** — `Changeset.country_code` (ISO alpha-2) exists and is fully backfilled
-  (see `CLAUDE.md`'s "Geo storage: a single geohash key" section for how), but this is schema +
-  backfill only: no `DIMENSION_FIELDS` entry, no CAgg pair, no dashboard wiring yet. The dimension-
-  naming table in `CLAUDE.md` needs a `country` row (API param, UI label) picked before adding one.
 
 ## Done
+
+**Per-country breakdown.** `country` replaced `language` as the dashboard's 5th dimension
+(2026-09-22) — filter, toplist chart, and "over time" chart, matching the other three dimensions'
+full treatment. `DIMENSION_FIELDS`/`CAGG_MODELS` entries, `cagg_country_daily`/`hourly`
+(migration 0045) and 3 pair CAggs (migration 0048) — see `docs/todo/continuous-aggregates-
+migration.md`'s 2026-09-22 entry and `CLAUDE.md`'s dimension-naming table.
 
 **Geographic map.** `GeoView` (`/api/changesets/geo/`, `changesets/views.py`) + `cagg_geo_hashed_daily`
 (migration `0033_cagg_geo_hashed_daily`) + a Leaflet grid map on the dashboard (`dashboard.js`'s

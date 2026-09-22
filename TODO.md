@@ -9,7 +9,8 @@ history.
 
 ## Known issues (deferred)
 
-- [Cross-dimension queries + CAgg cleanup](docs/todo/continuous-aggregates-migration.md) — all 6 dimension pairs now have their own CAggs; `GeoView` with any filter (different shape) still falls back to a raw scan and can time out; old rollup tables/index still need a drop migration.
+- [DB crash-restarting recurrently](docs/todo/db-crash-instability.md) — one trigger fixed (parallel-worker `/dev/shm` exhaustion, now guarded at the role level), but crashes continued after that fix; likely general host capacity pressure, not root-caused yet.
+- [Cross-dimension queries + CAgg cleanup](docs/todo/continuous-aggregates-migration.md) — all 9 dimension pairs (contributor/editor/imagery/language/country) now have their own CAggs; `GeoView` with any filter (different shape) still falls back to a raw scan and can time out; old rollup tables/index still need a drop migration.
 - [CAggs only cover Aug 2025+](docs/todo/cagg-history-coverage-gap.md) — raw table goes back to 2005; the 10 stats CAggs were never backfilled to match.
 - [Compression backlog paused](docs/todo/compression-backlog.md) — only 1 of ~13 chunks compressed; re-enabling needs a controlled one-chunk pass and a `compress_segmentby` decision.
 - [Gunicorn gthread — unverified under real traffic](docs/todo/gunicorn-gthread.md) — parked until there's real load to check against.
@@ -20,4 +21,4 @@ history.
 
 ## Planned work
 
-- [Dashboard: new graph/section ideas](docs/todo/dashboard-new-graphs.md) — hashtags/campaign toplist, StreetComplete quest breakdown, discussion activity, new-vs-returning contributors, per-country breakdown (schema+backfill done, dashboard wiring not). Geo map itself is done.
+- [Dashboard: new graph/section ideas](docs/todo/dashboard-new-graphs.md) — hashtags/campaign toplist, StreetComplete quest breakdown, discussion activity, new-vs-returning contributors. Geo map and per-country breakdown are done.
