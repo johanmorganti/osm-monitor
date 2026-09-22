@@ -109,12 +109,6 @@ original bug report's `toplist?language=ES&dimension=editor` and `&dimension=ima
 
 **What's still open** (unchanged from above, now precisely scoped rather than "any cross-dimension
 query"):
-- Any call involving **contributor** as either the filter or the requested dimension — e.g.
-  `toplist?language=ES&dimension=contributor`, or `toplist?contributor=X&dimension=editor` when
-  `contributor` doesn't happen to be selective (a single username is usually selective enough to
-  already be fast via `changeset_user_upper_idx`, so this mostly bites the "filter by a common
-  editor/imagery/language, group by contributor" direction). Needs the cardinality/refresh-cost
-  tradeoff above resolved with an actual decision before building it.
 - **`GeoView`** with any active filter — a different shape entirely (dimension x geohash, not
   dimension x dimension; geo cells aren't a small fixed set of names the way editor/imagery/
   language are), not attempted in this pass. See `GeoView`'s docstring in `views.py`.
@@ -123,3 +117,24 @@ query"):
   single-dimension CAgg directly (it's just that one filtered value's own total), but
   `ToplistView`/`TimeseriesView` don't special-case it yet and still fall back to raw scanning.
   Minor; not part of this pass.
+
+**2026-09-22 — contributor pairs built too, despite the cost flagged above.** The
+"filter by a common editor/imagery/language, group by contributor" direction (not covered by
+`changeset_user_upper_idx`'s selectivity, since the filter there is never on `user`) was confirmed
+as the concrete remaining slow path, so built the 3 contributor pairs anyway:
+`cagg_contributor_editor_daily`, `cagg_contributor_imagery_daily`, `cagg_contributor_locale_daily`
+(migration 0043, same daily-grain-only shape as 0041's three). `PAIR_CAGGS` in `views.py` no longer
+excludes contributor — the lookup is fully generic now across all 6 pairs.
+
+The cardinality cost was real, not just theoretical: backfilling the 3 non-contributor pairs
+(migration 0041) took a few minutes total; backfilling these 3 took roughly an hour on this
+host, confirmed via `pg_stat_activity` mid-run showing individual 7-day batch refreshes taking
+30-40s of real `DataFileRead` I/O wait each (vs. sub-second for the non-contributor pairs) — one
+batch, not the whole backfill. Reused `backfill_dimension_pair_caggs` (extended `PAIR_CAGG_NAMES`
+rather than adding a second command — the command was already generic over "whatever's in this
+list"), same 2025-08-01 start and 7-day batches. Verified end-to-end post-backfill: the
+originally-slow `toplist?editor=iD&dimension=contributor` and `toplist?language=ES&
+dimension=contributor` calls both now return in under a second (previously 30s+ timeouts).
+
+All 4 dimensions are now fully cross-covered (6 pairs = C(4,2)) except `GeoView`, which remains
+the one open item above.

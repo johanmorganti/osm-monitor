@@ -15,6 +15,7 @@ from .models import (
     CaggEditorHourly, CaggImageryHourly, CaggLocaleHourly, CaggContributorHourly,
     CaggGeoHashedDaily,
     CaggEditorImageryDaily, CaggEditorLocaleDaily, CaggImageryLocaleDaily,
+    CaggContributorEditorDaily, CaggContributorImageryDaily, CaggContributorLocaleDaily,
 )
 from .serializers import ChangesetSerializer
 from .geo import (
@@ -242,29 +243,32 @@ def _single_filter_dimension(contributor, editor, imagery, language):
     return set_filters[0] if len(set_filters) == 1 else None
 
 
-# Three cross-dimension CAggs (migration 0041) — "filter by one of {editor,
-# imagery, language}, broken out by another" directly, the shape
-# ToplistView's dimension param and TimeseriesView's group_by+filter both
-# need and that no single-dimension CAgg can answer. Keyed by
-# frozenset({dim_a, dim_b}) so a lookup works regardless of which side is
-# the filter and which is the group/dimension. No pair involves
-# contributor — deliberately deferred, see
-# docs/todo/continuous-aggregates-migration.md (344K distinct values vs.
-# low hundreds for the other three, and every CAgg's recurring refresh
-# cost on an already I/O-constrained host) — so a lookup naming contributor
-# always returns None and callers fall back to _from_raw, same as before.
+# All six cross-dimension CAggs — "filter by one dimension, broken out by
+# another" directly, the shape ToplistView's dimension param and
+# TimeseriesView's group_by+filter both need and that no single-dimension
+# CAgg can answer. Keyed by frozenset({dim_a, dim_b}) so a lookup works
+# regardless of which side is the filter and which is the group/dimension.
+# The editor/imagery/language pairs shipped first (migration 0041); the
+# contributor pairs (migration 0043) were deferred initially — contributor
+# has 344K distinct values vs. low hundreds for the other three, and every
+# CAgg adds recurring refresh cost on this I/O-constrained host — then
+# built once the contributor-grouped toplist was confirmed to be the
+# remaining slow path. See docs/todo/continuous-aggregates-migration.md.
 PAIR_CAGGS = {
     frozenset({'editor', 'imagery'}): CaggEditorImageryDaily,
     frozenset({'editor', 'language'}): CaggEditorLocaleDaily,
     frozenset({'imagery', 'language'}): CaggImageryLocaleDaily,
+    frozenset({'contributor', 'editor'}): CaggContributorEditorDaily,
+    frozenset({'contributor', 'imagery'}): CaggContributorImageryDaily,
+    frozenset({'contributor', 'language'}): CaggContributorLocaleDaily,
 }
 
 # API dimension name -> the pair CAgg's own column name for it. Only
 # 'language' differs (the CAgg columns follow this project's DB-ish naming,
 # "locale", matching cagg_locale_daily — see CLAUDE.md's dimension-naming
 # table for why the API param and the internal name are allowed to
-# diverge). 'contributor' has no entry since it's never part of a pair.
-_PAIR_CAGG_COLUMN = {'editor': 'editor', 'imagery': 'imagery', 'language': 'locale'}
+# diverge).
+_PAIR_CAGG_COLUMN = {'contributor': 'contributor', 'editor': 'editor', 'imagery': 'imagery', 'language': 'locale'}
 
 
 def _pair_cagg_lookup(dim_a, dim_b):
@@ -345,14 +349,13 @@ class TimeseriesView(APIView):
     language is set with no group_by (that dimension's own hourly-or-daily
     CA, filtered by name — same fast path as the grouped case). group_by
     combined with a filter is cross-dimension (e.g. "top editors, filtered
-    by imagery") — backed by that pair's own daily CAgg (migration 0041,
-    see PAIR_CAGGS above) when the pair is editor/imagery/language and
-    interval resolves to 'day' (these 3 CAggs are daily-only, unlike the
-    single-dimension ones — see docs/todo/continuous-aggregates-migration.md
-    for why an hourly grain and a contributor pair aren't built yet).
-    Anything else in this shape (a contributor filter or group_by, or
-    interval=hour) falls back to the raw Changeset table — this still
-    returns a correct `interval`, just without the CA-backed speed."""
+    by imagery") — backed by that pair's own daily CAgg (migrations 0041/
+    0043, see PAIR_CAGGS above) whenever interval resolves to 'day' (all 6
+    pair CAggs are daily-only, unlike the single-dimension ones — see
+    docs/todo/continuous-aggregates-migration.md for why an hourly grain
+    isn't built). interval=hour always falls back to the raw Changeset
+    table for this shape — this still returns a correct `interval`, just
+    without the CA-backed speed."""
 
     @extend_schema(
         tags=['changesets'],
@@ -599,15 +602,15 @@ class SummaryView(APIView):
 
 class ToplistView(APIView):
     """Top N by a metric, for one dimension (default N=20). Backed by that
-    dimension's continuous aggregate when unfiltered. A single editor/
-    imagery/language filter paired with a *different* one of those three as
-    `dimension` is backed by that pair's own CAgg (migration 0041 — see
-    PAIR_CAGGS/_pair_cagg_lookup above and
-    docs/todo/continuous-aggregates-migration.md). Anything else — a
-    contributor filter, `dimension=contributor`, 2+ filters at once, or
-    filter == dimension — falls back to the raw Changeset table; no CA
-    covers those shapes (contributor pairs deliberately don't exist yet,
-    and no CA tracks 2+ filter dimensions simultaneously)."""
+    dimension's continuous aggregate when unfiltered. A single filter
+    paired with a *different* dimension as `dimension` is backed by that
+    pair's own CAgg (migrations 0041/0043 — see PAIR_CAGGS/
+    _pair_cagg_lookup above and docs/todo/continuous-aggregates-
+    migration.md) — all 6 dimension pairs are covered now. Anything else —
+    2+ filters at once, or filter == dimension — falls back to the raw
+    Changeset table; no CA tracks 2+ filter dimensions simultaneously, and
+    filter == dimension is a degenerate case not worth its own CA lookup
+    (see docs/todo/continuous-aggregates-migration.md)."""
 
     DEFAULT_LIMIT = 20
     MAX_LIMIT = 1000

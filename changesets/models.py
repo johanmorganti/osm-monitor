@@ -299,17 +299,21 @@ class CaggGeoHashedDaily(models.Model):
         db_table = 'cagg_geo_hashed_daily'
 
 
-# Three cross-dimension CAggs (migration 0041) answering "filter by one of
-# {editor, imagery, language}, broken out by another" directly — the shape
-# ToplistView's dimension param and TimeseriesView's group_by+filter both
-# need. Deliberately not abstracted into a shared base like _CaggDaily/
-# _CaggHourly: each pair's two name columns are named after their own
-# dimension (editor/imagery/locale) for readability at the query site
-# (views.py), so the field names genuinely differ per pair rather than
-# being interchangeable. No pair involves contributor — see
-# docs/todo/continuous-aggregates-migration.md for why (344K distinct
-# values vs. low hundreds for the other three, and every CAgg's recurring
-# refresh cost on an already I/O-constrained host).
+# Six cross-dimension CAggs answering "filter by one dimension, broken out
+# by another" directly — the shape ToplistView's dimension param and
+# TimeseriesView's group_by+filter both need. Deliberately not abstracted
+# into a shared base like _CaggDaily/_CaggHourly: each pair's two name
+# columns are named after their own dimension (contributor/editor/imagery/
+# locale) for readability at the query site (views.py), so the field names
+# genuinely differ per pair rather than being interchangeable.
+#
+# The 3 editor/imagery/language pairs (migration 0041) shipped first;
+# the 3 contributor pairs (migration 0043) were deliberately deferred at
+# that point — contributor has 344K distinct values vs. low hundreds for
+# the other three, and every CAgg adds recurring refresh cost on this
+# I/O-constrained host — then built anyway once the contributor-grouped
+# toplist was confirmed to be the remaining slow path (see
+# docs/todo/continuous-aggregates-migration.md).
 class CaggEditorImageryDaily(models.Model):
     bucket = models.DateTimeField(primary_key=True)  # not a real uniqueness claim — see _CaggDaily's comment
     editor = models.CharField(max_length=255)
@@ -347,6 +351,45 @@ class CaggImageryLocaleDaily(models.Model):
         app_label = 'changesets'
         managed = False
         db_table = 'cagg_imagery_locale_daily'
+
+
+class CaggContributorEditorDaily(models.Model):
+    bucket = models.DateTimeField(primary_key=True)
+    contributor = models.CharField(max_length=255)
+    editor = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_contributor_editor_daily'
+
+
+class CaggContributorImageryDaily(models.Model):
+    bucket = models.DateTimeField(primary_key=True)
+    contributor = models.CharField(max_length=255)
+    imagery = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_contributor_imagery_daily'
+
+
+class CaggContributorLocaleDaily(models.Model):
+    bucket = models.DateTimeField(primary_key=True)
+    contributor = models.CharField(max_length=255)
+    locale = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_contributor_locale_daily'
 
 
 class FilterValue(models.Model):

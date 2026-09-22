@@ -9,7 +9,7 @@ history.
 
 ## Known issues (deferred)
 
-- [Cross-dimension queries + CAgg cleanup](docs/todo/continuous-aggregates-migration.md) — editor/imagery/language pairs now have their own CAggs; `contributor` (cardinality) and `GeoView` (different shape) still fall back to a raw scan and can time out; old rollup tables/index still need a drop migration.
+- [Cross-dimension queries + CAgg cleanup](docs/todo/continuous-aggregates-migration.md) — all 6 dimension pairs now have their own CAggs; `GeoView` with any filter (different shape) still falls back to a raw scan and can time out; old rollup tables/index still need a drop migration.
 - [CAggs only cover Aug 2025+](docs/todo/cagg-history-coverage-gap.md) — raw table goes back to 2005; the 10 stats CAggs were never backfilled to match.
 - [Compression backlog paused](docs/todo/compression-backlog.md) — only 1 of ~13 chunks compressed; re-enabling needs a controlled one-chunk pass and a `compress_segmentby` decision.
 - [Gunicorn gthread — unverified under real traffic](docs/todo/gunicorn-gthread.md) — parked until there's real load to check against.

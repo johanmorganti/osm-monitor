@@ -20,9 +20,9 @@ from django.db import connection
 
 logger = logging.getLogger(__name__)
 
-# Every CAgg in the schema (migrations 0020, 0023, 0033, 0041) — kept as one
-# list specifically so nothing needs to remember to update more than one
-# place when a new one is added.
+# Every CAgg in the schema (migrations 0020, 0023, 0033, 0041, 0043) — kept
+# as one list specifically so nothing needs to remember to update more than
+# one place when a new one is added.
 ALL_CAGG_NAMES = [
     'cagg_volume_hourly', 'cagg_volume_daily',
     'cagg_editor_hourly', 'cagg_editor_daily',
@@ -31,6 +31,7 @@ ALL_CAGG_NAMES = [
     'cagg_contributor_hourly', 'cagg_contributor_daily',
     'cagg_geo_hashed_daily',
     'cagg_editor_imagery_daily', 'cagg_editor_locale_daily', 'cagg_imagery_locale_daily',
+    'cagg_contributor_editor_daily', 'cagg_contributor_imagery_daily', 'cagg_contributor_locale_daily',
 ]
 
 
