@@ -450,6 +450,23 @@ class CaggCountryImageryDaily(models.Model):
         db_table = 'cagg_country_imagery_daily'
 
 
+class CaggEditorVersionDaily(models.Model):
+    """Editor family -> exact created_by version string (e.g. "StreetComplete"
+    -> "StreetComplete 55.0"), migration 0050/0051 — backs ToplistView's
+    dimension=editor_version drill-down (requires an `editor` filter, see
+    views.py's RAW_ONLY_DIMENSIONS)."""
+    bucket = models.DateTimeField(primary_key=True)
+    editor = models.CharField(max_length=255)
+    version = models.CharField(max_length=255)
+    cnt = models.BigIntegerField()
+    changes_sum = models.BigIntegerField()
+
+    class Meta:
+        app_label = 'changesets'
+        managed = False
+        db_table = 'cagg_editor_version_daily'
+
+
 class FilterValue(models.Model):
     """Distinct known values for the dashboard's contributor/editor/imagery
     autocomplete. Deduplicated globally — unlike DailyBreakdown, there's no

@@ -34,6 +34,7 @@ ALL_CAGG_NAMES = [
     'cagg_editor_imagery_daily', 'cagg_editor_locale_daily', 'cagg_imagery_locale_daily',
     'cagg_contributor_editor_daily', 'cagg_contributor_imagery_daily', 'cagg_contributor_locale_daily',
     'cagg_contributor_country_daily', 'cagg_country_editor_daily', 'cagg_country_imagery_daily',
+    'cagg_editor_version_daily',
 ]
 
 

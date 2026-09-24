@@ -3,7 +3,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
-from changesets.views import APILandingPageView, DashboardView
+from changesets.views import APILandingPageView, DashboardView, EditorsView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -11,6 +11,7 @@ urlpatterns = [
     path('api/schema/', SpectacularAPIView.as_view(), name='api-schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='api-schema'), name='api-docs'),
     path('changeset_import/', APILandingPageView.as_view(), name='changeset-import'),
+    path('editors/', EditorsView.as_view(), name='editors'),
     path('', DashboardView.as_view(), name='dashboard'),
 ]
 

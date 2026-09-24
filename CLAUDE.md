@@ -16,6 +16,7 @@ Key entry points:
 - `/api/changesets/summary/` → `SummaryView` (total_changesets/total_objects/avg_objects)
 - `/api/changesets/toplist/` → `ToplistView` (top 20 by dimension × metric)
 - `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`)
+- `/editors/` → `EditorsView` (one column per top-10 editor family for the selected range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph)
 - `/api/docs/` → Swagger UI (drf-spectacular) for the public API, `/api/schema/` for the raw OpenAPI schema
 - `/changeset_import/` → `APILandingPageView` (poller status page — live catch-up batch progress)
 - `manage.py poll_sequences` → continuous background poller (this and `manage.py import_from_dump`
@@ -357,7 +358,10 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |
 | `changesets/management/commands/import_from_dump.py` | Bulk planet-dump importer |
 | `changesets/templates/changesets/dashboard.html` | Dashboard HTML shell only |
-| `static/js/dashboard.js` | Dashboard widget initialisation (Chart.js charts + the Leaflet activity map) |
+| `changesets/templates/changesets/editors.html` | Editors-page HTML shell only |
+| `static/js/common.js` | Shared chart factories / apiUrl/fetchJson/loadWidget / geo map / autocomplete helpers, used by both dashboard.js and editors.js |
+| `static/js/dashboard.js` | Dashboard-page-specific widget wiring |
+| `static/js/editors.js` | Editors-page-specific widget wiring |
 | `static/output.css` | Compiled Tailwind CSS |
 | `db/init/` | One-time Postgres setup (extensions, Datadog schema) for a fresh DB |
 | `docs/ARCHITECTURE.md` | Deep dive: data flow, why TimescaleDB, observability, deployment |

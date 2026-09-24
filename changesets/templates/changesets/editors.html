@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold mb-8">Editors</h1>
+
+    <!-- Time Range — defaults to the last year (set client-side in
+         editors.js if the URL has no start_date/end_date), a more
+         meaningful window for editor-family stats than the app-wide 7-day
+         default. Still fully adjustable — every column's stats/toplist/
+         graph reflects whatever range is selected here. -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+        <h2 class="text-xl font-semibold mb-4">Time Range</h2>
+        <div class="flex flex-wrap items-end gap-4">
+            <div>
+                <span class="block text-sm font-medium text-gray-700 mb-1">Presets</span>
+                <div class="flex flex-wrap gap-2">
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="7">7 days</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="28">4 weeks</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="90">3 months</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="180">6 months</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="365">1 year</button>
+                </div>
+            </div>
+            <div class="text-sm text-gray-400 pb-2">or custom:</div>
+            <div>
+                <label for="start_date" class="block text-sm font-medium text-gray-700">Start Date</label>
+                <input type="date" name="start_date" id="start_date" value="{{ request.GET.start_date }}" form="filter-form"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+                <label for="end_date" class="block text-sm font-medium text-gray-700">End Date</label>
+                <input type="date" name="end_date" id="end_date" value="{{ request.GET.end_date }}" form="filter-form"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+                <button type="submit" form="filter-form" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600">
+                    Apply
+                </button>
+            </div>
+        </div>
+        <form method="get" id="filter-form" class="hidden"></form>
+    </div>
+
+    <!-- KPIs -->
+    <div class="grid grid-cols-3 gap-8 mb-8">
+        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Total Changesets</h3>
+            <div class="relative inline-block group w-fit cursor-help">
+                <div id="totalChangesets" class="text-4xl font-bold text-blue-600 border-b border-dotted border-blue-300">–</div>
+                <div id="totalChangesets-tooltip" class="absolute left-0 bottom-full mb-2 hidden group-hover:block whitespace-nowrap bg-gray-800 text-white text-xs rounded px-2 py-1 z-10"></div>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Total Objects Changed</h3>
+            <div class="relative inline-block group w-fit cursor-help">
+                <div id="totalObjects" class="text-4xl font-bold text-blue-600 border-b border-dotted border-blue-300">–</div>
+                <div id="totalObjects-tooltip" class="absolute left-0 bottom-full mb-2 hidden group-hover:block whitespace-nowrap bg-gray-800 text-white text-xs rounded px-2 py-1 z-10"></div>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Avg Objects per Changeset</h3>
+            <div id="avgObjects" class="text-4xl font-bold text-blue-600">–</div>
+        </div>
+    </div>
+
+    <!-- One column per named editor family, plus a trailing "Other editor
+         families" column — mirrors the original Datadog "OpenStreetMap
+         Editors focus" dashboard's per-family sections. TOP_FAMILIES is a
+         fixed, hardcoded list (see editors.js) — no ranking API call gates
+         these cards, so they're generated and start loading immediately. -->
+    <h2 class="text-2xl font-semibold mb-4">Editor families</h2>
+    <div id="editorFamilyColumns" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8 mb-12"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% load static %}
+<script src="{% static 'js/common.js' %}"></script>
+<script src="{% static 'js/editors.js' %}"></script>
+{% endblock %}

@@ -17,6 +17,7 @@ from .models import (
     CaggEditorImageryDaily, CaggEditorLocaleDaily, CaggImageryLocaleDaily,
     CaggContributorEditorDaily, CaggContributorImageryDaily, CaggContributorLocaleDaily,
     CaggContributorCountryDaily, CaggCountryEditorDaily, CaggCountryImageryDaily,
+    CaggEditorVersionDaily,
 )
 from .serializers import ChangesetSerializer
 from .geo import (
@@ -127,6 +128,18 @@ class DashboardView(TemplateView):
     template_name = 'changesets/dashboard.html'
 
 
+class EditorsView(TemplateView):
+    """Thin HTML shell — no DB access, same pattern as DashboardView. One
+    column per top-10 editor family for the selected date range (default
+    last year — see editors.js), plus a trailing "Other editor families"
+    column; each column has its own version-drill-down toplist
+    (dimension=editor_version) and its own volume-over-time graph. Family
+    names aren't known at render time, so the columns are generated
+    entirely client-side. Chart data is fetched from ToplistView/
+    TimeseriesView/SummaryView; see editors.js."""
+    template_name = 'changesets/editors.html'
+
+
 # cagg_imagery_daily/cagg_locale_daily (migration 0022) bucket changesets with
 # no imagery/language tag under this literal name instead of excluding them —
 # a large NULL-tag campaign (e.g. a MapRoulette bulk edit) would otherwise be
@@ -151,6 +164,20 @@ DIMENSION_FIELDS = {
     'imagery': 'imagery_family',
     'language': 'locale_family',
     'country': 'country_code',
+}
+
+# ToplistView-only. Not merged into DIMENSION_FIELDS — that dict's keys
+# double as TimeseriesView's group_by choices / CAGG_MODELS / GeoView
+# filters, none of which need editor_version (no group_by or geo use case,
+# only a toplist one). created_by is unbounded across every editor ever
+# seen, unlike country_code's ~238 values, so this one requires a
+# companion `editor` filter to stay bounded (see the 400 check in
+# ToplistView.get). Backed by cagg_editor_version_daily (migration 0050)
+# when editor is the *only* filter; any other filter combined with it
+# still needs the raw fallback in ToplistView._from_raw, same as every
+# other 2+-filter toplist shape in this view.
+RAW_ONLY_DIMENSIONS = {
+    'editor_version': 'created_by',
 }
 
 # One continuous aggregate per dimension (see migrations 0020/0045) — used
@@ -640,7 +667,16 @@ class ToplistView(APIView):
     else — 2+ filters at once, or filter == dimension — falls back to the
     raw Changeset table; no CA tracks 2+ filter dimensions simultaneously,
     and filter == dimension is a degenerate case not worth its own CA
-    lookup (see docs/todo/continuous-aggregates-migration.md)."""
+    lookup (see docs/todo/continuous-aggregates-migration.md).
+
+    dimension=editor_version (RAW_ONLY_DIMENSIONS, not a DIMENSION_FIELDS
+    entry) is a separate, narrower case: the exact created_by version
+    string within one already-selected editor family, e.g. "StreetComplete
+    55.0" within editor=StreetComplete. Requires an `editor` filter (400
+    otherwise — created_by is unbounded across every editor ever seen).
+    Backed by cagg_editor_version_daily (migration 0050) when editor is
+    the only filter set; any other filter alongside it falls back to raw,
+    same as everywhere else in this view."""
 
     DEFAULT_LIMIT = 20
     MAX_LIMIT = 1000
@@ -649,12 +685,14 @@ class ToplistView(APIView):
         tags=['changesets'],
         summary='Top changesets by dimension',
         description=(
-            'Top N (default 20) contributors/editors/imageries/locales/countries, ranked by '
-            'changeset count or by objects changed, for a date range. Defaults to the last 7 '
-            'days if no dates are given.'
+            'Top N (default 20) contributors/editors/imageries/locales/countries/editor-versions, '
+            'ranked by changeset count or by objects changed, for a date range. Defaults to the '
+            'last 7 days if no dates are given. dimension=editor_version requires an editor filter '
+            '(created_by is unbounded across all editors, so it is only ever grouped within one '
+            'already-selected editor family).'
         ),
         parameters=_FILTER_PARAMS + [
-            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country.'),
+            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country, editor_version (requires an editor filter).'),
             OpenApiParameter('metric', OpenApiTypes.STR, description='count (changesets) or objects (objects changed). Defaults to count.'),
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of results (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
         ],
@@ -671,8 +709,9 @@ class ToplistView(APIView):
     def get(self, request):
         dimension = request.query_params.get('dimension', '')
         metric = request.query_params.get('metric', 'count')
-        if dimension not in DIMENSION_FIELDS:
-            return Response({'error': f'dimension must be one of: {", ".join(DIMENSION_FIELDS)}'}, status=status.HTTP_400_BAD_REQUEST)
+        if dimension not in DIMENSION_FIELDS and dimension not in RAW_ONLY_DIMENSIONS:
+            valid = ', '.join((*DIMENSION_FIELDS, *RAW_ONLY_DIMENSIONS))
+            return Response({'error': f'dimension must be one of: {valid}'}, status=status.HTTP_400_BAD_REQUEST)
         if metric not in ('count', 'objects'):
             return Response({'error': 'metric must be count or objects'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -689,6 +728,21 @@ class ToplistView(APIView):
 
         start_date, end_date, contributor, editor, imagery, language, country, filters = _resolve_range_and_filters(request)
         filters = {**filters, 'dimension': dimension, 'metric': metric, 'limit': limit}
+
+        if dimension == 'editor_version' and not editor:
+            return Response({'error': 'dimension=editor_version requires an editor filter'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if dimension == 'editor_version':
+            # Not part of the generic PAIR_CAGGS machinery (it's not a
+            # symmetric pair among the standard 5 dimensions) — its own
+            # CAgg only when editor is the sole filter, raw fallback for
+            # any other combination, same "2+ filters -> raw" rule as
+            # everywhere else in this view.
+            if contributor or imagery or country:
+                results = self._from_raw(start_date, end_date, contributor, editor, imagery, language, country, dimension, metric, limit)
+            else:
+                results = self._from_editor_version_rollups(start_date, end_date, editor, metric, limit)
+            return Response({'filters': filters, 'results': results})
 
         single = _single_filter_dimension(contributor, editor, imagery, language, country)
         pair = _pair_cagg_lookup(single[0], dimension) if single else None
@@ -728,9 +782,24 @@ class ToplistView(APIView):
         )
         return [{'name': r[dimension_col], 'value': r['value']} for r in rows]
 
+    def _from_editor_version_rollups(self, start_date, end_date, editor, metric, limit):
+        """Same shape as _from_pair_rollups, but against the dedicated
+        cagg_editor_version_daily (migration 0050) rather than the generic
+        PAIR_CAGGS machinery — editor_version isn't a symmetric pair among
+        the standard 5 dimensions, just this one family->version lookup."""
+        end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
+        agg_field = 'cnt' if metric == 'count' else 'changes_sum'
+        rows = (
+            CaggEditorVersionDaily.objects.filter(
+                bucket__gte=start_date, bucket__lt=end_date_exclusive, editor__iexact=editor,
+            )
+            .values('version').annotate(value=Sum(agg_field)).order_by('-value')[:limit]
+        )
+        return [{'name': r['version'], 'value': r['value']} for r in rows]
+
     def _from_raw(self, start_date, end_date, contributor, editor, imagery, language, country, dimension, metric, limit):
         changesets = _filtered_changesets(start_date, end_date, contributor, editor, imagery, language, country)
-        field = DIMENSION_FIELDS[dimension]
+        field = DIMENSION_FIELDS.get(dimension) or RAW_ONLY_DIMENSIONS[dimension]
         agg = Count('id') if metric == 'count' else Sum('changes_count')
         rows = (
             changesets.filter(**{f'{field}__isnull': False})
