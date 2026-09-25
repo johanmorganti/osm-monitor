@@ -3,6 +3,13 @@ set -e
 
 python manage.py collectstatic --no-input
 
+# Datadog APM is optional: wrap the process in ddtrace-run only when tracing
+# is enabled (docker-compose.datadog.yml sets DD_TRACE_ENABLED=true).
+TRACE=""
+if [ "${DD_TRACE_ENABLED:-false}" = "true" ]; then
+    TRACE="ddtrace-run"
+fi
+
 # migrate is NOT run here — it's a separate one-shot `migrate` service in
 # docker-compose.yml that web/poller depend on completing first. Running it
 # per-service-start (the old behavior) raced when web and poller started
@@ -25,7 +32,7 @@ if [ "$#" -eq 0 ]; then
     # --timeout 40: must stay comfortably above DB_STATEMENT_TIMEOUT_MS
     # (docker-compose.yml, 30s) so the DB cancels a slow query cleanly
     # before gunicorn would SIGKILL the worker out from under it.
-    exec ddtrace-run gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers 2 --threads 8 --timeout 40
+    exec $TRACE gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers 2 --threads 8 --timeout 40
 fi
 
-exec ddtrace-run "$@"
+exec $TRACE "$@"

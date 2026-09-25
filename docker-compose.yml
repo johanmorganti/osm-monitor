@@ -10,52 +10,45 @@ services:
     image: timescale/timescaledb-ha:pg16
     restart: unless-stopped
     env_file: .env
-    # This host is 3.8GB total, shared with several unrelated apps.
-    # Unlike the old Alpine image, this one auto-tunes shared_buffers/
-    # effective_cache_size/work_mem from the container's own memory cgroup
-    # limit at first init (see mem_limit below) — no manual
-    # effective_cache_size override needed. The settings below are ones the
-    # auto-tuner doesn't set: shared_preload_libraries needs both
-    # timescaledb (hypertables) and pg_stat_statements (Datadog Database
-    # Monitoring's query-level metrics/samples/explain plans) — the
+    # Memory settings are explicit: this image's first-init auto-tuner left
+    # shared_buffers at the stock 128MB here, so they're sized by hand for
+    # mem_limit (8g) below — shared_buffers 2GB (~25%), effective_cache_size
+    # 6GB (planner hint only, allocates nothing), maintenance_work_mem 1GB
+    # (index builds, VACUUM, CAgg refreshes). max_wal_size 8GB spaces out
+    # checkpoints during bulk imports (import_from_dump) instead of forcing
+    # one every 1GB of WAL. shared_preload_libraries needs both
+    # timescaledb (hypertables) and pg_stat_statements (query-level
+    # stats, also used by Datadog Database Monitoring if enabled) — the
     # extensions themselves still need `CREATE EXTENSION ...;` run once
     # against the app database after this takes effect, since they can't be
     # preloaded and self-installed in the same step (see changesets/
-    # migrations/0018_timescale_hypertable.py and db/init/01-datadog-dbm.sql).
-    # work_mem=32MB: default was forcing GROUP BY aggregates over the
-    # rollup tables (e.g. ToplistView's contributor breakdown, ~223K groups)
-    # to spill to disk mid-query — pure wasted I/O on an already I/O-
-    # constrained host. 32MB comfortably covers what we've observed spilling
-    # (~16MB) without risking the container's mem_limit under normal
-    # concurrency (this host serves one gunicorn worker + the poller, not a
-    # high-concurrency pool). Passed via `command:`, not postgresql.conf:
-    # this image's entrypoint still execs `postgres` directly (confirmed via
-    # `ps aux` inside the container — PID 1 is `postgres`, not a Patroni/
-    # supervisor wrapper), so plain `-c` flags apply the same way they did
-    # on the old image, and take precedence over the auto-tuner's own
-    # postgresql.conf values.
-    command: postgres -c shared_preload_libraries=timescaledb,pg_stat_statements -c track_io_timing=on -c track_activity_query_size=4096 -c work_mem=32MB
-    mem_limit: 1400m
-    mem_reservation: 512m
+    # migrations/0018_timescale_hypertable.py and db/init/01-datadog.sh).
+    # work_mem=64MB: the default forces GROUP BY aggregates over large group
+    # counts (e.g. ToplistView's contributor breakdown, ~223K groups) to
+    # spill to disk mid-query. Passed via `command:`, not postgresql.conf:
+    # this image's entrypoint execs `postgres` directly (PID 1 is
+    # `postgres`, not a Patroni/supervisor wrapper), so plain `-c` flags
+    # take precedence over the auto-tuner's own postgresql.conf values.
+    command: postgres -c shared_preload_libraries=timescaledb,pg_stat_statements -c track_io_timing=on -c track_activity_query_size=4096 -c work_mem=64MB -c shared_buffers=2GB -c effective_cache_size=6GB -c maintenance_work_mem=1GB -c max_wal_size=8GB
+    mem_limit: 8g
+    mem_reservation: 2g
     # Docker's default /dev/shm is 64MB, shared by every parallel-worker's
     # dynamic shared memory segment (Postgres's default
     # dynamic_shared_memory_type=posix backs these with /dev/shm, not the
     # mem_limit-backed shared_buffers). A `VACUUM ANALYZE` on
-    # changesets_changeset hit this directly: one parallel worker's segment
-    # alone needed ~112MB, blowing past the 64MB default with "could not
-    # resize shared memory segment: No space left on device" — and because
-    # that happens inside Postgres's own shared memory, the postmaster
-    # treated it as a possible-corruption crash and force-restarted the
-    # whole server (~15min WAL redo) rather than just failing the one
-    # statement. 256m leaves comfortable headroom over the observed need
-    # while staying well inside the 1400m mem_limit (shm counts against it).
-    shm_size: 256m
+    # changesets_changeset once needed ~112MB for a single parallel worker's
+    # segment, and blowing past shm_size crashes the whole postmaster (it's
+    # treated as possible shared-memory corruption), not just the one
+    # statement. shm counts against mem_limit.
+    shm_size: 1g
     ports:
       - "5007:5432"
     volumes:
-      # Note the different data path vs. the old Alpine image
-      # (/var/lib/postgresql/data) — this image's own convention.
-      - timescale-ha-data:/home/postgres/pgdata/data
+      # Bind mount of a host directory (PGDATA_DIR in .env) rather than a
+      # Docker volume, so the database lives on the host filesystem and
+      # survives the Colima VM being deleted/recreated, not just restarts.
+      # The host directory must be shared into the VM (colima --mount).
+      - ${PGDATA_DIR:?set PGDATA_DIR in .env}:/home/postgres/pgdata/data
       # Only runs on a genuinely fresh data directory — see db/init/'s own
       # comments for what still needs doing manually on the existing volume.
       - ./db/init:/docker-entrypoint-initdb.d:ro
@@ -64,42 +57,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    # Re-enabled 2026-09-19 (second time this session) now that the
-    # cagg_geo_hashed_daily CAgg backfill has finished (docs/todo/geo-
-    # spatial-key-and-country.md). query_samples stays permanently disabled
-    # below — it was the confirmed trigger for the *first* round of crashes
-    # earlier this session (EXPLAIN-ing the live geohash/country UPDATE).
-    # The *second* round of crashes (this CAgg backfill) turned out to
-    # persist even with query_samples already off and the check's label
-    # removed entirely, and was root-caused instead to Postgres's own
-    # parallel-worker /dev/shm exhaustion under refresh_continuous_
-    # aggregate on this host's tight memory — see the backfill script's own
-    # `max_parallel_workers_per_gather=0` fix in the implementation log.
-    # I.e. the check being off for round two turned out to be incidental,
-    # not curative — but there's no reason to re-enable query_samples now
-    # that it's confirmed as a real, separate risk for any future
-    # long-running bulk operation in this project.
-    labels:
-      com.datadoghq.ad.checks: |
-        {
-          "postgres": {
-            "instances": [
-              {
-                "host": "%%host%%",
-                "port": 5432,
-                "username": "datadog",
-                "password": "${DD_POSTGRES_PASSWORD}",
-                "dbname": "${POSTGRES_DB}",
-                "reported_hostname": "osm-monitor-db",
-                "tags": ["service:osm-monitor-db", "env:production"],
-                "dbm": true,
-                "min_collection_interval": 60,
-                "query_metrics": {"collection_interval": 60},
-                "query_samples": {"enabled": false}
-              }
-            ]
-          }
-        }
 
   # One-shot: runs migrations once before web/poller start, instead of each
   # of them running `migrate` themselves on every container start (the old
@@ -115,10 +72,14 @@ services:
       # that, so exempt this service the same way `web` is exempted in the
       # other direction (30s cap there; 0 = no cap here).
       DB_STATEMENT_TIMEOUT_MS: "0"
+      DD_TRACE_ENABLED: "false"
     depends_on:
       db:
         condition: service_healthy
-    command: python manage.py migrate --no-input
+    # load_country_boundaries --if-empty: the Changeset insert trigger
+    # resolves country_code against country_boundaries, so a fresh database
+    # needs it loaded before any changeset is ingested — a no-op once loaded.
+    command: sh -c "python manage.py migrate --no-input && python manage.py load_country_boundaries --if-empty"
 
   web:
     build: .
@@ -130,12 +91,9 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      DD_SERVICE: osm-monitor
-      DD_ENV: production
-      DD_TRACE_AGENT_URL: unix:///var/run/datadog/apm.socket
-      DD_DOGSTATSD_URL: unix:///var/run/datadog/dsd.socket
-      DD_LOGS_INJECTION: "true"
-      DD_VERSION: ${GIT_VERSION:-unknown}
+      # Tracing off unless docker-compose.datadog.yml turns it on (ddtrace
+      # is imported by the app, and would otherwise retry a missing agent).
+      DD_TRACE_ENABLED: "false"
       # Web-only, not set for poller: a request-serving query has no
       # business running longer than a user will wait, and failing fast
       # avoids the orphaned-backend pileup seen when gunicorn's own worker
@@ -148,8 +106,6 @@ services:
     mem_limit: 512m
     ports:
       - "5006:8000"
-    volumes:
-      - /var/run/datadog:/var/run/datadog:ro
 
   poller:
     build: .
@@ -161,20 +117,8 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      DD_SERVICE: osm-monitor-poller
-      DD_ENV: production
-      DD_TRACE_AGENT_URL: unix:///var/run/datadog/apm.socket
-      DD_DOGSTATSD_URL: unix:///var/run/datadog/dsd.socket
-      DD_LOGS_INJECTION: "true"
-      DD_VERSION: ${GIT_VERSION:-unknown}
+      # Tracing off unless docker-compose.datadog.yml turns it on (ddtrace
+      # is imported by the app, and would otherwise retry a missing agent).
+      DD_TRACE_ENABLED: "false"
     mem_limit: 512m
-    volumes:
-      - /var/run/datadog:/var/run/datadog:ro
     command: python manage.py poll_sequences --interval 60
-
-volumes:
-  postgres-data:
-  timescale-data: # old Alpine-image data dir, kept (unused) as a rollback fallback — see timescale-ha-data
-  timescale-ha-data:
-    external: true
-    name: osm-monitor-pg16ha-data

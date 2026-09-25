@@ -16,7 +16,21 @@ class Command(BaseCommand):
         're-run — clears and reloads rather than appending duplicates.'
     )
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--if-empty', action='store_true',
+            help='Do nothing if country_boundaries already has rows (used by the migrate '
+                 'service in docker-compose.yml, so every deploy can run it safely).'
+        )
+
     def handle(self, *args, **options):
+        if options['if_empty']:
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT EXISTS (SELECT 1 FROM country_boundaries)')
+                if cursor.fetchone()[0]:
+                    self.stdout.write('country_boundaries already loaded, skipping.')
+                    return
+
         data = json.loads(_DATA_PATH.read_text())
         features = data['features']
         self.stdout.write(f'Loading {len(features)} country boundaries from {_DATA_PATH.name}...')
@@ -37,5 +51,12 @@ class Command(BaseCommand):
                         "VALUES (%s, %s, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)))",
                         [props['iso_a2'], props['name'], json.dumps(feature['geometry'])],
                     )
+                # What the centroid trigger actually queries (migration 0054).
+                cursor.execute('TRUNCATE country_boundaries_subdivided RESTART IDENTITY')
+                cursor.execute(
+                    'INSERT INTO country_boundaries_subdivided (iso_a2, geom) '
+                    'SELECT iso_a2, ST_Subdivide(geom, 128) FROM country_boundaries'
+                )
+                cursor.execute('ANALYZE country_boundaries_subdivided')
 
         self.stdout.write(self.style.SUCCESS(f'Loaded {len(features)} country boundaries.'))

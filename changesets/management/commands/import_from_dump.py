@@ -4,8 +4,8 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone as dt_timezone
 
-from django.core.management.base import BaseCommand
-from django.db import connection
+from django.core.management.base import BaseCommand, CommandError
+from django.db import DatabaseError, connection, transaction
 
 from changesets.cagg_maintenance import refresh_caggs_over_range
 from changesets.osm_fetcher import import_changeset_batch
@@ -61,6 +61,75 @@ class _MultiStreamBz2Reader:
         return result
 
 
+# Every top-level element in the dump starts on its own line with exactly one
+# space of indent; nested <tag>/<discussion> children are indented deeper, so
+# this marker only ever matches a real top-level <changeset> boundary.
+_CHANGESET_LINE_MARKER = b'\n <changeset '
+
+
+def _find_marker(fileobj, offset, file_size, chunk_size=1024 * 1024):
+    """Offset of the first _CHANGESET_LINE_MARKER at or after `offset`, or
+    file_size if there is none."""
+    pos = offset
+    overlap = len(_CHANGESET_LINE_MARKER) - 1
+    while pos < file_size:
+        fileobj.seek(pos)
+        chunk = fileobj.read(chunk_size + overlap)
+        i = chunk.find(_CHANGESET_LINE_MARKER)
+        if i != -1:
+            return pos + i
+        pos += chunk_size
+    return file_size
+
+
+class _ByteRangeReader:
+    """File-like view of one slice of a decompressed dump, re-wrapped as a
+    standalone <osm> document: every top-level <changeset> whose line starts
+    inside [start, end) — snapped forward to real changeset boundaries at both
+    ends, so adjacent ranges neither overlap nor drop an element. Lets several
+    import_from_dump processes split one dump between them (--byte-range)."""
+
+    def __init__(self, fileobj, start, end):
+        fileobj.seek(0, 2)
+        file_size = fileobj.tell()
+        body_start = _find_marker(fileobj, start, file_size) + 1  # skip the '\n'
+        body_end = _find_marker(fileobj, min(end, file_size), file_size)
+        if body_end == file_size:
+            # Last range: stop before the dump's own closing tag, re-added below.
+            fileobj.seek(max(0, file_size - 4096))
+            tail = fileobj.read()
+            closing = tail.rfind(b'</osm>')
+            if closing != -1:
+                body_end = file_size - len(tail) + closing
+        self._fileobj = fileobj
+        self._pos = body_start
+        self._end = max(body_start, body_end)
+        self._pending = bytearray(b'<osm>\n')
+        self._closed_root = False
+        fileobj.seek(body_start)
+
+    def read(self, size=-1):
+        if size is None or size < 0:
+            size = 1 << 62
+        while len(self._pending) < size:
+            if self._pos < self._end:
+                n = min(size - len(self._pending), self._end - self._pos, 4 * 1024 * 1024)
+                data = self._fileobj.read(n)
+                if not data:
+                    self._pos = self._end
+                    continue
+                self._pos += len(data)
+                self._pending.extend(data)
+            elif not self._closed_root:
+                self._pending.extend(b'\n</osm>\n')
+                self._closed_root = True
+            else:
+                break
+        result = bytes(self._pending[:size])
+        del self._pending[:size]
+        return result
+
+
 class Command(BaseCommand):
     help = (
         'Bulk-import changesets from the full OSM changesets planet dump '
@@ -98,6 +167,13 @@ class Command(BaseCommand):
             help='Seconds between progress log lines (default: 30)'
         )
         parser.add_argument(
+            '--byte-range', type=str, default=None, metavar='START:END',
+            help='Only import changesets whose line starts in this byte range of a decompressed '
+                 '.osm dump (snapped to changeset boundaries), so several processes can split one '
+                 'dump between them. Combine with --skip-cagg-refresh and refresh once afterwards. '
+                 'Not supported on .bz2 input.'
+        )
+        parser.add_argument(
             '--skip-cagg-refresh', action='store_true',
             help='Skip the CAgg + FilterValue refresh pass at the end (e.g. when running several '
                  'import passes back to back and only wanting to refresh once, after the last one).'
@@ -108,6 +184,17 @@ class Command(BaseCommand):
         # db/init/02-role-statement-timeout.sh) — a full-history dump import
         # legitimately runs long batches, so opt out.
         connection.cursor().execute("SET statement_timeout = 0")
+        # Keep this session's statements out of pg_stat_statements: each
+        # batch's INSERT/existence check carries thousands of parameters, so a
+        # full-history import grew its query-text file past 1GB — which every
+        # pg_stat_statements reader (e.g. Datadog DBM, every 60s) then re-reads
+        # while holding the extension's lock. Superuser-only setting; skipped
+        # if the role can't set it.
+        try:
+            with transaction.atomic():
+                connection.cursor().execute("SET pg_stat_statements.track = 'none'")
+        except DatabaseError:
+            logger.warning("Could not disable pg_stat_statements tracking for this import")
 
         dump_path = options['dump_path']
         batch_size = options['batch_size']
@@ -117,7 +204,7 @@ class Command(BaseCommand):
 
         logger.info(
             "Starting full-dump import",
-            extra={'osm.dump_path': dump_path, 'osm.batch_size': batch_size, 'osm.skip': skip, 'osm.limit': limit},
+            extra={'osm.dump_path': dump_path, 'osm.batch_size': batch_size, 'osm.skip': skip, 'osm.limit': limit, 'osm.dump.byte_range': options['byte_range']},
         )
 
         total_seen = 0
@@ -141,7 +228,15 @@ class Command(BaseCommand):
         max_created_at = None
 
         with open(dump_path, 'rb') as raw_file:
-            reader = _MultiStreamBz2Reader(raw_file) if dump_path.endswith('.bz2') else raw_file
+            if options['byte_range']:
+                if dump_path.endswith('.bz2'):
+                    raise CommandError('--byte-range needs a decompressed .osm dump, not .bz2')
+                range_start, range_end = (int(x) for x in options['byte_range'].split(':'))
+                reader = _ByteRangeReader(raw_file, range_start, range_end)
+            elif dump_path.endswith('.bz2'):
+                reader = _MultiStreamBz2Reader(raw_file)
+            else:
+                reader = raw_file
             context = ET.iterparse(reader, events=('start', 'end'))
             _, root = next(context)  # first "start" event is the <osm> root
 

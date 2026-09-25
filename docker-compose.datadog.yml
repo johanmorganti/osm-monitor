@@ -1,0 +1,99 @@
+# Optional Datadog observability, layered on top of docker-compose.yml.
+# Enable it by adding to .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.datadog.yml
+#   DD_API_KEY=...            (and DD_SITE if not datadoghq.com)
+#   DD_POSTGRES_PASSWORD=...  (password for the `datadog` Postgres role)
+# Setting COMPOSE_FILE in .env (rather than passing -f per command) makes
+# every `docker compose` invocation see the same merged config, so an ad-hoc
+# `docker compose up` doesn't silently recreate services without it.
+#
+# The app side is ddtrace (APM traces + log/trace correlation) sending to the
+# agent over unix sockets; the Postgres side is Database Monitoring via the
+# `datadog` role created by db/init/01-datadog.sh (only on a fresh data dir
+# with DD_POSTGRES_PASSWORD set — see that script for an existing one).
+
+services:
+  db:
+    # query_samples stays disabled: EXPLAIN-ing long-running bulk statements
+    # (e.g. a full-table UPDATE during a backfill) was a confirmed trigger for
+    # Postgres crashes in this project.
+    labels:
+      com.datadoghq.ad.checks: |
+        {
+          "postgres": {
+            "instances": [
+              {
+                "host": "%%host%%",
+                "port": 5432,
+                "username": "datadog",
+                "password": "${DD_POSTGRES_PASSWORD}",
+                "dbname": "${POSTGRES_DB}",
+                "reported_hostname": "osm-monitor-db",
+                "tags": ["service:osm-monitor-db", "env:production"],
+                "dbm": true,
+                "min_collection_interval": 60,
+                "query_metrics": {"collection_interval": 60},
+                "query_samples": {"enabled": false}
+              }
+            ]
+          }
+        }
+
+  web:
+    environment: &app-dd-env
+      DD_TRACE_ENABLED: "true"
+      DD_ENV: production
+      DD_TRACE_AGENT_URL: unix:///var/run/datadog/apm.socket
+      DD_DOGSTATSD_URL: unix:///var/run/datadog/dsd.socket
+      DD_LOGS_INJECTION: "true"
+      DD_VERSION: ${GIT_VERSION:-unknown}
+      DD_SERVICE: osm-monitor
+    volumes:
+      # APM/DogStatsD unix sockets, created by the datadog-agent service.
+      # No depends_on on the agent: ddtrace just drops data if it's absent.
+      - datadog-sockets:/var/run/datadog:ro
+
+  poller:
+    environment:
+      <<: *app-dd-env
+      DD_SERVICE: osm-monitor-poller
+    volumes:
+      - datadog-sockets:/var/run/datadog:ro
+
+  datadog-agent:
+    image: gcr.io/datadoghq/agent:7
+    restart: unless-stopped
+    # No env_file: .env holds DB passwords the agent doesn't need; only the
+    # keys below are passed. The db check's credentials come from the db
+    # service's autodiscovery label instead.
+    environment:
+      DD_API_KEY: ${DD_API_KEY:?set DD_API_KEY in .env to use docker-compose.datadog.yml}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      # Fixed name: the container's own hostname is a random ID that would
+      # show up as a new host on every recreate.
+      DD_HOSTNAME: osm-monitor
+      DD_ENV: production
+      DD_APM_ENABLED: "true"
+      # Unix sockets instead of TCP 8126/8125: no ports to publish.
+      DD_APM_RECEIVER_SOCKET: /var/run/datadog/apm.socket
+      DD_DOGSTATSD_SOCKET: /var/run/datadog/dsd.socket
+      DD_LOGS_ENABLED: "true"
+      DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL: "true"
+      # The agent's own logs are noise next to the app's.
+      DD_CONTAINER_EXCLUDE_LOGS: "name:datadog-agent"
+    mem_limit: 512m
+    volumes:
+      - datadog-sockets:/var/run/datadog
+      # Paths below are where dockerd runs (inside the VM under Colima/Docker
+      # Desktop), not the macOS host.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc/:/host/proc/:ro
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+      # Tail container log files directly (cheaper than streaming them over
+      # the docker socket); positions persist so a restart doesn't resend.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - datadog-run:/opt/datadog-agent/run
+
+volumes:
+  datadog-sockets:
+  datadog-run:

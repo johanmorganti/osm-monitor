@@ -17,9 +17,8 @@ from changesets.geo import BBOX_DIAG_THRESHOLD_KM
 # Trigger, not a GENERATED STORED column: a GENERATED column would force
 # Postgres to rewrite every existing row (all ~23M, across every chunk) as
 # part of a single ALTER TABLE — exactly the kind of heavy, all-at-once
-# table rewrite this project has been careful to avoid on this
-# memory-constrained host all along. ADD COLUMN with no default is a fast,
-# metadata-only operation instead; the trigger populates new/updated rows
+# table rewrite this project has been careful to avoid all along. ADD
+# COLUMN with no default is a fast, metadata-only operation instead; the trigger populates new/updated rows
 # going forward, and a separate, careful, chunk-by-chunk backfill (same
 # approach as every CAgg backfill so far) populates existing history.
 #
@@ -28,6 +27,11 @@ from changesets.geo import BBOX_DIAG_THRESHOLD_KM
 # "don't trust this changeset's location" — callers already filter NULL
 # out, so this is a drop-in replacement, not a behavior change.
 _BBOX_DIAG_METERS = BBOX_DIAG_THRESHOLD_KM * 1000
+
+# The original database had PostGIS created by hand before this ran; a fresh
+# database needs it created here (no-op where it already exists). The
+# timescaledb-ha image ships the extension, it just isn't enabled by default.
+_CREATE_EXTENSION_SQL = "CREATE EXTENSION IF NOT EXISTS postgis;"
 
 _ADD_COLUMN_SQL = "ALTER TABLE changesets_changeset ADD COLUMN centroid geometry(Point, 4326);"
 
@@ -74,6 +78,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(sql=_CREATE_EXTENSION_SQL, reverse_sql=migrations.RunSQL.noop),
         migrations.RunSQL(sql=_ADD_COLUMN_SQL, reverse_sql=_DROP_COLUMN_SQL),
         migrations.RunSQL(sql=_CREATE_TRIGGER_FUNCTION_SQL, reverse_sql=_DROP_FUNCTION_SQL),
         migrations.RunSQL(sql=_CREATE_TRIGGER_SQL, reverse_sql=_DROP_TRIGGER_SQL),
