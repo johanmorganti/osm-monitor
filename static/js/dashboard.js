@@ -29,7 +29,7 @@ loadWidget('geoMap', apiUrl('/api/changesets/geo/'), geo => {
 loadWidget('topEditorsChart', apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'count' }), topEditors => {
     showChart('topEditorsChart');
     horizontalBar('topEditorsChart', topEditors.results.map(r => r.name), topEditors.results.map(r => r.value), 'Changesets', 'editor');
-    setDatalistOptions('editor-list', topEditors.results.map(r => r.name));
+    cacheTopValues('editor', topEditors.results.map(r => r.name));
 });
 loadWidget('topEditorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'editor' }), editorsTime => {
     showChart('topEditorsTimeChart');
@@ -39,7 +39,7 @@ loadWidget('topEditorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_
 loadWidget('topImageriesChart', apiUrl('/api/changesets/toplist/', { dimension: 'imagery', metric: 'count' }), topImageries => {
     showChart('topImageriesChart');
     horizontalBar('topImageriesChart', topImageries.results.map(r => r.name), topImageries.results.map(r => r.value), 'Changesets', 'imagery');
-    setDatalistOptions('imagery-list', topImageries.results.map(r => r.name));
+    cacheTopValues('imagery', topImageries.results.map(r => r.name));
 });
 loadWidget('topImageriesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'imagery' }), imageriesTime => {
     showChart('topImageriesTimeChart');
@@ -49,6 +49,7 @@ loadWidget('topImageriesTimeChart', apiUrl('/api/changesets/timeseries/', { grou
 loadWidget('topCountriesChart', apiUrl('/api/changesets/toplist/', { dimension: 'country', metric: 'count' }), topCountries => {
     showChart('topCountriesChart');
     horizontalBar('topCountriesChart', topCountries.results.map(r => r.name), topCountries.results.map(r => r.value), 'Changesets', 'country');
+    cacheTopValues('country', topCountries.results.map(r => r.name));
 });
 loadWidget('topCountriesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'country' }), countriesTime => {
     showChart('topCountriesTimeChart');
@@ -58,7 +59,7 @@ loadWidget('topCountriesTimeChart', apiUrl('/api/changesets/timeseries/', { grou
 loadWidget('topContributorsChart', apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'count' }), topContributors => {
     showChart('topContributorsChart');
     horizontalBar('topContributorsChart', topContributors.results.map(r => r.name), topContributors.results.map(r => r.value), 'Changesets', 'contributor');
-    setDatalistOptions('contributor-list', topContributors.results.map(r => r.name));
+    cacheTopValues('contributor', topContributors.results.map(r => r.name));
 });
 loadWidget('topContributorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'contributor' }), contributorsTime => {
     showChart('topContributorsTimeChart');
@@ -98,6 +99,7 @@ fetchJson(apiUrl('/api/changesets/summary/'))
         document.getElementById('avgObjects').textContent = 'Error';
     });
 
-wireAutocomplete('contributor', 'contributor-list', 'contributor');
-wireAutocomplete('editor',      'editor-list',      'editor');
-wireAutocomplete('imagery',     'imagery-list',     'imagery');
+wireSuggestions('contributor', 'contributor-suggestions', 'contributor');
+wireSuggestions('editor',      'editor-suggestions',      'editor');
+wireSuggestions('imagery',     'imagery-suggestions',     'imagery');
+wireSuggestions('country',     'country-suggestions',     'country');

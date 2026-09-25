@@ -2,7 +2,7 @@
 
 {% block content %}
 <div class="container mx-auto px-4 py-8">
-    <h1 class="text-3xl font-bold mb-8">OSM Changeset Dashboard</h1>
+    <h1 class="text-3xl font-bold mb-8">Overview</h1>
 
     <!-- Time Range -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
@@ -36,32 +36,33 @@
     <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
         <h2 class="text-xl font-semibold mb-4">Filters</h2>
         <form method="get" id="filter-form" class="flex flex-wrap gap-4 items-end">
-            <div>
+            <div class="relative">
                 <label for="contributor" class="block text-sm font-medium text-gray-700">Contributor</label>
                 <input type="text" name="contributor" id="contributor" value="{{ request.GET.contributor }}"
-                       list="contributor-list" autocomplete="off" placeholder="Search contributor…"
+                       autocomplete="off" placeholder="Search contributor…"
                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                <datalist id="contributor-list"></datalist>
+                <div id="contributor-suggestions" class="hidden absolute z-[1100] mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto"></div>
             </div>
-            <div>
+            <div class="relative">
                 <label for="editor" class="block text-sm font-medium text-gray-700">Editor</label>
                 <input type="text" name="editor" id="editor" value="{{ request.GET.editor }}"
-                       list="editor-list" autocomplete="off" placeholder="Search editor…"
+                       autocomplete="off" placeholder="Search editor…"
                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                <datalist id="editor-list"></datalist>
+                <div id="editor-suggestions" class="hidden absolute z-[1100] mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto"></div>
             </div>
-            <div>
+            <div class="relative">
                 <label for="imagery" class="block text-sm font-medium text-gray-700">Imagery provider</label>
                 <input type="text" name="imagery" id="imagery" value="{{ request.GET.imagery }}"
-                       list="imagery-list" autocomplete="off" placeholder="Search imagery…"
+                       autocomplete="off" placeholder="Search imagery…"
                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                <datalist id="imagery-list"></datalist>
+                <div id="imagery-suggestions" class="hidden absolute z-[1100] mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto"></div>
             </div>
-            <div>
+            <div class="relative">
                 <label for="country" class="block text-sm font-medium text-gray-700">Country</label>
                 <input type="text" name="country" id="country" value="{{ request.GET.country }}"
                        autocomplete="off" placeholder="Search country (e.g. FR)…"
                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <div id="country-suggestions" class="hidden absolute z-[1100] mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto"></div>
             </div>
             <div>
                 <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600">

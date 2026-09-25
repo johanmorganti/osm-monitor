@@ -505,26 +505,91 @@ function renderGeoMap(initialGeo) {
     map.invalidateSize(); // container was `hidden` (zero-size) at construction time
 }
 
-// ── Filter autocomplete ─────────────────────────────────────────────────────
+// ── Filter suggestions ───────────────────────────────────────────────────────
+// A small custom dropdown, not native <input list>/<datalist> — datalist's
+// on-focus-show-all and option-ordering behavior both vary enough across
+// browsers that "show 3 suggestions on an empty click" and "show top-20
+// matches before /api/autocomplete/ results, in that order" aren't
+// reliably controllable through it. This gives exact control over both.
 
-// Shared by each page's on-load seeding (top names from the ranking widgets'
-// own toplist responses) and wireAutocomplete below (narrowed /api/autocomplete/
-// matches once the user starts typing) — same <option> rendering either way.
-function setDatalistOptions(datalistId, names) {
-    document.getElementById(datalistId).innerHTML = names.map(v => `<option value="${v}"></option>`).join('');
+const SUGGEST_ON_FOCUS_COUNT = 3;
+const SUGGEST_MAX_RESULTS = 10; // matches AutocompleteView's own [:10] cap
+
+// Each field's current top-~20 names (set by the loadWidget callbacks that
+// already fetch each dimension's ranking chart, reusing that response — no
+// extra request) — read live by wireSuggestions' handlers below, not
+// captured at wire-time, since ranking data usually hasn't arrived yet
+// when wireSuggestions itself runs at page load.
+const topValueCache = {};
+function cacheTopValues(field, names) {
+    topValueCache[field] = names;
 }
 
-// Datalists start pre-filled with each dimension's top ~20 names (set by the
-// loadWidget callbacks, reusing the toplist responses already fetched for
-// the ranking charts — no extra request). This only replaces those options
-// once the user actually types something (q.length < 1 guard), so the
-// pre-filled list stays in place, unnarrowed, until then.
-function wireAutocomplete(inputId, datalistId, field) {
-    document.getElementById(inputId).addEventListener('input', function () {
-        const q = this.value;
-        if (q.length < 1) return;
+function renderSuggestions(dropdownId, inputId, values) {
+    const dropdown = document.getElementById(dropdownId);
+    if (!dropdown) return;
+    if (!values.length) {
+        dropdown.classList.add('hidden');
+        dropdown.innerHTML = '';
+        return;
+    }
+    dropdown.innerHTML = values.map(v =>
+        `<button type="button" class="block w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100" data-value="${v.replace(/"/g, '&quot;')}">${v}</button>`
+    ).join('');
+    dropdown.classList.remove('hidden');
+    dropdown.querySelectorAll('button').forEach(btn => {
+        // mousedown, not click: fires before the input's blur handler would
+        // otherwise hide this dropdown first and swallow the click.
+        btn.addEventListener('mousedown', e => {
+            e.preventDefault();
+            document.getElementById(inputId).value = btn.dataset.value;
+            dropdown.classList.add('hidden');
+        });
+    });
+}
+
+// Empty input (on focus, or cleared while typing): just the top 3 — a
+// small unobtrusive preview, not the full ranking. Non-empty input: top-20
+// matches first (client-side substring filter over the cached ranking,
+// instant, no request), then /api/autocomplete/ results appended for
+// anything beyond the top 20, deduped, capped at SUGGEST_MAX_RESULTS —
+// exactly the "suggest top 20 first, before autocomplete" ordering asked
+// for, since a plain <datalist> can't guarantee that ordering reliably.
+function wireSuggestions(inputId, dropdownId, field) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+
+    function showTopSlice() {
+        renderSuggestions(dropdownId, inputId, (topValueCache[field] || []).slice(0, SUGGEST_ON_FOCUS_COUNT));
+    }
+
+    input.addEventListener('focus', () => {
+        if (!input.value) showTopSlice();
+    });
+
+    input.addEventListener('input', () => {
+        const q = input.value;
+        if (!q) {
+            showTopSlice();
+            return;
+        }
+        const qLower = q.toLowerCase();
+        const topMatches = (topValueCache[field] || []).filter(v => v.toLowerCase().includes(qLower));
         fetch(`/api/autocomplete/?field=${field}&q=${encodeURIComponent(q)}`)
             .then(r => r.json())
-            .then(values => setDatalistOptions(datalistId, values));
+            .then(serverValues => {
+                if (input.value !== q) return; // a later keystroke already superseded this response
+                const seen = new Set(topMatches.map(v => v.toLowerCase()));
+                const merged = [...topMatches, ...serverValues.filter(v => !seen.has(v.toLowerCase()))].slice(0, SUGGEST_MAX_RESULTS);
+                renderSuggestions(dropdownId, inputId, merged);
+            })
+            .catch(err => console.error(`Failed to load autocomplete for ${field}`, err));
+    });
+
+    input.addEventListener('blur', () => {
+        document.getElementById(dropdownId).classList.add('hidden');
+    });
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Escape') document.getElementById(dropdownId).classList.add('hidden');
     });
 }

@@ -481,6 +481,7 @@ class FilterValue(models.Model):
         ('contributor', 'Contributor'),
         ('editor', 'Editor'),
         ('imagery', 'Imagery'),
+        ('country', 'Country'),
     ]
     field = models.CharField(max_length=20, choices=FIELD_CHOICES)
     value = models.CharField(max_length=255)

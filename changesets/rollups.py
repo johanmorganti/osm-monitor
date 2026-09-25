@@ -23,7 +23,14 @@ this file being scoped down to just this one job) and upserts any
 newly-seen contributor/editor/imagery values into FilterValue (ON CONFLICT
 DO NOTHING — existence only, no counting, so unlike the old DailyVolume/
 DailyBreakdown merge there's no double-counting risk and thus no
-"reconcile" pass needed for this one).
+"reconcile" pass needed for this one). `country` deliberately isn't part
+of this incremental job — unlike contributor/editor/imagery (open-ended,
+discovered incrementally from live data), the full set of possible
+country_code values is already fixed and known ahead of time (the same
+~238-row country_boundaries table the centroid-assignment trigger itself
+draws from — see migration 0031/0032), so FilterValue's country rows are
+just seeded from that table once (see the seed_country_filter_values
+management command) rather than watermark-tracked.
 
 refresh_rollups_incremental() / refresh_rollups_reconcile() / refresh_
 rollups() (DailyVolume/DailyBreakdown, the old three-function design

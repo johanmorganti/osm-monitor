@@ -1037,7 +1037,7 @@ class AutocompleteView(APIView):
         summary='Autocomplete filter values',
         description='Up to 10 distinct known values for a filter field, matching a partial query — backs the dashboard\'s filter inputs.',
         parameters=[
-            OpenApiParameter('field', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery.'),
+            OpenApiParameter('field', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, country.'),
             OpenApiParameter('q', OpenApiTypes.STR, description='Partial value to match (case-insensitive, substring).'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
@@ -1047,7 +1047,8 @@ class AutocompleteView(APIView):
         field = request.query_params.get('field', '')
         q = request.query_params.get('q', '')
         if field not in dict(FilterValue.FIELD_CHOICES):
-            return Response({'error': 'field must be contributor, editor, or imagery'}, status=status.HTTP_400_BAD_REQUEST)
+            valid = ', '.join(dict(FilterValue.FIELD_CHOICES))
+            return Response({'error': f'field must be one of: {valid}'}, status=status.HTTP_400_BAD_REQUEST)
         values = (
             FilterValue.objects
             .filter(field=field, value__icontains=q)
