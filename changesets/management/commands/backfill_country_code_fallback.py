@@ -23,12 +23,9 @@ WHERE centroid IS NOT NULL AND country_code IS NULL
   AND created_at >= %(start)s AND created_at < %(end)s;
 """
 
-# Real earliest data (confirmed via `SELECT min(created_at)`) — much
-# earlier than the single-dimension CAggs' own 2025-08-01 coverage start
-# (see docs/todo/cagg-history-coverage-gap.md), since this table already
-# holds full 2005+ history (see CLAUDE.md's "Design for full history"
-# section) even though the CAggs themselves don't cover all of it yet.
-DEFAULT_START = datetime(2005, 10, 1, tzinfo=dt_timezone.utc)
+# Start of OSM changeset history (the first changeset is 2005-04-09) — pass
+# --start-date to limit the range on a deployment holding less history.
+DEFAULT_START = datetime(2005, 4, 1, tzinfo=dt_timezone.utc)
 
 
 class Command(BaseCommand):
@@ -42,7 +39,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             '--start-date', type=str, default=None,
-            help='YYYY-MM-DD to start from (default: 2005-10-01, the table\'s actual earliest data).'
+            help='YYYY-MM-DD to start from (default: 2005-04-01, start of OSM changeset history).'
         )
         parser.add_argument(
             '--batch-days', type=int, default=30,
@@ -52,7 +49,7 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--pause-seconds', type=int, default=3,
-            help='Seconds to sleep between batches, for host courtesy (default: 3).'
+            help='Seconds to sleep between batches, to leave room for other DB load (default: 3).'
         )
 
     def handle(self, *args, **options):

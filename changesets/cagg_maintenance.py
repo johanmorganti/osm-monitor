@@ -42,7 +42,7 @@ def refresh_caggs_over_range(start, end, cagg_names=ALL_CAGG_NAMES, batch_days=3
     """`CALL refresh_continuous_aggregate(cagg, batch_start, batch_end)` for
     every name in cagg_names, walking [start, end) in batch_days-sized
     chunks — never one call over the whole range: an earlier single-huge-
-    range attempt on cagg_volume_hourly appeared to stall on this host (see
+    range attempt on cagg_volume_hourly appeared to stall (see
     docs/todo/continuous-aggregates-migration.md's history), and the
     geohash/country backfill session confirmed CALL refresh_continuous_
     aggregate over a large/dense range can trigger the same parallel-worker
@@ -53,12 +53,11 @@ def refresh_caggs_over_range(start, end, cagg_names=ALL_CAGG_NAMES, batch_days=3
     it, not just this one — but confirmed 2026-09-22 it isn't sufficient
     alone: the country CAgg backfill still crashed Postgres mid-run even
     with the role default in place, on cagg_country_hourly (a cheap,
-    low-cardinality CAgg, not the expensive contributor-crossed one) — this
-    host was simply out of headroom (~150MB free RAM, ~900MB swapped in
-    steady state all session) after ~20 minutes of continuous back-to-back
-    CALLs, not any one query. `pause_seconds` (default 0 — off for existing
+    low-cardinality CAgg, not the expensive contributor-crossed one) — under
+    memory pressure, ~20 minutes of continuous back-to-back CALLs was enough,
+    not any one query. `pause_seconds` (default 0 — off for existing
     callers) sleeps between date-batches, not between individual CALLs
-    within one, to give the host a real recovery window under sustained
+    within one, to give the DB a real recovery window under sustained
     pressure like that, at the cost of a much longer wall-clock backfill.
 
     Each CALL is its own statement — refresh_continuous_aggregate manages

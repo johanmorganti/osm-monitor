@@ -5,9 +5,8 @@ from django.db import migrations
 # — contributor x editor/imagery/language. Deferred there specifically
 # because of contributor's cardinality (344K distinct values vs. low
 # hundreds for the other three — see docs/todo/continuous-aggregates-
-# migration.md) and the recurring refresh cost every CAgg adds on this
-# I/O-constrained host; built now on request despite that cost, since the
-# contributor-grouped toplist was the confirmed remaining slow path.
+# migration.md) and the recurring refresh cost every CAgg adds; built
+# now on request despite that cost, since the contributor-grouped toplist was the confirmed remaining slow path.
 #
 # Same NULL handling as their single-dimension counterparts: contributor
 # (user) and editor (created_by_family) exclude NULLs (both are essentially

@@ -3,8 +3,8 @@
 # in the existing per-script fix: cagg_maintenance.refresh_caggs_over_range
 # already sets this on its own connection before calling
 # CALL refresh_continuous_aggregate(...) (see that function's docstring —
-# a parallel worker's dynamic shared memory segment blowing past this
-# host's shm_size crashes the whole postmaster, not just the one query,
+# a parallel worker's dynamic shared memory segment blowing past the db
+# container's shm_size crashes the whole postmaster, not just the one query,
 # forcing a multi-second-to-multi-minute WAL redo on every reconnect — see
 # CLAUDE.md's "Geo storage" section, lesson 2). That protection only covers
 # code that explicitly opts in, though — every CAgg's own automatic

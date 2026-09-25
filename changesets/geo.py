@@ -27,8 +27,8 @@ BBOX_DIAG_THRESHOLD_KM = 200
 # at query time (min/max_lat/lon) since even pre-aggregated, shipping every
 # fine cell on Earth would be a lot of payload/render for a single zoomed-in
 # view. Not computed live from the raw table: an earlier design did that,
-# but this host's DB is slow enough under load (see TODO.md) that a second
-# CAgg — paid for in storage, not query time — is the better trade here.
+# but a second CAgg — paid for in storage, not query time — was the better
+# trade.
 # ~0.05° ≈ 5.5km — neighborhood scale, a reasonable target for "zoomed in
 # past the coarse 0.5° grid."
 FINE_GRID_SIZE_DEGREES = 0.05

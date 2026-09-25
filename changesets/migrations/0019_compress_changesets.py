@@ -21,7 +21,7 @@ class Migration(migrations.Migration):
                 # high). Chunks compress ~30 days after their range closes,
                 # by which point they're effectively write-only for the rare
                 # long-lived-changeset stragglers (see the 2011-2025 sparse
-                # chunks this host already has) — Timescale decompresses a
+                # chunks this database already has) — Timescale decompresses a
                 # chunk transparently on insert into it, so those strays
                 # still work, just slower.
                 "ALTER TABLE changesets_changeset SET ("

@@ -11,10 +11,8 @@ from django.db import migrations
 # confirmed 2026-09-20) — a contributor-crossed pair CAgg wouldn't explode
 # combinatorially in row count (most contributors stick to ~1 editor/
 # imagery/language), but every CAgg also carries a recurring refresh cost
-# every time its policy fires, not just a one-time build cost, and this
-# host is already I/O-constrained (see CLAUDE.md's statement_timeout /
-# VACUUM-crash notes). Deferred, documented, not built here — see that same
-# doc, along with GeoView's equivalent gap (dimension x geohash, a
+# every time its policy fires, not just a one-time build cost. Deferred,
+# documented, not built here — see that same doc, along with GeoView's equivalent gap (dimension x geohash, a
 # different shape entirely since geo isn't grouped by another attribute).
 #
 # NULL handling matches each dimension's existing single-dimension CAgg

@@ -3,7 +3,7 @@
 `poll_sequences.py` currently checkpoints `SequenceState` after every sequence processed. Not
 a correctness problem — re-processing a handful of sequences after a crash is idempotent
 (`import_changeset_batch`'s existence check already handles it) — but it's more write I/O than
-strictly needed on a disk with none to spare. Checkpointing every N sequences instead would cut
+strictly needed. Checkpointing every N sequences instead would cut
 the write *count*, not just size per write (already minimized via `update_fields`).
 
 Deliberately not done yet: it's a real behavior/recovery-granularity tradeoff (a crash mid-batch

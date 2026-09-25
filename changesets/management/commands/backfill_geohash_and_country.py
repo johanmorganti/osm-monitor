@@ -18,8 +18,7 @@ logger = logging.getLogger(__name__)
 # Batch size is configurable (--batch-days, default 30 ≈ the original
 # fixed-monthly design) rather than hardcoded to calendar months — added
 # 2026-09-18 after repeated Postgres crashes (signal 13, broken pipe) mid-
-# transaction on this host: a
-# smaller batch means less WAL to redo on crash recovery and less committed
+# transaction: a smaller batch means less WAL to redo on crash recovery and less committed
 # work lost per crash, at the cost of more (cheap, idempotent no-op) round
 # trips through already-backfilled ranges. Every batch is still its own
 # transaction, so correctness/idempotency is identical regardless of size.

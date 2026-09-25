@@ -313,8 +313,8 @@ const GEO_COLOR_RAMP = ['#cde2fb', '#9ec5f4', '#5598e7', '#2a78d6', '#1c5cab', '
 //
 // Panning/zooming while in fine mode does NOT fetch on every settle — see
 // scheduleFineFetch's own comments for why a naive "fetch on every
-// moveend" was found to be sending enough requests to strain the DB on
-// this host's shared, resource-constrained server.
+// moveend" was found to be sending far more DB queries than normal map
+// browsing needs.
 const GEO_FINE_ZOOM_THRESHOLD = 7;
 const GEO_FINE_FETCH_DEBOUNCE_MS = 600;
 // Fetch this much extra area beyond the visible viewport (as a fraction of
@@ -440,9 +440,8 @@ function renderGeoMap(initialGeo) {
 
     // Naive "fetch the exact viewport on every moveend/zoomend, debounced
     // 400ms" was found (2026-09-19) to send a real DB query for every
-    // single pan/zoom settle while browsing — on this host's shared,
-    // resource-constrained server, normal map exploration alone was enough
-    // to strain the DB. Two changes fix that without changing what's drawn:
+    // single pan/zoom settle while browsing, so normal map exploration
+    // alone put real, avoidable load on the DB. Two changes fix that without changing what's drawn:
     //
     // 1. Fetch a PADDED area (GEO_FINE_PREFETCH_PAD extra on every side),
     //    not just the exact visible viewport, and skip the fetch entirely

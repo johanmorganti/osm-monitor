@@ -55,9 +55,8 @@ backed `GeoView`'s `resolution=fine` mode — same bbox-quality gate, same "CAgg
 fallback when filtered" split as the coarse path, but always scoped to a `bbox` viewport param
 (required for `fine`) since shipping every 0.05° cell on Earth would be excessive payload for one
 zoomed-in view. Chosen over computing fine cells live from the raw table per-request (an earlier
-design) because this host's DB is slow enough under load that paying the cost in storage (a
-second full-history CAgg) beats paying it in query latency — disk space was the cheaper resource
-here. Backfilled (137 more `refresh_continuous_aggregate` calls; the 138th chunk was already
+design) because paying the cost in storage (a second full-history CAgg) beats paying it in query
+latency on every map interaction — disk space was the cheaper resource here. Backfilled (137 more `refresh_continuous_aggregate` calls; the 138th chunk was already
 covered by an earlier timing test), verified the same way as the coarse CAgg: 0 day-level gaps,
 ~1.16% excluded. `dashboard.js`'s `renderGeoMap` switches between a `coarseLayer` and `fineLayer`
 `L.layerGroup` at `GEO_FINE_ZOOM_THRESHOLD` (zoom 7), fetching fine data for the current viewport

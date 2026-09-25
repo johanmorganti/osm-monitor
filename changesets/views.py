@@ -293,7 +293,7 @@ def _single_filter_dimension(contributor, editor, imagery, language, country):
 # The editor/imagery/language pairs shipped first (migration 0041); the
 # contributor pairs (migration 0043) were deferred initially — contributor
 # has 344K distinct values vs. low hundreds for the other three, and every
-# CAgg adds recurring refresh cost on this I/O-constrained host — then
+# CAgg adds recurring refresh cost — then
 # built once the contributor-grouped toplist was confirmed to be the
 # remaining slow path. The country pairs (migration 0048) shipped with
 # country replacing language as the dashboard's 5th dimension — no

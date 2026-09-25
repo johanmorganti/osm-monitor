@@ -19,13 +19,9 @@ PAIR_CAGG_NAMES = [
     'cagg_contributor_editor_daily', 'cagg_contributor_imagery_daily', 'cagg_contributor_locale_daily',
 ]
 
-# Matches the existing single-dimension CAggs' own coverage start (confirmed
-# via min(bucket) on cagg_editor_daily/cagg_imagery_daily, 2026-09-21) —
-# these are meant to serve the same "past year" window ToplistView/
-# TimeseriesView already query, not full 2005+ history (see
-# docs/todo/cagg-history-coverage-gap.md for why the single-dimension ones
-# stop there too).
-DEFAULT_START = datetime(2025, 8, 1, tzinfo=dt_timezone.utc)
+# Start of OSM changeset history (the first changeset is 2005-04-09) — pass
+# --start-date to limit the range on a deployment holding less history.
+DEFAULT_START = datetime(2005, 4, 1, tzinfo=dt_timezone.utc)
 
 
 class Command(BaseCommand):
@@ -34,14 +30,13 @@ class Command(BaseCommand):
         "(PAIR_CAGG_NAMES above). Idempotent — safe to re-run or interrupt and resume "
         "(refresh_continuous_aggregate over an already-current range is a cheap no-op). "
         "Batch size defaults smaller than the usual 30 days (see CLAUDE.md's "
-        "statement_timeout notes on this host's I/O constraints) — pass --batch-days to "
-        "widen it once this has been proven safe."
+        "statement_timeout notes) — pass --batch-days to widen it once this has been proven safe."
     )
 
     def add_arguments(self, parser):
         parser.add_argument(
             '--start-date', type=str, default=None,
-            help='YYYY-MM-DD (default: 2025-08-01, matching the existing single-dimension CAggs).'
+            help='YYYY-MM-DD (default: 2005-04-01, start of OSM changeset history).'
         )
         parser.add_argument(
             '--batch-days', type=int, default=7,

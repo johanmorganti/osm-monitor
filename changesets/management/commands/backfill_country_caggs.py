@@ -19,10 +19,9 @@ COUNTRY_CAGG_NAMES = [
     'cagg_contributor_country_daily', 'cagg_country_editor_daily', 'cagg_country_imagery_daily',
 ]
 
-# Matches the existing CAggs' own coverage start (see
-# docs/todo/cagg-history-coverage-gap.md for why the single-dimension ones
-# stop there rather than covering full 2005+ history).
-DEFAULT_START = datetime(2025, 8, 1, tzinfo=dt_timezone.utc)
+# Start of OSM changeset history (the first changeset is 2005-04-09) — pass
+# --start-date to limit the range on a deployment holding less history.
+DEFAULT_START = datetime(2005, 4, 1, tzinfo=dt_timezone.utc)
 
 
 class Command(BaseCommand):
@@ -33,7 +32,7 @@ class Command(BaseCommand):
         "Auto-resuming as of 2026-09-22: this backfill crashed Postgres mid-run repeatedly (see "
         "docs/todo/continuous-aggregates-migration.md) — even with max_parallel_workers_per_"
         "gather=0 now a role default and small/paced batches, sustained back-to-back CALLs for "
-        "roughly 20-45 minutes exhausted this host's headroom regardless of which specific CAgg "
+        "roughly 20-45 minutes still crashed it, regardless of which specific CAgg "
         "was in flight or how the work was paced. This command walks the range one batch at a "
         "time *itself* (not via refresh_caggs_over_range's own internal loop) specifically so it "
         "can track the resume point as plain Python state, advanced only after a batch actually "
@@ -48,16 +47,16 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             '--start-date', type=str, default=None,
-            help='YYYY-MM-DD to start from (default: 2025-08-01, matching the existing CAggs).'
+            help='YYYY-MM-DD to start from (default: 2005-04-01, start of OSM changeset history).'
         )
         parser.add_argument(
             '--batch-days', type=int, default=2,
-            help='Days per refresh call, per CAgg (default: 2 — kept small given this host'
-                 's demonstrated fragility under sustained load).'
+            help='Days per refresh call, per CAgg (default: 2 — kept small after Postgres crashed '
+                 'repeatedly under sustained refresh load).'
         )
         parser.add_argument(
             '--pause-seconds', type=int, default=15,
-            help='Seconds to sleep between date-batches, to let the host recover under '
+            help='Seconds to sleep between date-batches, to let the DB recover under '
                  'sustained load (default: 15).'
         )
         parser.add_argument(

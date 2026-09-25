@@ -138,8 +138,7 @@ A single-row model (`SequenceState`) tracks the last ingested sequence number so
 ### Statement timeout: bounded by default, opt out explicitly for long jobs
 The app role (`db/init/02-role-statement-timeout.sh`) defaults to `statement_timeout = '120s'` —
 inverted from the old default of unbounded-unless-told-otherwise, after an orphaned backend (its
-client killed, the query left running server-side with nothing left to cancel it) pushed I/O wait
-to 45% on this HDD with zero other load. `web` keeps its own tighter 30s cap via connection
+client killed) kept running an expensive query server-side with nothing left to cancel it. `web` keeps its own tighter 30s cap via connection
 `OPTIONS` (`DB_STATEMENT_TIMEOUT_MS`, `docker-compose.yml`), which wins over the role default. The
 `migrate` one-shot service sets `DB_STATEMENT_TIMEOUT_MS=0` the same way, the other direction,
 since migration DDL (e.g. an index build over the full hypertable) can legitimately run past 120s.
@@ -172,7 +171,7 @@ have very different prefixes) — fine for a density heatmap, not for exact-adja
 
 `country_code` (ISO 3166-1 alpha-2, e.g. `FR` not `France`) was added in the same migration/trigger
 pass purely because both needed the same one-time full-history backfill pass and doing that twice
-would have doubled the I/O cost on this host — **country is not "free" once geohash exists**: a
+would have doubled the I/O cost — **country is not "free" once geohash exists**: a
 geohash prefix is a regular-grid concept, country borders are irregular polygons, so it's resolved
 independently via `country_boundaries` (a loaded Natural Earth admin-0 table, GiST-indexed,
 point-in-polygon against `centroid`). `country` was schema + backfill only at first — no
@@ -192,7 +191,7 @@ without a matching `AddField` **state** operation leaves the Django model silent
 field — invisible until ORM code tries to `.filter()` on it, which is exactly what happened here
 (`FieldError: Cannot resolve keyword 'geohash' into field`) despite the column and its index having
 existed and been correctly populated in the database the whole time. (2) `CALL
-refresh_continuous_aggregate(...)` over a large/dense chunk on this host can trigger the same
+refresh_continuous_aggregate(...)` over a large/dense chunk can trigger the same
 parallel-worker `/dev/shm` exhaustion crash documented in `docker-compose.yml`'s `shm_size` comment
 for `VACUUM ANALYZE` — `SET max_parallel_workers_per_gather = 0` around the call avoided it. This
 guard only covered code that explicitly opted in (`cagg_maintenance.refresh_caggs_over_range`),
@@ -203,8 +202,7 @@ crash-restarted with no backfill or migration running at all, shortly after seve
 and their background policies — had been added the same session) — fixed by making the guard a
 role-level default instead (`db/init/03-role-parallel-workers.sh`, plus a live `ALTER ROLE` for the
 already-existing volume), so it's inherited by every connection under that role, background
-workers included. That fix alone did **not** fully stop the crashes, though — see
-`docs/todo/db-crash-instability.md` for the still-open investigation.
+workers included.
 (3) `GEOHASH_PREFIX_LENGTH['coarse']` shipped as `4` (~39km × 19.5km) on the assumption that it was
 "close enough" to the old design's 0.5° cells — it wasn't: geohash halving doesn't land near 0.5°
 at any integer precision, and 4 actually produced **~4x more cells globally** than the old grid
@@ -242,8 +240,8 @@ themselves are the current source of truth.
 
 **Sixth lesson, client-side rather than schema**: the map's fine-mode fetch originally ran on every
 `moveend`/`zoomend` (just debounced 400ms) — correct in the sense that it always showed the right
-data, but on this host's shared, resource-constrained server, normal map browsing alone (not
-misuse) generated enough real DB queries to strain it. Fixed in `static/js/dashboard.js`'s
+data, but normal map browsing alone (not misuse) generated a real DB query for nearly every pan or
+zoom, far more load than the map's actual information needs justified. Fixed in `static/js/dashboard.js`'s
 `scheduleFineFetch`: fetch a padded area beyond the visible viewport (`GEO_FINE_PREFETCH_PAD`) and
 skip the request entirely whenever the current viewport is still inside the last-fetched padded
 area, plus cancel a still-in-flight fetch when a newer one supersedes it (`AbortController`) so
@@ -307,39 +305,35 @@ not be widened to "cover" those old rows:
   timeout. 7 days is a generous margin over 24h, not an arbitrary guess.
 - A comment-only reappearance of a changeset we already have writes nothing at all:
   `import_changeset_batch` (`osm_fetcher.py`) skips it unless `changes_count` actually grew.
-- Widening the window would force a rescan of months of already-final buckets every 30-60 minutes
-  on an I/O-constrained host, to correct nothing.
+- Widening the window would force a rescan of months of already-final buckets every 30-60 minutes,
+  to correct nothing.
 
 **The one real gap this leaves**, worth knowing but not worth widening the window for: an old
 changeset we have *never seen before*, arriving because of a comment, is inserted into an ancient
-chunk and will never be materialized into any CAgg. That's ~503 rows over the project's life
-(~0.003%). It is why a query for a date range before the CAggs' coverage returns `0` rather than
-an error — see `TODO.md`'s "Stats CAggs only cover Aug 2025+" entry, and treat that as a
-*reporting* problem (say "no coverage"), not a refresh-policy problem.
+chunk and will never be materialized into any CAgg — a tiny fraction of rows. More generally, any
+date range the CAggs haven't materialized returns `0` rather than an error — see `TODO.md`'s
+"Empty stats for unmaterialized ranges" entry, and treat that as a *reporting* problem (say "no
+coverage"), not a refresh-policy problem.
 
 **Where the 7-day window genuinely is not enough:** a deliberate backward/bulk import
-(`import_from_dump`, or re-enabling `poll_sequences`' backfill for full history). Those write
-large volumes far outside the window and need explicit
-`CALL refresh_continuous_aggregate(<view>, <lo>, <hi>)` over the imported range — see
-`docs/todo/continuous-aggregates-migration.md`'s remaining steps. That is a real, open gap; the old
-comment-driven rows above are not.
+(`import_from_dump`, or `poll_sequences`' backfill). Those write large volumes far outside the
+window and need an explicit refresh over the imported range: `import_from_dump` does it itself at
+the end, and `refresh_caggs <start> <end>` covers runs with `--skip-cagg-refresh` (parallel
+`--byte-range` workers) or any other bulk write.
 
-### Design for full history, not just the current subset
-Only the past year of changesets is imported today (17.6M rows as of 2026-09-17, spanning
-2025-08-03 onward) — a **deliberate scope choice** so performance work can be tested against a
-realistic-but-manageable dataset, not a backfill that stalled. `SequenceState.backfill_floor` is
-`NULL`, meaning the poller has completed and retired its 365-day backfill and is now live-only;
-that is the intended steady state for now. The eventual goal is still full
-2005-present OSM history (~190M+ rows, ~8x bigger). When adding a query, index, or background
-job, sanity-check it against "does this still work at ~8x the row count" rather than just today's
-data size. Two concrete examples already hit by this project: the old `DailyVolume`/
+### Design for full history
+The target dataset is full 2005-present OSM changeset history (~190M+ rows, growing), not a recent
+subset — a deployment may hold less (e.g. only the poller's default 365-day backfill), but code
+must not assume it. When adding a query, index, or background job, sanity-check it against the
+full-history row count and chunk count rather than whatever dataset it was developed against.
+Two concrete examples already hit by this project: the old `DailyVolume`/
 `DailyBreakdown` rollup refresh loop was watermarked on `id` (not the hypertable's partitioning
 column), so it got no chunk exclusion and its cost grew with total chunk count regardless of how
-much data had actually changed — measured at ~15% of this host's total DB time before being
+much data had actually changed — measured at ~15% of total DB time before being
 replaced by the CAgg design (see "Aggregates" in `docs/ARCHITECTURE.md`); `TimeseriesView`'s
-bucket-width picker (`_pick_interval`, migration `0023`) deliberately only offers hour/day grains
-for the same reason — daily tops out around ~400 points at today's ~13-month span, and a
-weekly/monthly tier is the natural next step once a multi-year default range is common, not before.
+bucket-width picker (`_pick_interval`, migration `0023`) only offers hour/day grains — daily is
+~400 points over a year but thousands over multi-year ranges, so a weekly/monthly tier is the
+natural next step once multi-year ranges are common.
 Prefer incremental/watermark-based designs over periodic full-table rebuilds, and watermark on the
 hypertable's partitioning column (`created_at`) specifically, not a surrogate key like `id`.
 
@@ -365,6 +359,7 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 | `static/output.css` | Compiled Tailwind CSS |
 | `db/init/` | One-time Postgres setup (extensions, Datadog schema) for a fresh DB |
 | `docs/ARCHITECTURE.md` | Deep dive: data flow, why TimescaleDB, observability, deployment |
+| `docs/DEPLOYMENT.md` | Running the Compose stack, optional Datadog overlay (`docker-compose.datadog.yml`), full-history import |
 
 ## Development notes
 

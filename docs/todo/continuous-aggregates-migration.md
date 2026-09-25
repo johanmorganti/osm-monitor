@@ -64,8 +64,7 @@ doesn't apply to what was tested here). Cause: `EXPLAIN` shows a `Bitmap Heap Sc
 this size) are scattered essentially randomly across each chunk's data pages, since physical
 row order is chronological (insertion order) and has no correlation with locale/imagery. Low
 selectivity at low physical clustering means the index still has to drive on the order of
-thousands of individual random page reads per chunk, and this host's shared/HDD-backed I/O can't
-absorb that within 30s regardless of which single dimension is filtered. In other words: this
+thousands of individual random page reads per chunk, which couldn't complete within 30s regardless of which single dimension is filtered. In other words: this
 project's *general* "any one filter + a wide-enough date range falls back to raw scanning" trade-
 off (documented above, already accepted for the compression-exclusion reason) has a second,
 independent cause that would persist even after a `compress_segmentby` fix — needs to be part of
@@ -90,18 +89,15 @@ different cardinalities (confirmed via `count(DISTINCT name)` on each single-dim
 small and bounded. `contributor` is the outlier: not necessarily explosive in row count (most
 contributors stick to ~1 editor/imagery/language, so a contributor-crossed CAgg wouldn't approach
 a full cross-product), but every CAgg also carries a *recurring* refresh cost every time its
-policy fires (not just a one-time build cost), and this host is already I/O-constrained (see
-CLAUDE.md's statement_timeout / VACUUM-crash notes) — 3 more contributor-crossed CAggs would
-meaningfully add to that ongoing load.
+policy fires (not just a one-time build cost) — 3 more contributor-crossed CAggs would have
+meaningfully added to that ongoing load.
 
 Built the 3 pairs *not* involving contributor — `cagg_editor_imagery_daily`,
 `cagg_editor_locale_daily`, `cagg_imagery_locale_daily` (migration 0041, daily-grain only; models
 in `changesets/models.py`; `PAIR_CAGGS`/`_pair_cagg_lookup` in `views.py` wire them into
-`ToplistView` and `TimeseriesView`'s `group_by`+filter path). Backfilled from 2025-08-01 (matching
-the single-dimension CAggs' own coverage — see `docs/todo/cagg-history-coverage-gap.md`) via the
-new `backfill_dimension_pair_caggs` management command, in small 7-day batches (default is smaller
-than `refresh_caggs_over_range`'s usual 30 — this host was already showing memory pressure the same
-session, see the `--batch-days` flag to widen it later once proven safe).
+`ToplistView` and `TimeseriesView`'s `group_by`+filter path). Backfilled via the new `backfill_dimension_pair_caggs` management command, in small 7-day batches (default is smaller
+than `refresh_caggs_over_range`'s usual 30, to keep each refresh's memory footprint small — see the
+`--batch-days` flag to widen it later once proven safe).
 
 **What this fixes:** `ToplistView`/`TimeseriesView` calls where the filtered dimension and the
 requested `dimension`/`group_by` are two *different* ones of {editor, imagery, language} — e.g. the
@@ -127,9 +123,8 @@ as the concrete remaining slow path, so built the 3 contributor pairs anyway:
 excludes contributor — the lookup is fully generic now across all 6 pairs.
 
 The cardinality cost was real, not just theoretical: backfilling the 3 non-contributor pairs
-(migration 0041) took a few minutes total; backfilling these 3 took roughly an hour on this
-host, confirmed via `pg_stat_activity` mid-run showing individual 7-day batch refreshes taking
-30-40s of real `DataFileRead` I/O wait each (vs. sub-second for the non-contributor pairs) — one
+(migration 0041) took a few minutes total; backfilling these 3 took roughly an hour,
+confirmed via `pg_stat_activity` mid-run showing individual 7-day batch refreshes taking 30-40s of real `DataFileRead` I/O wait each (vs. sub-second for the non-contributor pairs) — one
 batch, not the whole backfill. Reused `backfill_dimension_pair_caggs` (extended `PAIR_CAGG_NAMES`
 rather than adding a second command — the command was already generic over "whatever's in this
 list"), same 2025-08-01 start and 7-day batches. Verified end-to-end post-backfill: the
@@ -149,8 +144,7 @@ pairs. `language` itself was deliberately left alone at the API layer (`DIMENSIO
 CAggs, `/api/docs/`) — only removed from the dashboard UI — since it's a real, already-public API
 param and removing it would be a breaking change, not a side effect of a dashboard change.
 
-**This backfill is also the origin of a separate, more serious finding** — see
-`docs/todo/db-crash-instability.md`: backfilling the 5 country CAggs crashed Postgres mid-run
+**This backfill is also the origin of a separate, more serious finding**: backfilling the 5 country CAggs crashed Postgres mid-run
 repeatedly (5 times across ~2 hours), including once with *no* backfill or migration running at
 all. Root-caused (partially) to the same parallel-worker `/dev/shm` exhaustion mechanism already
 documented in CLAUDE.md's "Geo storage" section, but from a source that specific fix never

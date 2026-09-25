@@ -326,8 +326,8 @@ class CaggGeoHashedDaily(models.Model):
 # The 3 editor/imagery/language pairs (migration 0041) shipped first;
 # the 3 contributor pairs (migration 0043) were deliberately deferred at
 # that point — contributor has 344K distinct values vs. low hundreds for
-# the other three, and every CAgg adds recurring refresh cost on this
-# I/O-constrained host — then built anyway once the contributor-grouped
+# the other three, and every CAgg adds recurring refresh cost — then built
+# anyway once the contributor-grouped
 # toplist was confirmed to be the remaining slow path (see
 # docs/todo/continuous-aggregates-migration.md). The 3 country pairs
 # (migration 0048) shipped alongside country replacing language as the

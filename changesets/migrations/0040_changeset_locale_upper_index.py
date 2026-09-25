@@ -14,7 +14,7 @@ from django.db.models.functions import Upper
 # scan; locale_family is already populated for the whole table, so a
 # non-concurrent build would hold an ACCESS EXCLUSIVE lock on
 # changesets_changeset for as long as the scan takes — blocking the poller
-# and every dashboard query on this I/O-constrained host for real time.
+# and every dashboard query for real time.
 #
 # Workaround (documented Timescale pattern for adding an index to an
 # already-populated hypertable without locking it): build the same

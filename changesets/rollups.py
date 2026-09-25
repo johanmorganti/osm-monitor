@@ -11,7 +11,7 @@ onward) — yet the poller kept rebuilding them every couple of minutes via
 refresh_rollups_incremental()'s `WHERE id > watermark` scan. That scan can't
 use chunk exclusion (`id` isn't the hypertable's partitioning column), so it
 probed the `id` index on all 141 chunks every single call — confirmed via
-pg_stat_statements as ~15% of this host's total DB time in a 20-minute
+pg_stat_statements as ~15% of total DB time in a 20-minute
 sample window, for output nothing reads. See `docs/todo/continuous-aggregates-migration.md`
 for the measurement and the follow-up steps (dropping the tables/columns
 themselves, a bigger migration, deliberately not done in this pass).
@@ -224,7 +224,7 @@ def refresh_filter_values_incremental():
     hypertable's partitioning column, so TimescaleDB can chunk-exclude down
     to just the recent chunk(s) a live-polling batch could possibly touch,
     unlike the old `id > watermark` scan this replaces (confirmed cause of
-    ~15% of this host's DB time for output nothing read — see
+    ~15% of total DB time for output nothing read — see
     `docs/todo/continuous-aggregates-migration.md`).
 
     `created_at >= watermark` (inclusive), not `>`: ties at the exact

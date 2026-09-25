@@ -32,8 +32,7 @@ WITH NO DATA;
 
 # 1-hour cadence, matching the existing per-dimension DAILY CAs (not the
 # hourly ones' 30-minute cadence) — a heatmap doesn't need near-real-time
-# freshness, and this avoids adding another frequent background job to an
-# already memory-tight host.
+# freshness, and this avoids adding another frequent background job.
 _POLICY_SQL = """
 SELECT add_continuous_aggregate_policy('cagg_geo_daily',
   start_offset => INTERVAL '7 days', end_offset => INTERVAL '1 hour',

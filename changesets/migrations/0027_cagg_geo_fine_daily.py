@@ -12,9 +12,9 @@ from changesets.geo import FINE_GRID_LAT_GATED_SQL, FINE_GRID_LON_GATED_SQL
 #
 # Pre-aggregated rather than computed live from the raw table per-request:
 # an earlier design did the latter (viewport + date bounded raw query), but
-# this host's DB is slow enough under concurrent/large scans (see TODO.md)
-# that paying the cost in storage via a second CAgg, not query latency, is
-# the better trade — this host has disk space to spare.
+# paying the cost in storage via a second CAgg, not query latency on every
+# concurrent/large scan, was the better trade — disk space was the cheaper
+# resource.
 _CREATE_SQL = f"""
 CREATE MATERIALIZED VIEW cagg_geo_fine_daily WITH (timescaledb.continuous) AS
 SELECT

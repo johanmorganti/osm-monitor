@@ -128,22 +128,29 @@ authoritative reference, not this file or the README.
 
 ## Observability
 
-- **APM + structured logs**: `ddtrace-run` wraps both `web` (gunicorn) and `poller` (see
-  `entrypoint.sh`); `osm_changeset_api/logging_json.py` emits structured JSON logs with
+Datadog is optional. The base `docker-compose.yml` runs without it (tracing off); the
+`docker-compose.datadog.yml` override adds everything below, enabled by setting
+`COMPOSE_FILE=docker-compose.yml:docker-compose.datadog.yml` in `.env` along with `DD_API_KEY`
+and `DD_POSTGRES_PASSWORD`.
+
+- **Agent**: the override adds a `datadog-agent` compose service. `web`/`poller` reach it over
+  unix sockets in the shared `datadog-sockets` volume (`apm.socket`, `dsd.socket`); it discovers
+  containers and tails their logs via the docker socket, and picks up the Postgres check from the
+  `db` service's `com.datadoghq.ad.checks` label.
+- **APM + structured logs**: with tracing enabled, `entrypoint.sh` wraps both `web` (gunicorn) and
+  `poller` in `ddtrace-run`; `osm_changeset_api/logging_json.py` emits structured JSON logs with
   `dd.trace_id`/`dd.span_id` injected (`DD_LOGS_INJECTION=true`), so a log line and the trace it
   happened during are correlated in Datadog.
-- **Database Monitoring**: the `db` service preloads `pg_stat_statements` alongside `timescaledb`
-  (`shared_preload_libraries`) and the postgres Datadog check has `dbm: true`
-  (`docker-compose.yml`'s `com.datadoghq.ad.checks` label). Execution-plan collection additionally
-  needs a dedicated `datadog` schema with a `SECURITY DEFINER` `explain_statement()` function, so
-  the low-privilege `datadog` role can request `EXPLAIN` plans without broader query access — see
-  `db/init/01-datadog-dbm.sql`, which sets this up automatically on a fresh database (existing
-  volumes need the role created and that SQL applied manually once, per that file's own
-  comments).
-- **Host constraints matter here**: this stack has historically run on a memory/IO-constrained
-  host shared with unrelated apps. `mem_limit`/`mem_reservation` on every service and a
-  non-default `effective_cache_size` (`docker-compose.yml`) exist specifically so one heavy
-  query/index build/import can't starve the other apps on the box. If DBM's query collection ever
+- **Database Monitoring**: the `db` service always preloads `pg_stat_statements` alongside
+  `timescaledb` (`shared_preload_libraries`), and `db/init/01-datadog.sh` always creates the
+  extension, so query-level stats are available with or without Datadog. When
+  `DD_POSTGRES_PASSWORD` is set, the same script also creates the low-privilege `datadog` role and
+  a `datadog` schema with a `SECURITY DEFINER` `explain_statement()` function, so the agent can
+  request `EXPLAIN` plans without broader query access (fresh data directory only; on an existing
+  one, run the script once by hand). The override's postgres check has `dbm: true`.
+- **Resource limits**: every service has a `mem_limit`, and `db` a non-default
+  `effective_cache_size` (`docker-compose.yml`), so one heavy query/index build/import can't
+  starve everything else running alongside it. If DBM's query collection ever
   needs to be paused during a heavy bulk operation (it polls frequently and will contend for I/O
   under load), the clean way is `REVOKE CONNECT ON DATABASE ... FROM datadog;` (and `GRANT` it
   back after) — no service restart required, unlike disabling the check via its Docker label.
@@ -151,12 +158,13 @@ authoritative reference, not this file or the README.
 ## Deployment
 
 `docker-compose.yml` defines three services: `db` (TimescaleDB), `web` (gunicorn, single worker —
-see `TODO.md` for why that's a known limitation), `poller` (the continuous ingester). `deploy.sh`
-stamps the build with the current git commit as the `DD_VERSION` tag, then
-`docker compose build && up -d`. Migrations and static files are handled by `entrypoint.sh` on
+see `TODO.md` for why that's a known limitation), `poller` (the continuous ingester);
+`docker-compose.datadog.yml` optionally adds `datadog-agent` (see Observability). `deploy.sh`
+stamps the build with the current git commit (`GIT_VERSION`, used as Datadog's `DD_VERSION` tag
+when enabled), then `docker compose build && up -d`. Migrations and static files are handled by `entrypoint.sh` on
 every container start.
 
-`db/init/`'s SQL scripts only run automatically on a genuinely fresh Postgres data directory
+`db/init/`'s scripts only run automatically on a genuinely fresh Postgres data directory
 (the official image's behavior) — recreating `db` against an *existing* volume skips them, so a
 schema/extension change that needs to apply to a running system still needs a manual one-time
 step (each script's own comments say what).
