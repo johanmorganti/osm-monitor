@@ -81,7 +81,9 @@ services:
       DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL: "true"
       # The agent's own logs are noise next to the app's.
       DD_CONTAINER_EXCLUDE_LOGS: "name:datadog-agent"
-    mem_limit: 512m
+    # Headroom for log collection from several busy containers (e.g. parallel
+    # import_from_dump workers): it sat at ~460MB under 512m.
+    mem_limit: 1g
     volumes:
       - datadog-sockets:/var/run/datadog
       # Paths below are where dockerd runs (inside the VM under Colima/Docker

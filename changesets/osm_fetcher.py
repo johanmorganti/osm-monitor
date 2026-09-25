@@ -228,10 +228,16 @@ def _parse_changeset_element(changeset, log_extra):
                 elif tag_key == 'host':
                     changeset_to_add['host'] = tag_value
                 elif tag_key == 'changesets_count':
+                    # Free-form tag set by the editor, not a structured field:
+                    # a garbage value (non-numeric, negative, or past the int32
+                    # column) is stored as NULL rather than failing the row.
                     try:
-                        changeset_to_add['changesets_count'] = int(tag_value)
+                        count = int(tag_value)
                     except ValueError:
-                        changeset_to_add['changesets_count'] = None
+                        count = None
+                    if count is not None and not 0 <= count <= 2**31 - 1:
+                        count = None
+                    changeset_to_add['changesets_count'] = count
                 elif tag_key == 'hashtags':
                     # Split hashtags into array and remove # symbol
                     hashtags = [tag.lstrip('#') for tag in tag_value.split(';') if tag]
