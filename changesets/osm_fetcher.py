@@ -5,7 +5,8 @@ import requests
 import xml.etree.ElementTree as ET
 import gzip
 from .models import Changeset
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timedelta
 from django.db.models import Q
 from django.utils import timezone
 from ddtrace import tracer
@@ -335,15 +336,30 @@ def import_changeset_batch(changeset_elements, log_extra):
     if changesets_to_delete:
         # created_at is immutable once a changeset exists, so the value we
         # just parsed is exact — not a guess. Filtering by it (not just
-        # changeset_id) lets chunk exclusion target only the chunk(s) each
-        # row actually lives in, instead of a changeset_id-only filter that
-        # can't exclude any chunk and forces TimescaleDB to check all of
-        # them — including decompressing any compressed chunk just to rule
-        # it out, even when nothing in this batch is anywhere near it.
-        delete_filter = Q()
+        # changeset_id) is what lets chunk exclusion target only the chunk(s)
+        # the rows live in. But an OR of (changeset_id, created_at) pairs
+        # alone only gets chunk exclusion for a handful of pairs: measured,
+        # from ~10 pairs on the planner gives up and the DELETE locks every
+        # chunk of the hypertable (and its compressed counterpart), which
+        # deadlocked with compress_chunk on a 2006 chunk. So: one DELETE per
+        # day, each ANDed with that day's plain created_at range, which
+        # chunk exclusion always handles. Per day rather than one min..max
+        # range, since a batch can mix today's changesets with an old one
+        # resurfacing through a comment (see CLAUDE.md's "Old-dated rows"),
+        # and a min..max range would span every chunk in between.
+        by_day = defaultdict(list)
         for changeset_id, created_at in changesets_to_delete:
-            delete_filter |= Q(changeset_id=changeset_id, created_at=created_at)
-        Changeset.objects.filter(delete_filter).delete()
+            by_day[created_at.date()].append((changeset_id, created_at))
+        for day, pairs in by_day.items():
+            day_start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+            delete_filter = Q()
+            for changeset_id, created_at in pairs:
+                delete_filter |= Q(changeset_id=changeset_id, created_at=created_at)
+            Changeset.objects.filter(
+                delete_filter,
+                created_at__gte=day_start,
+                created_at__lt=day_start + timedelta(days=1),
+            ).delete()
 
     if changesets_to_create:
         try:
