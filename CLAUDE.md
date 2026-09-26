@@ -336,9 +336,9 @@ not be widened to "cover" those old rows:
 **The one real gap this leaves**, worth knowing but not worth widening the window for: an old
 changeset we have *never seen before*, arriving because of a comment, is inserted into an ancient
 chunk and will never be materialized into any CAgg — a tiny fraction of rows. More generally, any
-date range the CAggs haven't materialized returns `0` rather than an error — see `TODO.md`'s
-"Empty stats for unmaterialized ranges" entry, and treat that as a *reporting* problem (say "no
-coverage"), not a refresh-policy problem.
+date range the CAggs haven't materialized returns `0` rather than an error. That's accepted: in
+practice it only shows up on a fresh deployment, until the post-import `refresh_caggs` has caught
+up, so it isn't a reason to widen the refresh window or to add coverage reporting to the API.
 
 **Where the 7-day window genuinely is not enough:** a deliberate backward/bulk import
 (`import_from_dump`, or `poll_sequences`' backfill). Those write large volumes far outside the
