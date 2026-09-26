@@ -100,7 +100,7 @@ WHERE imagery_family IS NOT NULL AND id > %(last_id)s
 ON CONFLICT (field, value) DO NOTHING;
 """
 
-# Same three FilterValue upserts as _INCREMENTAL_SQL above, standalone —
+# Same FilterValue upserts as _INCREMENTAL_SQL above (plus language), standalone —
 # this is the only one of the two still called automatically (see module
 # docstring / `docs/todo/continuous-aggregates-migration.md`). ON CONFLICT DO NOTHING means
 # existence only, no counting, so — unlike DailyVolume/DailyBreakdown's
@@ -123,9 +123,13 @@ INSERT INTO changesets_filtervalue (field, value)
 SELECT DISTINCT 'imagery', imagery_family FROM changesets_changeset
 WHERE imagery_family IS NOT NULL AND created_at >= %(last_created_at)s
 ON CONFLICT (field, value) DO NOTHING;
+INSERT INTO changesets_filtervalue (field, value)
+SELECT DISTINCT 'language', locale_family FROM changesets_changeset
+WHERE locale_family IS NOT NULL AND created_at >= %(last_created_at)s
+ON CONFLICT (field, value) DO NOTHING;
 """
 
-# Same three upserts again, bounded on both ends instead of watermarked —
+# Same upserts again, bounded on both ends instead of watermarked —
 # for import_from_dump.py, which cannot use the watermarked version above:
 # that command's whole purpose is a *backward* historical import (data
 # older than whatever's already been live-polled), and `created_at >=
@@ -148,6 +152,10 @@ ON CONFLICT (field, value) DO NOTHING;
 INSERT INTO changesets_filtervalue (field, value)
 SELECT DISTINCT 'imagery', imagery_family FROM changesets_changeset
 WHERE imagery_family IS NOT NULL AND created_at >= %(start)s AND created_at < %(end)s
+ON CONFLICT (field, value) DO NOTHING;
+INSERT INTO changesets_filtervalue (field, value)
+SELECT DISTINCT 'language', locale_family FROM changesets_changeset
+WHERE locale_family IS NOT NULL AND created_at >= %(start)s AND created_at < %(end)s
 ON CONFLICT (field, value) DO NOTHING;
 """
 

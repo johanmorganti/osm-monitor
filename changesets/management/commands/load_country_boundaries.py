@@ -58,5 +58,11 @@ class Command(BaseCommand):
                     'SELECT iso_a2, ST_Subdivide(geom, 128) FROM country_boundaries'
                 )
                 cursor.execute('ANALYZE country_boundaries_subdivided')
+                # Country autocomplete/filter values (see seed_country_filter_values).
+                cursor.execute(
+                    "INSERT INTO changesets_filtervalue (field, value) "
+                    "SELECT 'country', TRIM(iso_a2) FROM country_boundaries "
+                    "ON CONFLICT (field, value) DO NOTHING"
+                )
 
         self.stdout.write(self.style.SUCCESS(f'Loaded {len(features)} country boundaries.'))

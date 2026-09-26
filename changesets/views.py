@@ -368,16 +368,33 @@ def _filtered_changesets(start_date, end_date, contributor, editor, imagery, lan
     end_date_exclusive = datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)
     changesets = changesets.filter(created_at__gte=start_date, created_at__lt=end_date_exclusive)
     if contributor:
-        changesets = changesets.filter(user__iexact=contributor)
+        changesets = changesets.filter(user__in=_canonical_values('contributor', contributor))
     if editor:
-        changesets = changesets.filter(created_by_family__iexact=editor)
+        changesets = changesets.filter(created_by_family__in=_canonical_values('editor', editor))
     if imagery:
-        changesets = changesets.filter(imagery_family__isnull=True) if imagery == NONE_BUCKET else changesets.filter(imagery_family__iexact=imagery)
+        changesets = changesets.filter(imagery_family__isnull=True) if imagery == NONE_BUCKET else changesets.filter(imagery_family__in=_canonical_values('imagery', imagery))
     if language:
-        changesets = changesets.filter(locale_family__isnull=True) if language == NONE_BUCKET else changesets.filter(locale_family__iexact=language)
+        changesets = changesets.filter(locale_family__isnull=True) if language == NONE_BUCKET else changesets.filter(locale_family__in=_canonical_values('language', language))
     if country:
-        changesets = changesets.filter(country_code__isnull=True) if country == NONE_BUCKET else changesets.filter(country_code__iexact=country)
+        changesets = changesets.filter(country_code__isnull=True) if country == NONE_BUCKET else changesets.filter(country_code__in=_canonical_values('country', country))
     return changesets
+
+
+def _canonical_values(field, value):
+    """The exact stored spelling(s) of a case-insensitive filter value, looked
+    up in FilterValue (indexed on (field, UPPER(value)), migration 0056), so
+    _filtered_changesets can filter the hypertable with plain equality/IN.
+    `UPPER(col) = UPPER(%s)` can't use compressed chunks' per-batch bloom
+    filters and forces every batch in range to be decompressed and scanned
+    (~1s per monthly chunk, measured), while equality skips non-matching
+    batches (~25ms). Falls back to the input as given when FilterValue has no
+    match (e.g. a value first seen in the last couple of minutes, before the
+    poller's periodic FilterValue refresh) — an exact-case match still works
+    then."""
+    matches = list(
+        FilterValue.objects.filter(field=field, value__iexact=value).values_list('value', flat=True)
+    )
+    return matches or [value]
 
 
 _FILTER_PARAMS = [
@@ -1037,7 +1054,7 @@ class AutocompleteView(APIView):
         summary='Autocomplete filter values',
         description='Up to 10 distinct known values for a filter field, matching a partial query — backs the dashboard\'s filter inputs.',
         parameters=[
-            OpenApiParameter('field', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, country.'),
+            OpenApiParameter('field', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country.'),
             OpenApiParameter('q', OpenApiTypes.STR, description='Partial value to match (case-insensitive, substring).'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
