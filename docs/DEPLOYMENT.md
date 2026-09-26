@@ -89,6 +89,24 @@ done
 docker compose run --rm --no-deps web python manage.py refresh_caggs 2005-04-01 <dump date>
 ```
 
+Pause the compression policy for the import (it would otherwise compress chunks the workers are
+still writing to), then compress the backlog chunk by chunk, oldest first, and re-enable it:
+
+```bash
+docker compose exec db psql -U osm_monitor -d osm_monitor -c \
+  "SELECT alter_job(job_id, scheduled => false) FROM timescaledb_information.jobs
+   WHERE proc_name = 'policy_compression' AND hypertable_name = 'changesets_changeset'"
+# ... import + refresh_caggs ...
+for c in $(docker compose exec -T db psql -U osm_monitor -d osm_monitor -At -c \
+    "SELECT chunk_schema||'.'||chunk_name FROM timescaledb_information.chunks
+     WHERE hypertable_name='changesets_changeset' AND NOT is_compressed
+       AND range_end < now() - interval '30 days' ORDER BY range_start"); do
+  docker compose exec -T db psql -U osm_monitor -d osm_monitor -c \
+    "SET statement_timeout = 0; SELECT compress_chunk('$c', if_not_compressed => true)"
+done
+# then the same alter_job(...) with scheduled => true
+```
+
 A single process without `--byte-range` (reading the `.bz2` directly) also works and refreshes
 the aggregates itself at the end, just slower. If a worker is interrupted, re-run it with the
 same `--byte-range`: already-imported rows are skipped by the existence check, or pass

@@ -11,7 +11,6 @@ history.
 
 - [Cross-dimension queries + CAgg cleanup](docs/todo/continuous-aggregates-migration.md) — all 9 dimension pairs (contributor/editor/imagery/language/country) now have their own CAggs; `GeoView` with any filter (different shape) still falls back to a raw scan and can time out; old rollup tables/index still need a drop migration.
 - [Empty stats for unmaterialized ranges](docs/todo/cagg-coverage-reporting.md) — aggregate endpoints return empty/zero instead of "no coverage" for date ranges the CAggs haven't materialized.
-- [Compression settings](docs/todo/compression-backlog.md) — `compress_segmentby` decision pending; a large uncompressed backlog should be compressed in a controlled one-chunk-at-a-time pass, not all at once by the policy.
 - [Gunicorn gthread — unverified under real traffic](docs/todo/gunicorn-gthread.md) — parked until there's real load to check against.
 - [Filter dropdown pre-population not working](docs/todo/dashboard-filter-dropdown-prepopulation.md) — not yet root-caused.
 - [Poller SequenceState checkpoint granularity](docs/todo/sequencestate-write-amplification.md) — checkpoints every sequence; every-N would cut write count but changes crash-recovery granularity, needs its own decision.

@@ -34,14 +34,13 @@ scanning. Confirmed via direct test: `toplist/?dimension={contributor,editor,ima
 &imagery=Mapbox` over a 3-month range all hit the 30s statement timeout and got cancelled, for
 every dimension tried.
 
-Root cause, confirmed via `timescaledb_information.compression_settings`: the hypertable's
-compression is `segmentby created_by_family` (editor) only (see
-`docs/todo/compression-backlog.md`) — a query that filters or groups by anything *other* than
-editor can't exclude compressed segments and ends up decompressing everything in range. Not
-fixable by adding more CAs (a CA per dimension *pair* doesn't scale — see `CLAUDE.md`'s "design for
-full history" principle); the real fix is either widening `compress_segmentby` (cost: lower
-compression ratio, and a backlog-recompression pass) or accepting that cross-dimension-filtered
-toplists stay slow/degrade gracefully (e.g. UI disables or caps the range for that combination).
+Root cause at the time: the hypertable's compression was `segmentby created_by_family` (editor)
+only, and filters used `UPPER(col) = UPPER(x)`, so a query that filtered or grouped by anything
+*other* than editor couldn't exclude compressed batches and ended up decompressing everything in
+range. Filters now match exact canonical values, which compressed chunks' per-batch bloom filters
+can use to skip batches (see `CLAUDE.md`'s "Compression" section). Grouping by a non-segmentby
+dimension over long raw ranges still decompresses everything in range; the pair CAggs below are
+what cover those.
 Needs a decision before doing more work here.
 
 **2026-09-20 addendum — reproduces even with zero compression involved.** Root-caused a live

@@ -92,7 +92,7 @@ class Command(BaseCommand):
                     with connection.cursor() as cursor:
                         # Same reasoning as backfill_geohash_and_country.py:
                         # at least one chunk in range is already compressed
-                        # (see docs/todo/compression-backlog.md), and a DML
+                        # (see CLAUDE.md's "Compression" section), and a DML
                         # UPDATE can't decompress more than
                         # max_tuples_decompressed_per_dml_transaction tuples
                         # per transaction by default.

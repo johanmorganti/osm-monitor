@@ -123,7 +123,7 @@ class Command(BaseCommand):
                     # needed: a DML UPDATE can't decompress more than
                     # max_tuples_decompressed_per_dml_transaction tuples per
                     # transaction by default, and at least one chunk is
-                    # already compressed (see docs/todo/compression-backlog.md).
+                    # already compressed (see CLAUDE.md's "Compression" section).
                     cursor.execute("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0")
                     start = time.monotonic()
                     cursor.execute(_BACKFILL_SQL, {

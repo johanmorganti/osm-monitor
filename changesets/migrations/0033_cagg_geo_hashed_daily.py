@@ -41,7 +41,7 @@ SELECT add_continuous_aggregate_policy('cagg_geo_hashed_daily',
 """
 
 # Compression, set up front rather than deferred like the raw table's
-# backlog (docs/todo/compression-backlog.md) — this CAgg is small (a geohash
+# backlog (CLAUDE.md's "Compression" section) — this CAgg is small (a geohash
 # CAgg over the full 2005-2026 history is expected in the same order as the
 # old fine CAgg's 6.5M rows) and, critically, `orderby` here isn't only
 # about compression ratio: TimescaleDB's compressed format stores a sparse
