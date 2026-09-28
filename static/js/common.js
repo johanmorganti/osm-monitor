@@ -365,10 +365,11 @@ function updateGeoLegend(legendDiv, cells, metric) {
 
 function renderGeoMap(initialGeo) {
     const map = L.map('geoMap', { preferCanvas: true }).setView([20, 0], 2);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        maxZoom: 19,
-        detectRetina: true,
+    // OpenFreeMap's Positron style: free, no API key or usage limits, and a
+    // light, low-contrast base so the density cells stay the focus.
+    L.maplibreGL({
+        style: 'https://tiles.openfreemap.org/styles/positron',
+        attribution: '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> <a href="https://www.openmaptiles.org/" target="_blank">&copy; OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
     }).addTo(map);
 
     const coarseLayer = L.layerGroup().addTo(map);
