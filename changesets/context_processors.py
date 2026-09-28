@@ -32,11 +32,14 @@ def datadog_rum(request):
     if os.environ.get('DD_RUM_REMOTE_CONFIGURATION_ID'):
         config['remoteConfiguration'] = {'id': os.environ['DD_RUM_REMOTE_CONFIGURATION_ID']}
     if os.environ.get('DD_RUM_PROXY_URL'):
-        # Send intake through a first-party domain instead of Datadog's
-        # (not blocked by ad blockers).
+        # Send intake (and load the SDK, below) through a first-party domain
+        # instead of Datadog's, which ad blockers block.
         config['proxy'] = os.environ['DD_RUM_PROXY_URL']
-    region = _SDK_REGIONS.get(config['site'], 'us1')
-    return {
-        'dd_rum_config': config,
-        'dd_rum_sdk_url': f'https://www.datadoghq-browser-agent.com/{region}/v7/datadog-rum.js',
-    }
+    if config.get('proxy'):
+        # The proxy also serves the SDK itself at /sdk.js, so the script
+        # isn't blocked either (Datadog's CDN domain is on blocklists).
+        sdk_url = config['proxy'].rstrip('/') + '/sdk.js'
+    else:
+        region = _SDK_REGIONS.get(config['site'], 'us1')
+        sdk_url = f'https://www.datadoghq-browser-agent.com/{region}/v7/datadog-rum.js'
+    return {'dd_rum_config': config, 'dd_rum_sdk_url': sdk_url}
