@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OSM Changeset Monitor</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    {% if dd_rum_config %}
+    {# Datadog RUM (optional, see changesets/context_processors.py). The site's own #}
+    {# origin is traced so RUM sessions link to the backend's APM traces. #}
+    {{ dd_rum_config|json_script:"dd-rum-config" }}
+    <script src="{{ dd_rum_sdk_url }}"></script>
+    <script>
+        if (window.DD_RUM) {
+            const config = JSON.parse(document.getElementById('dd-rum-config').textContent);
+            window.DD_RUM.init({ ...config, allowedTracingUrls: [window.location.origin] });
+        }
+    </script>
+    {% endif %}
 </head>
 <body class="bg-gray-100">
     <nav class="bg-white shadow-lg">
