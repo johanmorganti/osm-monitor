@@ -29,6 +29,10 @@ def datadog_rum(request):
         'trackLongTasks': True,
         'defaultPrivacyLevel': 'mask-user-input',
     }
+    # Remote configuration makes init asynchronous: RUM (and trace-header
+    # injection) only starts once the config has been fetched, so the API
+    # calls the dashboard fires at page load go out untraced and lose their
+    # RUM <-> APM link. Only set it if the remote config is worth that.
     if os.environ.get('DD_RUM_REMOTE_CONFIGURATION_ID'):
         config['remoteConfiguration'] = {'id': os.environ['DD_RUM_REMOTE_CONFIGURATION_ID']}
     if os.environ.get('DD_RUM_PROXY_URL'):

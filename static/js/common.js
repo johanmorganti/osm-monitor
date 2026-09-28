@@ -241,8 +241,25 @@ function apiUrl(path, extraParams) {
     return `${path}?${params.toString()}`;
 }
 
+// Resolves once Datadog RUM (optional, base.html) has started. Its init
+// returns synchronously, but it only starts injecting trace headers into
+// requests ~10-50ms later (measured), after setting up its session, so API
+// calls fired straight away at page load would lose their RUM <-> APM link.
+// Resolves immediately when RUM isn't on the page (not configured or
+// blocked), and after at most RUM_READY_TIMEOUT_MS otherwise (e.g. a session
+// sampled out, where RUM never starts), so the dashboard never waits long.
+const RUM_READY_TIMEOUT_MS = 300;
+const rumReady = new Promise(resolve => {
+    if (!window.DD_RUM || !window.DD_RUM.getInternalContext) return resolve();
+    const deadline = performance.now() + RUM_READY_TIMEOUT_MS;
+    (function poll() {
+        if (window.DD_RUM.getInternalContext() || performance.now() > deadline) resolve();
+        else setTimeout(poll, 10);
+    })();
+});
+
 function fetchJson(url, options) {
-    return fetch(url, options).then(r => {
+    return rumReady.then(() => fetch(url, options)).then(r => {
         if (!r.ok) return r.json().then(body => { throw new Error(body.error || `HTTP ${r.status} for ${url}`); });
         return r.json();
     });
