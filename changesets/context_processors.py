@@ -30,11 +30,13 @@ def datadog_rum(request):
         'defaultPrivacyLevel': 'mask-user-input',
     }
     # Remote configuration makes init asynchronous: RUM (and trace-header
-    # injection) only starts once the config has been fetched, so the API
-    # calls the dashboard fires at page load go out untraced and lose their
-    # RUM <-> APM link. Only set it if the remote config is worth that.
+    # injection) only starts once the config has been fetched, so page-load
+    # API calls wait for it (see rumReady in static/js/common.js).
     if os.environ.get('DD_RUM_REMOTE_CONFIGURATION_ID'):
-        config['remoteConfiguration'] = {'id': os.environ['DD_RUM_REMOTE_CONFIGURATION_ID']}
+        config['remoteConfigurationId'] = os.environ['DD_RUM_REMOTE_CONFIGURATION_ID']
+        if os.environ.get('DD_RUM_PROXY_URL'):
+            # Fetched through the proxy too, at /config.json.
+            config['remoteConfigurationProxy'] = os.environ['DD_RUM_PROXY_URL'].rstrip('/') + '/config.json'
     if os.environ.get('DD_RUM_PROXY_URL'):
         # Send intake (and load the SDK, below) through a first-party domain
         # instead of Datadog's, which ad blockers block.
