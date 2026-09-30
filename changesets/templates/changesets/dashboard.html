@@ -96,15 +96,15 @@
     </h2>
 
     <!-- KPI + time series -->
-    <div class="grid grid-cols-6 gap-8 mb-8">
-        <div class="col-span-1 bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+    <div class="grid grid-cols-1 lg:grid-cols-6 gap-4 md:gap-8 mb-8">
+        <div class="lg:col-span-1 bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
             <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Total Changesets</h3>
             <div class="relative inline-block group w-fit cursor-help">
                 <div id="totalChangesets" class="text-4xl font-bold text-blue-600 border-b border-dotted border-blue-300">–</div>
                 <div id="totalChangesets-tooltip" class="absolute left-0 bottom-full mb-2 hidden group-hover:block whitespace-nowrap bg-gray-800 text-white text-xs rounded px-2 py-1 z-10"></div>
             </div>
         </div>
-        <div class="col-span-5 bg-white rounded-lg shadow-lg p-6">
+        <div class="lg:col-span-5 bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-4">Changesets Over Time</h3>
             <div class="relative" style="min-height: 300px">
                 <div id="changesetChart-spinner" class="absolute inset-0 flex items-center justify-center">
@@ -118,7 +118,7 @@
     <!-- Contributors — single full-width widget, shown first: usernames need
          more horizontal room than editor/imagery/country names do. -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-12">
-        <div class="grid grid-cols-2 gap-8">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
             <div>
                 <h3 class="text-lg font-semibold mb-1">Top 20 Contributors</h3>
                 <p class="text-xs text-gray-400 mb-3">Click a bar to filter by contributor</p>
@@ -142,7 +142,7 @@
     </div>
 
     <!-- 3 breakdown groups -->
-    <div class="grid grid-cols-3 gap-8 mb-12">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-8 mb-12">
         <!-- Editors -->
         <div class="bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-1">Top 20 Editors</h3>
@@ -213,7 +213,7 @@
     </h2>
 
     <!-- KPIs -->
-    <div class="grid grid-cols-2 gap-8 mb-8">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 mb-8">
         <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
             <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Total Objects Changed</h3>
             <div class="relative inline-block group w-fit cursor-help">
@@ -228,7 +228,7 @@
     </div>
 
     <!-- Top 20 by objects -->
-    <div class="grid grid-cols-2 gap-8 mb-12">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 mb-12">
         <div class="bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-1">Top 20 Contributors by Objects Changed</h3>
             <p class="text-xs text-gray-400 mb-3">Click a bar to filter by contributor</p>
