@@ -3,7 +3,7 @@
 The old hand-rolled rollup system (`DailyVolume`/`DailyBreakdown` +
 `refresh_rollups_incremental()`/`refresh_rollups_reconcile()` in `changesets/rollups.py`) has been
 fully replaced by TimescaleDB continuous aggregates (see "Aggregates" in `docs/ARCHITECTURE.md`)
-— `views.py` reads only the CAggs now.
+— the query code reads only the CAggs now.
 
 Neither ingestion path needs its own CAgg-refresh code for *live* data: every CAgg (including the
 3 pair CAggs below) carries its own `add_continuous_aggregate_policy`, a Timescale-managed
@@ -93,7 +93,7 @@ meaningfully added to that ongoing load.
 
 Built the 3 pairs *not* involving contributor — `cagg_editor_imagery_daily`,
 `cagg_editor_locale_daily`, `cagg_imagery_locale_daily` (migration 0041, daily-grain only; models
-in `changesets/models.py`; `PAIR_CAGGS`/`_pair_cagg_lookup` in `views.py` wire them into
+in `changesets/models.py`; `PAIR_CAGGS`/`pair_cagg_lookup` in `changesets/analytics/timescale/caggs.py` wire them into
 `ToplistView` and `TimeseriesView`'s `group_by`+filter path). Backfilled via the new `backfill_dimension_pair_caggs` management command, in small 7-day batches (default is smaller
 than `refresh_caggs_over_range`'s usual 30, to keep each refresh's memory footprint small — see the
 `--batch-days` flag to widen it later once proven safe).
@@ -106,7 +106,7 @@ original bug report's `toplist?language=ES&dimension=editor` and `&dimension=ima
 query"):
 - **`GeoView`** with any active filter — a different shape entirely (dimension x geohash, not
   dimension x dimension; geo cells aren't a small fixed set of names the way editor/imagery/
-  language are), not attempted in this pass. See `GeoView`'s docstring in `views.py`.
+  language are), not attempted in this pass. See `GeoView` in `changesets/api/views.py`.
 - The degenerate case where the filtered dimension *equals* the requested `dimension`/`group_by`
   (e.g. `toplist?language=ES&dimension=language`) — answerable today from the existing
   single-dimension CAgg directly (it's just that one filtered value's own total), but
@@ -118,7 +118,7 @@ query"):
 `changeset_user_upper_idx`'s selectivity, since the filter there is never on `user`) was confirmed
 as the concrete remaining slow path, so built the 3 contributor pairs anyway:
 `cagg_contributor_editor_daily`, `cagg_contributor_imagery_daily`, `cagg_contributor_locale_daily`
-(migration 0043, same daily-grain-only shape as 0041's three). `PAIR_CAGGS` in `views.py` no longer
+(migration 0043, same daily-grain-only shape as 0041's three). `PAIR_CAGGS` (`changesets/analytics/timescale/caggs.py`) no longer
 excludes contributor — the lookup is fully generic now across all 6 pairs.
 
 The cardinality cost was real, not just theoretical: backfilling the 3 non-contributor pairs

@@ -238,7 +238,7 @@ class CaggVolumeDaily(models.Model):
     """Unmanaged mapping onto the cagg_volume_daily continuous aggregate (see
     migration 0023) — the daily-grain counterpart to CaggVolumeHourly, used
     by TimeseriesView's ungrouped path for ranges too wide for hourly grain
-    to stay near the ~300-point target (see _pick_interval in views.py).
+    to stay near the ~300-point target (see pick_interval in changesets/api/params.py).
     Closes the bug where a wide ungrouped range used to silently truncate to
     only the oldest 15 days of hourly data instead of showing the full range
     at a coarser grain."""
@@ -257,7 +257,7 @@ class _CaggHourly(models.Model):
     (cagg_editor_hourly, cagg_imagery_hourly, cagg_locale_hourly,
     cagg_contributor_hourly) — same shape as _CaggDaily, different grain.
     Exists so TimeseriesView's group_by paths can also auto-pick hourly for
-    narrow ranges (see _pick_interval/CAGG_MODELS_HOURLY in views.py),
+    narrow ranges (see pick_interval in changesets/api/params.py and CAGG_MODELS_HOURLY in changesets/analytics/timescale/caggs.py),
     instead of being stuck at daily grain regardless of range width."""
     bucket = models.DateTimeField(primary_key=True)  # not a real uniqueness claim — see _CaggDaily's comment
     name = models.CharField(max_length=255)
@@ -320,7 +320,7 @@ class CaggGeoHashedDaily(models.Model):
 # TimeseriesView's group_by+filter both need. Deliberately not abstracted
 # into a shared base like _CaggDaily/_CaggHourly: each pair's two name
 # columns are named after their own dimension (contributor/editor/imagery/
-# locale/country) for readability at the query site (views.py), so the
+# locale/country) for readability at the query site (changesets/analytics/timescale/), so the
 # field names genuinely differ per pair rather than being interchangeable.
 #
 # The 3 editor/imagery/language pairs (migration 0041) shipped first;
@@ -454,7 +454,7 @@ class CaggEditorVersionDaily(models.Model):
     """Editor family -> exact created_by version string (e.g. "StreetComplete"
     -> "StreetComplete 55.0"), migration 0050/0051 — backs ToplistView's
     dimension=editor_version drill-down (requires an `editor` filter, see
-    views.py's RAW_ONLY_DIMENSIONS)."""
+    changesets/analytics/timescale/caggs.py's RAW_ONLY_DIMENSIONS)."""
     bucket = models.DateTimeField(primary_key=True)
     editor = models.CharField(max_length=255)
     version = models.CharField(max_length=255)

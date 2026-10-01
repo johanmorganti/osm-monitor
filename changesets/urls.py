@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import ChangesetQueryView, AutocompleteView, BatchProgressView, TimeseriesView, SummaryView, ToplistView, GeoView
+from .api.views import ChangesetQueryView, AutocompleteView, BatchProgressView, TimeseriesView, SummaryView, ToplistView, GeoView
 
 
 urlpatterns = [

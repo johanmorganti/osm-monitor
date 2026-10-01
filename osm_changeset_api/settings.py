@@ -171,6 +171,9 @@ LOGGING = {
     },
 }
 
+# Analytics backend answering the public API (see changesets/analytics/).
+ANALYTICS_BACKEND = os.environ.get('ANALYTICS_BACKEND', 'timescale')
+
 # Rest Framwork
 REST_FRAMEWORK = {
     # BrowsableAPIRenderer renders every response through a full HTML

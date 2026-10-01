@@ -21,7 +21,7 @@ const CATEGORICAL = [
     '#4a3aa7', // violet
 ];
 const OTHER_COLOR = '#c3c2b7';   // neutral gray — "Other" isn't an identity, so it doesn't spend a hue
-const NONE_BUCKET = '(none)';   // cagg_imagery_daily/cagg_country_daily's bucket for changesets with no tag (see views.py) — gets a normal categorical color, not OTHER_COLOR: it's real, often-dominant volume (not a leftover-tail catch-all like "Other"), so graying it out would hide exactly the spikes it exists to reveal
+const NONE_BUCKET = '(none)';   // cagg_imagery_daily/cagg_country_daily's bucket for changesets with no tag (see NONE_BUCKET in changesets/analytics/base.py) — gets a normal categorical color, not OTHER_COLOR: it's real, often-dominant volume (not a leftover-tail catch-all like "Other"), so graying it out would hide exactly the spikes it exists to reveal
 const RANKING_COLOR = CATEGORICAL[0]; // single-series ranking bars all take one slot, per the nominal-categorical rule
 
 const INK_SECONDARY = '#52514e';

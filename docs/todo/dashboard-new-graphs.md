@@ -30,7 +30,7 @@ full treatment. `DIMENSION_FIELDS`/`CAGG_MODELS` entries, `cagg_country_daily`/`
 (migration 0045) and 3 pair CAggs (migration 0048) — see `docs/todo/continuous-aggregates-
 migration.md`'s 2026-09-22 entry and `CLAUDE.md`'s dimension-naming table.
 
-**Geographic map.** `GeoView` (`/api/changesets/geo/`, `changesets/views.py`) + `cagg_geo_hashed_daily`
+**Geographic map.** `GeoView` (`/api/changesets/geo/`, `changesets/api/views.py`) + `cagg_geo_hashed_daily`
 (migration `0033_cagg_geo_hashed_daily`) + a Leaflet grid map on the dashboard (`dashboard.js`'s
 `renderGeoMap` — one `L.rectangle` per cell, colored by a log-scale sequential blue ramp with a
 legend, not a Leaflet.heat blurred/interpolated blob layer: rectangles show the true cell

@@ -29,7 +29,7 @@ const RANKING_LIMIT = 1000;
 const OTHERS_DISPLAY_LIMIT = 20;
 
 // This page defaults to the last *year*, not the app-wide 7-day default
-// (see _resolve_range_and_filters in views.py) — a meaningful window for
+// (see resolve_filters in changesets/api/params.py) — a meaningful window for
 // "top editor families" needs more history than a week. Set client-side,
 // before any fetch, via history.replaceState (no reload) so every apiUrl()
 // call below (which reads window.location.search) already sees it — same

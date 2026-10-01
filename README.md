@@ -80,7 +80,9 @@ All the aggregate endpoints share the same filters (`start_date`, `end_date`, `c
 ```
 changesets/
   models.py                      # Changeset (hypertable), CAgg models, FilterValue, job state
-  views.py                       # Dashboard/Editors shells + every API view
+  views.py                       # HTML page shells (Overview, Editors, poller status)
+  api/                           # Public JSON API: endpoints, parameter parsing, OpenAPI annotations
+  analytics/                     # Analytics backend interface + implementations (timescale/)
   serializers.py                 # DRF serializer for Changeset
   urls.py                        # /api/... URL patterns
   osm_fetcher.py                 # Fetches & parses OSM replication XML, batched upsert logic

@@ -57,7 +57,7 @@ TimescaleDB.
 
 Queries and Django ORM code are otherwise unaffected — TimescaleDB is a Postgres extension, not a
 different query interface. `changesets/rollups.py`'s raw SQL and every `Changeset.objects...`
-query in `views.py` work exactly as they would against a plain table.
+query in the Timescale backend work exactly as they would against a plain table.
 
 ## Aggregates: precomputed via TimescaleDB continuous aggregates, not query-time aggregation
 
@@ -67,13 +67,13 @@ materialized views — migration `0020` onward) instead of aggregating the raw t
 request. There's one CAgg per (dimension × grain): `cagg_volume_{hourly,daily}` for plain volume,
 and `cagg_{editor,imagery,locale,contributor}_{hourly,daily}` for per-dimension breakdowns — see
 `changesets/models.py`'s `Cagg*` classes (all `managed=False`; TimescaleDB owns their schema and
-refresh, Django only maps onto them for querying) and `changesets/views.py`'s `CAGG_MODELS` /
+refresh, Django only maps onto them for querying) and `changesets/analytics/timescale/caggs.py`'s `CAGG_MODELS` /
 `CAGG_MODELS_HOURLY` mapping.
 
 A query filtered by *two or more* of those dimensions at once (e.g. a toplist filtered by
 `imagery`, grouped by `editor`) has no matching CAgg — each one only tracks its own single
-dimension — and falls back to querying `Changeset` directly (`changesets/views.py`'s
-`_filtered_changesets`). This is a real, currently-unsolved performance cliff for that specific
+dimension — and falls back to querying `Changeset` directly (`changesets/analytics/timescale/backend.py`'s
+`filtered_changesets`). This is a real, currently-unsolved performance cliff for that specific
 query shape; see `docs/todo/continuous-aggregates-migration.md`.
 
 CAggs refresh themselves via TimescaleDB's own background job scheduler
@@ -104,7 +104,7 @@ Dropping them outright is a pending follow-up migration — see
 
 ## API design
 
-`TimeseriesView` / `SummaryView` / `ToplistView` (`changesets/views.py`) replaced an earlier
+`TimeseriesView` / `SummaryView` / `ToplistView` (`changesets/api/views.py`) replaced an earlier
 single bundled stats endpoint. They're split by resource *shape*, not business concept —
 analogous to a metrics platform's widget types:
 
@@ -116,8 +116,8 @@ analogous to a metrics platform's widget types:
   exposed (e.g. contributor × count) are just other parameter values now, not new code.
 - **`summary`**: the handful of single-number KPIs for a range.
 
-All three share filter-resolution and queryset-building helpers (`_resolve_range_and_filters`,
-`_filtered_changesets`, `DIMENSION_FIELDS`) rather than duplicating that logic per view.
+All three share filter-resolution and queryset-building helpers (`resolve_filters`,
+`filtered_changesets`, `DIMENSION_FIELDS`) rather than duplicating that logic per view.
 `dashboard.js` fetches all of what it needs in parallel (`Promise.all`) — more requests than the
 old bundled endpoint, but each is small and independently cacheable, and total load time is
 bounded by the slowest request rather than their sum.

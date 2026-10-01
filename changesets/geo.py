@@ -1,5 +1,5 @@
 """Shared SQL fragments for the changeset geo/heatmap feature (GeoView in
-views.py; migrations 0025_cagg_geo_daily and 0027_cagg_geo_fine_daily) —
+changesets/api/views.py and the Timescale backend; migrations 0025_cagg_geo_daily and 0027_cagg_geo_fine_daily) —
 kept in one place so the two continuous aggregates' defining queries and
 GeoView's raw-fallback queryset can never silently drift on grid size or
 bbox-quality threshold; they live in different files and a normal diff
@@ -129,7 +129,7 @@ def viewport_overlap_sql():
 # Precision 6 (~1.2km x 0.61km cells) — finer than the old fine grid's 0.05°
 # (~5.5km), for headroom to zoom in further later without another schema
 # change. GeoView resolves a requested resolution/zoom to a prefix length in
-# [1, GEOHASH_PRECISION] at query time (see views.py) rather than storing
+# [1, GEOHASH_PRECISION] at query time (see GeoView in changesets/api/views.py) rather than storing
 # multiple precisions.
 GEOHASH_PRECISION = 6
 

@@ -45,7 +45,7 @@ a bare `TemplateView` with no `get_context_data` — it does no DB access.
 layout or charts, and the data was only reachable by loading the HTML page. The split means:
 - Chart logic changes → edit `static/js/dashboard.js` only
 - HTML/layout changes → edit `dashboard.html` only
-- Backend/data changes → edit `views.py` only
+- API params/validation/response shape → `changesets/api/`; how the data is fetched → the analytics backend (`changesets/analytics/<backend>/`), see "Analytics backends" below
 - The aggregated data itself is a real API endpoint other tools can call directly
 
 ### Stats split into timeseries/summary/toplist, not one bundled endpoint
@@ -57,16 +57,37 @@ handles anything date-bucketed (plain volume via `group_by=none`, or per-name se
 (`dimension` × `metric=count|objects`), `summary` is the handful of single-number KPIs. This
 means a `contributor`×`count` or `language`×`objects` toplist — combinations the old bundled
 endpoint never exposed — are just other parameter values on the same endpoint, not new code.
-Shared filter-resolution/queryset logic lives in module-level helpers in `views.py`
-(`_resolve_range_and_filters`, `_filtered_changesets`, `DIMENSION_FIELDS`) rather than being
+Shared filter-resolution logic lives in `changesets/api/params.py` (`resolve_filters`, `pick_interval`)
+and the backend's query helpers (`filtered_changesets`, `DIMENSION_FIELDS`) rather than being
 duplicated per view. Trade-off: the dashboard now makes ~10 parallel requests to render instead
 of 1 — acceptable since they're fetched concurrently (bounded by the slowest, not the sum) and
 each is now independently small/cacheable, but a real cost avoided if the "aggregate everything"
 endpoint had stayed.
 
+### Analytics backends: the API asks, a backend answers (2026-10-01)
+The public JSON API (`changesets/api/`) is backend-agnostic: each view parses and validates its
+parameters, applies the API-level rules (date defaults, `pick_interval`, geohash precision per
+viewport, response shapes, error messages) and asks the configured analytics backend
+(`changesets/analytics/`, selected by `ANALYTICS_BACKEND`, default `timescale`) for the data.
+The contract is `changesets/analytics/base.py`: a `Filters` value object plus `summary`,
+`timeseries`, `toplist`, `geo_cells`, `changesets`, `autocomplete`, each returning plain data
+shaped like the JSON response.
+
+**Why:** to run other databases (ClickHouse first) behind the exact same endpoints and compare
+them byte for byte, then keep whichever runs better on this machine. The interface sits at the
+level of operations, not SQL, so each backend stays idiomatic: the Timescale backend routes
+between CAggs, pair CAggs and the raw hypertable (`changesets/analytics/timescale/`); another
+backend may simply scan its raw table.
+
+**How to apply:** behavior that defines the public API goes in `changesets/api/`, never in a
+backend; how a backend gets the numbers stays inside that backend. The refactor that introduced
+this split was verified by snapshotting 46 fixed API calls before and after (all byte-identical)
+and diffing the OpenAPI schema (identical). Do the same for any change meant to be
+behavior-neutral.
+
 ### Public API + docs
 All DRF views carry `@extend_schema` annotations (drf-spectacular) so `/api/docs/` stays
-accurate as new endpoints/params are added — update the annotation in `views.py` alongside any
+accurate as new endpoints/params are added — update the annotation in `changesets/api/views.py` alongside any
 signature change, don't just rely on the docstring.
 
 ### Dimension naming: DB column vs. API param vs. UI label
@@ -79,7 +100,7 @@ disagreeing with the one that had already shipped.
 
 The convention, and the current mapping for every dimension:
 
-| DB column (`Changeset` field) | API param / `DIMENSION_FIELDS` key | UI label |
+| DB column (`Changeset` field) | API param (`DIMENSIONS` / `DIMENSION_FIELDS` key) | UI label |
 |---|---|---|
 | `user` | `contributor` | Contributor |
 | `created_by_family` | `editor` | Editor |
@@ -118,7 +139,7 @@ under a real `COALESCE(<field>, '(none)')` bucket rather than filtering them out
 toward total volume and must not vanish from that dimension's breakdown just because it left one
 field blank — a `WHERE ... IS NOT NULL` CAgg silently drops that volume from its own chart while
 `SummaryView`'s total keeps counting it, which reads as a data bug from the dashboard rather than a
-query choice. `views.py`'s `_filtered_changesets` special-cases the `NONE_BUCKET = '(none)'`
+query choice. The Timescale backend's `filtered_changesets` special-cases the `NONE_BUCKET = '(none)'`
 sentinel value to filter on `<field>__isnull=True` (not `__iexact='(none)'`) so clicking that
 bucket matches the real NULL rows; `dashboard.js` styles it with the same neutral gray as "Other"
 rather than a random hue. `cagg_editor_daily`/`cagg_contributor_daily` don't need this —
@@ -180,7 +201,7 @@ point-in-polygon against `centroid`). `country` was schema + backfill only at fi
 daily`/`hourly` (migration 0045), an `UPPER(country_code)` expression index (migration 0047, same
 per-chunk `CONCURRENTLY` build as `locale_family`'s below), and 3 pair CAggs — country×editor,
 country×imagery, country×contributor (migration 0048, no country×language — see PAIR_CAGGS'
-comment in `views.py`). `language` itself was deliberately *not* removed from the API
+comment in `changesets/analytics/timescale/caggs.py`). `language` itself was deliberately *not* removed from the API
 (`DIMENSION_FIELDS`, its CAggs) — only from the dashboard UI — since it's a real, documented public
 API param and CLAUDE.md's own dimension-naming rules treat removing one as a breaking change, not a
 quick fix.
@@ -287,8 +308,8 @@ would mean little compression and huge overhead. Measured on one 1.2M-row monthl
 
 **Bloom filters only help equality/IN predicates.** `UPPER(col) = UPPER(x)` (Django `__iexact`)
 can't use them and decompresses every batch in range: ~990ms per monthly chunk, against ~23ms for
-the same lookup by equality. So `_filtered_changesets` resolves case-insensitive input to its exact
-stored spelling(s) via `FilterValue` (`_canonical_values`, indexed on `(field, UPPER(value))`)
+the same lookup by equality. So `filtered_changesets` (Timescale backend) resolves case-insensitive input to its exact
+stored spelling(s) via `FilterValue` (`canonical_values`, indexed on `(field, UPPER(value))`)
 and filters with `IN`. Any new raw-table filter must follow the same pattern, not `__iexact`/
 `__icontains`.
 
@@ -356,7 +377,7 @@ Two concrete examples already hit by this project: the old `DailyVolume`/
 column), so it got no chunk exclusion and its cost grew with total chunk count regardless of how
 much data had actually changed — measured at ~15% of total DB time before being
 replaced by the CAgg design (see "Aggregates" in `docs/ARCHITECTURE.md`); `TimeseriesView`'s
-bucket-width picker (`_pick_interval`, migration `0023`) only offers hour/day grains — daily is
+bucket-width picker (`pick_interval` in `changesets/api/params.py`, migration `0023`) only offers hour/day grains — daily is
 ~400 points over a year but thousands over multi-year ranges, so a weekly/monthly tier is the
 natural next step once multi-year ranges are common.
 Prefer incremental/watermark-based designs over periodic full-table rebuilds, and watermark on the
@@ -367,7 +388,10 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 | Path | Role |
 |---|---|
 | `changesets/models.py` | `Changeset` (hypertable) + rollup/state/job models |
-| `changesets/views.py` | All views (dashboard, API, import landing) |
+| `changesets/views.py` | HTML page shells only (Overview, Editors, poller status) |
+| `changesets/api/` | Public JSON API, backend-agnostic: `views.py` (endpoints + OpenAPI annotations), `params.py` (parsing, defaults, `pick_interval`), `schema.py` |
+| `changesets/analytics/` | Analytics backend interface (`base.py`: `Filters`, `AnalyticsBackend`, `NONE_BUCKET`, `DIMENSIONS`) + `registry.py` (`ANALYTICS_BACKEND`) |
+| `changesets/analytics/timescale/` | TimescaleDB backend: CAgg routing (`caggs.py`), raw fallback + queries (`backend.py`), exact-value filter resolution (`canonical.py`) |
 | `changesets/serializers.py` | DRF serializer for `Changeset` |
 | `changesets/urls.py` | API URL patterns (`/api/…`) |
 | `osm_changeset_api/urls.py` | Root URL conf (mounts API + dashboard) |
@@ -392,7 +416,7 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 - Initial sequence on first poller run: pass `--start <seq>` or set `INITIAL_SEQUENCE` env var.
 - `TimeseriesView`/`SummaryView`/`ToplistView` (aggregated stats) default to the last 7 days when
   no date params are given; `ChangesetQueryView` (raw record list) defaults to the last 24 hours
-  — it has no unfiltered "everything" mode, see its docstring in `views.py`.
+  — it has no unfiltered "everything" mode, see its docstring in `changesets/api/views.py`.
 
 ## Documentation conventions
 
@@ -401,7 +425,7 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 history (evidence, numbers, false starts) inline. As of 2026-09-18 it holds **one line per item
 only**: enough to know what it is and whether it's relevant, with a link to
 `docs/todo/<slug>.md` for the reasoning, evidence, and remaining steps. Same split this project
-already uses elsewhere — `dashboard.js`/`views.py`/`dashboard.html` stay separate for the same
+already uses elsewhere — `dashboard.js`/the API views/`dashboard.html` stay separate for the same
 reason (see "Template / JS separation" earlier in this file), and this AI's own persistent memory
 system uses the identical index-plus-detail-file pattern (a short `MEMORY.md` index, one file per
 topic).
