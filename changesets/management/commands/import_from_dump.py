@@ -7,9 +7,8 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from django.core.management.base import BaseCommand, CommandError
 from django.db import DatabaseError, connection, transaction
 
-from changesets.cagg_maintenance import refresh_caggs_over_range
+from changesets.ingest.writers import get_writers
 from changesets.osm_fetcher import import_changeset_batch
-from changesets.rollups import refresh_filter_values_over_range
 
 logger = logging.getLogger(__name__)
 
@@ -325,36 +324,21 @@ class Command(BaseCommand):
             },
         )
 
-        # Every CAgg (stats + geo), not just the "stats" ones, plus
-        # FilterValue (autocomplete) — this run's rows land far outside
-        # every CAgg policy's 7-day start_offset window (see CLAUDE.md's
-        # "Old-dated rows..." section) and, unlike poll_sequences.py, this
-        # command never otherwise touches FilterValue at all (it has no
-        # equivalent of the poller's own periodic refresh_filter_values_
-        # incremental() call). `import_changeset_batch`'s existence check
-        # means a *skipped* (already-present) row's aggregates were already
-        # correct from whenever it was first imported — so none of this
-        # needs to run when nothing was actually created or updated.
+        # Bulk writes land far outside the live window, so each writer gets its
+        # post-backfill maintenance over the imported range (Timescale: refresh
+        # every CAgg and FilterValue; see TimescaleWriter.after_backfill).
+        # Skipped (already present) rows were already accounted for when first
+        # imported, so nothing to do when nothing was created or updated.
         if options['skip_cagg_refresh']:
-            self.stdout.write('Skipping CAgg/FilterValue refresh (--skip-cagg-refresh).')
+            self.stdout.write('Skipping post-import maintenance (--skip-cagg-refresh).')
         elif (total_created or total_updated) and min_created_at is not None:
             refresh_end = max_created_at + timedelta(days=1)
-            self.stdout.write(f'Refreshing all CAggs over {min_created_at.date()}..{refresh_end.date()}...')
             logger.info(
-                "Full-dump import: starting CAgg refresh",
+                "Full-dump import: starting post-import maintenance",
                 extra={'osm.cagg_refresh.range_start': str(min_created_at.date()), 'osm.cagg_refresh.range_end': str(refresh_end.date())},
             )
-            refresh_caggs_over_range(min_created_at, refresh_end, stdout=self.stdout)
-            self.stdout.write(self.style.SUCCESS('CAgg refresh complete.'))
-
-            # Range-scoped, not refresh_filter_values_incremental()'s
-            # watermarked version: that watermark tracks the live poller's
-            # forward progress, and this command's whole purpose is
-            # historical (often *older*) data — `created_at >= watermark`
-            # would silently skip it. See rollups.py's
-            # refresh_filter_values_over_range() docstring.
-            self.stdout.write('Refreshing FilterValue over the same range...')
-            refresh_filter_values_over_range(min_created_at, refresh_end)
-            self.stdout.write(self.style.SUCCESS('FilterValue refresh complete.'))
+            for writer in get_writers():
+                writer.after_backfill(min_created_at, refresh_end, stdout=self.stdout)
+            self.stdout.write(self.style.SUCCESS('Post-import maintenance complete.'))
         else:
-            self.stdout.write('Nothing created or updated — skipping CAgg/FilterValue refresh.')
+            self.stdout.write('Nothing created or updated — skipping post-import maintenance.')

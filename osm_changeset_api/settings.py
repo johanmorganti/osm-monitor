@@ -174,6 +174,9 @@ LOGGING = {
 # Analytics backend answering the public API (see changesets/analytics/).
 ANALYTICS_BACKEND = os.environ.get('ANALYTICS_BACKEND', 'timescale')
 
+# Storage writers ingestion feeds, primary first (see changesets/ingest/writers/).
+INGEST_BACKENDS = [b.strip() for b in os.environ.get('INGEST_BACKENDS', 'timescale').split(',') if b.strip()]
+
 # Rest Framwork
 REST_FRAMEWORK = {
     # BrowsableAPIRenderer renders every response through a full HTML

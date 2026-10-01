@@ -84,6 +84,7 @@ changesets/
   api/                           # Public JSON API: endpoints, parameter parsing, OpenAPI annotations
   analytics/                     # Analytics backend interface + implementations (timescale/)
   ingest/locate.py               # geohash + country for each changeset, computed at ingest
+  ingest/writers/                # Storage writers ingestion feeds (timescale/)
   serializers.py                 # DRF serializer for Changeset
   urls.py                        # /api/... URL patterns
   osm_fetcher.py                 # Fetches & parses OSM replication XML, batched upsert logic

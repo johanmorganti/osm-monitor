@@ -79,6 +79,15 @@ level of operations, not SQL, so each backend stays idiomatic: the Timescale bac
 between CAggs, pair CAggs and the raw hypertable (`changesets/analytics/timescale/`); another
 backend may simply scan its raw table.
 
+Ingestion mirrors this on the write side: the poller and `import_from_dump` parse each batch
+once (`osm_fetcher`, then `ingest/locate.py`) and hand the same records to every writer listed in
+`INGEST_BACKENDS` (default `timescale`; `changesets/ingest/writers/`). A writer upserts by
+`changeset_id` (replace only when `changes_count` grew) and is idempotent, so a batch that failed on
+any writer is simply retried on all of them; `after_backfill(start, end)` is its post-bulk-import
+maintenance (Timescale: refresh CAggs + FilterValue). Verified with a differential test: 3 real
+replication sequences imported inside a rolled-back transaction, with rows pre-arranged to hit the
+create, update and skip paths, giving identical counts and rows before and after the refactor.
+
 **How to apply:** behavior that defines the public API goes in `changesets/api/`, never in a
 backend; how a backend gets the numbers stays inside that backend. The refactor that introduced
 this split was verified by snapshotting 46 fixed API calls before and after (all byte-identical)
@@ -419,6 +428,7 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 | `osm_changeset_api/urls.py` | Root URL conf (mounts API + dashboard) |
 | `changesets/osm_fetcher.py` | Fetches & parses OSM replication XML |
 | `changesets/ingest/locate.py` | geohash + country for parsed changesets (Shapely/pyproj), used at ingest |
+| `changesets/ingest/writers/` | Ingestion storage writers (`base.py` contract, `timescale.py`), selected by `INGEST_BACKENDS` |
 | `changesets/rollups.py` | Precomputed daily aggregates behind the unfiltered dashboard view |
 | `changesets/geo.py` | Shared grid-cell/bbox-quality SQL for the geo heatmap (`cagg_geo_daily`/`cagg_geo_fine_daily` + `GeoView`) |
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |

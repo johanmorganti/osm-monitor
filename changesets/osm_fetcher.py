@@ -4,11 +4,9 @@ from os import path
 import requests
 import xml.etree.ElementTree as ET
 import gzip
-from .models import Changeset
 from .ingest.locate import locate
-from collections import defaultdict
-from datetime import datetime, timedelta
-from django.db.models import Q
+from .ingest.writers import get_writers
+from datetime import datetime
 from django.utils import timezone
 from ddtrace import tracer
 import json
@@ -128,17 +126,21 @@ def _parse_changeset_element(changeset, log_extra):
 
     for attribute, value in changeset.attrib.items():
         if attribute in COLUMNS_MAPPING:
-            if attribute == "open":
+            # Typed by the *column* name: the raw attribute names differ for
+            # some ("id", "num_changes", "uid"), which used to leave those
+            # three as strings (the database cast them on insert).
+            column = COLUMNS_MAPPING[attribute]
+            if column == "open":
                 value = value.lower() == 'true'
-            elif attribute in ["changes_count", "comments_count", "user_id"]:
+            elif column in ["changeset_id", "changes_count", "comments_count", "user_id"]:
                 value = int(value)
-            elif attribute in ["min_lat", "max_lat", "min_lon", "max_lon"]:
+            elif column in ["min_lat", "max_lat", "min_lon", "max_lon"]:
                 value = float(value)
-            elif attribute in ["created_at", "closed_at"]:
+            elif column in ["created_at", "closed_at"]:
                 naive_datetime = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
                 value = timezone.make_aware(naive_datetime, timezone.utc) # prevents from RuntimeWarning about time zone
 
-            changeset_to_add[COLUMNS_MAPPING[attribute]] = value
+            changeset_to_add[column] = value
         else:
             logger.warning(
                 "Unknown changeset attribute",
@@ -270,123 +272,19 @@ def _parse_changeset_element(changeset, log_extra):
 
 
 def import_changeset_batch(changeset_elements, log_extra):
-    """Batched existence-check + insert/update for a list of <changeset> XML
-    elements, from any source (a replication sequence file, or a slice of the
-    full planet changesets dump). One query for the whole batch instead of
-    one per changeset, since the DB is a separate networked Postgres instance.
+    """Parse a list of <changeset> XML elements (a replication sequence or a
+    slice of the planet dump) once, locate them (geohash + country), and hand
+    the same records to every configured writer (settings.INGEST_BACKENDS, see
+    changesets/ingest/writers/). Returns the primary (first) writer's
+    (created, skipped, updated).
 
-    Returns (created_count, skipped_count, updated_count)."""
-    # A replication sequence (or dump slice) covers one narrow time window,
-    # so bounding by it lets chunk exclusion skip every other chunk —
-    # including any compressed one — instead of having to check all of
-    # them just to look up a handful of changeset_ids. Derived from the
-    # batch's own data, so this is correct for both live and backfill
-    # batches, unlike a hardcoded "recent" assumption would be.
-    created_ats = [
-        timezone.make_aware(datetime.strptime(c.attrib['created_at'], "%Y-%m-%dT%H:%M:%SZ"), timezone.utc)
-        for c in changeset_elements
-    ]
-    existing_changes_count_by_id = dict(
-        Changeset.objects.filter(
-            changeset_id__in=[int(c.attrib['id']) for c in changeset_elements],
-            created_at__gte=min(created_ats),
-            created_at__lte=max(created_ats),
-        ).values_list('changeset_id', 'changes_count')
-    )
-
-    changesets_to_create = []
-    changesets_to_delete = []  # (changeset_id, created_at) pairs, not bare ids
-    skipped_count = 0
-    updated_count = 0
-
-    for changeset in changeset_elements:
-        changeset_id = int(changeset.attrib['id'])
-        parsed = _parse_changeset_element(changeset, log_extra)
-
-        # Check for duplicates and compare changes_count
-        existing_changes_count = existing_changes_count_by_id.get(changeset_id)
-        if existing_changes_count is not None:
-            new_changes_count = int(changeset.attrib.get('num_changes', 0))
-            if existing_changes_count >= new_changes_count:
-                logger.debug(
-                    "Changeset already up to date, skipping",
-                    extra={
-                        **log_extra,
-                        'osm.changeset_id': changeset_id,
-                        'osm.changes_count.existing': existing_changes_count,
-                        'osm.changes_count.incoming': new_changes_count,
-                    },
-                )
-                skipped_count += 1
-                continue
-            else:
-                logger.debug(
-                    "Changeset has grown, updating",
-                    extra={
-                        **log_extra,
-                        'osm.changeset_id': changeset_id,
-                        'osm.changes_count.existing': existing_changes_count,
-                        'osm.changes_count.incoming': new_changes_count,
-                    },
-                )
-                changesets_to_delete.append((changeset_id, parsed['created_at']))  # deleted in one batch below
-                updated_count += 1
-
-        changesets_to_create.append(parsed)
-
-    if changesets_to_delete:
-        # created_at is immutable once a changeset exists, so the value we
-        # just parsed is exact — not a guess. Filtering by it (not just
-        # changeset_id) is what lets chunk exclusion target only the chunk(s)
-        # the rows live in. But an OR of (changeset_id, created_at) pairs
-        # alone only gets chunk exclusion for a handful of pairs: measured,
-        # from ~10 pairs on the planner gives up and the DELETE locks every
-        # chunk of the hypertable (and its compressed counterpart), which
-        # deadlocked with compress_chunk on a 2006 chunk. So: one DELETE per
-        # day, each ANDed with that day's plain created_at range, which
-        # chunk exclusion always handles. Per day rather than one min..max
-        # range, since a batch can mix today's changesets with an old one
-        # resurfacing through a comment (see CLAUDE.md's "Old-dated rows"),
-        # and a min..max range would span every chunk in between.
-        by_day = defaultdict(list)
-        for changeset_id, created_at in changesets_to_delete:
-            by_day[created_at.date()].append((changeset_id, created_at))
-        for day, pairs in by_day.items():
-            day_start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
-            delete_filter = Q()
-            for changeset_id, created_at in pairs:
-                delete_filter |= Q(changeset_id=changeset_id, created_at=created_at)
-            Changeset.objects.filter(
-                delete_filter,
-                created_at__gte=day_start,
-                created_at__lt=day_start + timedelta(days=1),
-            ).delete()
-
-    if changesets_to_create:
-        # geohash + country_code, from the bbox (changesets/ingest/locate.py).
-        # The Postgres trigger only derives `centroid` from them (migration 0057).
-        locate(changesets_to_create)
-        try:
-            Changeset.objects.bulk_create(
-                [Changeset(**changeset) for changeset in changesets_to_create],
-                ignore_conflicts=True  # This will skip any duplicates that somehow made it through
-            )
-        except Exception:
-            logger.exception(
-                "Bulk creation failed, falling back to individual creation",
-                extra=log_extra,
-            )
-            # Fallback to individual creation if bulk create fails
-            for changeset in changesets_to_create:
-                try:
-                    Changeset.objects.create(**changeset)
-                except Exception:
-                    logger.exception(
-                        "Error creating changeset",
-                        extra={**log_extra, 'osm.changeset_id': changeset.get('changeset_id')},
-                    )
-
-    return len(changesets_to_create), skipped_count, updated_count
+    A writer raising aborts the whole batch; writes are idempotent, so the
+    caller can simply retry the batch on all writers."""
+    records = [_parse_changeset_element(e, log_extra) for e in changeset_elements]
+    locate(records)
+    results = [writer.write(records, log_extra) for writer in get_writers()]
+    primary = results[0]
+    return primary.created, primary.skipped, primary.updated
 
 
 def fetch_and_process_changesets(seq_start, seq_end, on_progress=None):

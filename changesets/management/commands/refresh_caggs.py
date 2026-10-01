@@ -4,8 +4,7 @@ from datetime import date, datetime, timedelta, timezone as dt_timezone
 from django.core.management.base import BaseCommand
 from django.db import connection
 
-from changesets.cagg_maintenance import refresh_caggs_over_range
-from changesets.rollups import refresh_filter_values_over_range
+from changesets.ingest.writers import get_writer
 
 
 class Command(BaseCommand):
@@ -29,8 +28,5 @@ class Command(BaseCommand):
         end = datetime.combine(options['end'], datetime.min.time(), tzinfo=dt_timezone.utc) + timedelta(days=1)
 
         t0 = time.monotonic()
-        self.stdout.write(f'Refreshing all CAggs over {start.date()}..{end.date()}...')
-        refresh_caggs_over_range(start, end, stdout=self.stdout)
-        self.stdout.write('Refreshing FilterValue over the same range...')
-        refresh_filter_values_over_range(start, end)
+        get_writer('timescale').after_backfill(start, end, stdout=self.stdout)
         self.stdout.write(self.style.SUCCESS(f'Done in {time.monotonic() - t0:.0f}s'))
