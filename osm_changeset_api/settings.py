@@ -177,6 +177,16 @@ ANALYTICS_BACKEND = os.environ.get('ANALYTICS_BACKEND', 'timescale')
 # Storage writers ingestion feeds, primary first (see changesets/ingest/writers/).
 INGEST_BACKENDS = [b.strip() for b in os.environ.get('INGEST_BACKENDS', 'timescale').split(',') if b.strip()]
 
+# ClickHouse connection (only used when 'clickhouse' is an analytics/ingest
+# backend; see docker-compose.clickhouse.yml).
+CLICKHOUSE = {
+    'host': os.environ.get('CLICKHOUSE_HOST', 'clickhouse'),
+    'port': int(os.environ.get('CLICKHOUSE_PORT', '8123')),
+    'username': os.environ.get('CLICKHOUSE_USER', 'osm_monitor'),
+    'password': os.environ.get('CLICKHOUSE_PASSWORD', ''),
+    'database': os.environ.get('CLICKHOUSE_DB', 'osm_monitor'),
+}
+
 # Rest Framwork
 REST_FRAMEWORK = {
     # BrowsableAPIRenderer renders every response through a full HTML

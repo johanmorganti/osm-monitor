@@ -9,6 +9,7 @@ from .base import ChangesetWriter, WriteResult  # noqa: F401
 
 _WRITERS = {
     'timescale': 'changesets.ingest.writers.timescale.TimescaleWriter',
+    'clickhouse': 'changesets.ingest.writers.clickhouse.ClickHouseWriter',
 }
 _instances = {}
 
