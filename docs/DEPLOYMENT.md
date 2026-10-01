@@ -29,6 +29,19 @@ colima start --cpu 4 --memory 13 --disk 80 --vm-type vz --mount-type virtiofs \
   --mount "$HOME/osm-monitor-data:w" --mount "$PWD:w"
 ```
 
+**Open files on a shared folder.** The process that serves a VM-shared folder (Colima's VZ
+process, Docker Desktop's file sharing) keeps a host-side file descriptor open for every shared
+file the VM has open or cached, for all databases together. ClickHouse stores each column of each
+data part as separate files, so a large table can need well over 100,000. macOS caps a process at
+`kern.maxfilesperproc` (61,440 by default); past it, Postgres and ClickHouse both fail with "Too many
+open files" (ClickHouse can even fail to load a table at startup). Raise the limits and restart the
+VM so its process picks them up:
+
+```bash
+sudo sh -c 'sysctl -w kern.maxfiles=524288 kern.maxfilesperproc=262144 && printf "kern.maxfiles=524288\nkern.maxfilesperproc=262144\n" >> /etc/sysctl.conf'
+colima stop && colima start
+```
+
 `db`'s `mem_limit`, `shm_size` and memory settings (`shared_buffers`, `effective_cache_size`,
 ...) in `docker-compose.yml` are sized for ~13GB available to Docker; adjust them together for a
 different machine.
