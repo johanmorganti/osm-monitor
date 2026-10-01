@@ -4,10 +4,10 @@ Static reference data shipped with the app (not user data, not something the pol
 
 ## country_boundaries.geojson
 
-World country polygons with ISO 3166-1 alpha-2 codes, used by
-`load_country_boundaries` (management command) to populate the
-`country_boundaries` table that `Changeset.country_code`'s trigger does a
-point-in-polygon lookup against.
+World country polygons with ISO 3166-1 alpha-2 codes. The ingest parser
+(`changesets/ingest/locate.py`) resolves each changeset's `country_code` against
+this file directly; `load_country_boundaries` also loads it into the
+`country_boundaries` table, for SQL use and to seed the country autocomplete.
 
 - **Source**: [datasets/geo-countries](https://github.com/datasets/geo-countries)
   (Open Knowledge Foundation), itself Natural Earth's 1:10m admin-0

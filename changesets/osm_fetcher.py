@@ -5,6 +5,7 @@ import requests
 import xml.etree.ElementTree as ET
 import gzip
 from .models import Changeset
+from .ingest.locate import locate
 from collections import defaultdict
 from datetime import datetime, timedelta
 from django.db.models import Q
@@ -362,6 +363,9 @@ def import_changeset_batch(changeset_elements, log_extra):
             ).delete()
 
     if changesets_to_create:
+        # geohash + country_code, from the bbox (changesets/ingest/locate.py).
+        # The Postgres trigger only derives `centroid` from them (migration 0057).
+        locate(changesets_to_create)
         try:
             Changeset.objects.bulk_create(
                 [Changeset(**changeset) for changeset in changesets_to_create],

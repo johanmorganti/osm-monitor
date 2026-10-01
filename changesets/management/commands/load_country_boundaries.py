@@ -35,12 +35,10 @@ class Command(BaseCommand):
         features = data['features']
         self.stdout.write(f'Loading {len(features)} country boundaries from {_DATA_PATH.name}...')
 
-        # transaction.atomic() so a concurrent insert's centroid trigger
-        # (migration 0032, does a live point-in-polygon lookup against this
-        # same table) only ever sees the table fully populated or fully
-        # pre-load — never truncated-and-partway-reloaded, which would
-        # otherwise resolve country_code to NULL for anything ingested
-        # during that narrow window.
+        # Ingest no longer reads these tables (country_code is computed from
+        # the GeoJSON itself, changesets/ingest/locate.py); they stay for SQL
+        # use and to seed the country autocomplete values below. Atomic so
+        # readers never see a half-reloaded table.
         with transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute('TRUNCATE country_boundaries RESTART IDENTITY')

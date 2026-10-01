@@ -179,8 +179,8 @@ page reads: the planner picks one axis's index, walks the whole band across the 
 filters the other axis in memory — two 1-D indexes answering a 2-D question.
 
 Replaced with one CAgg, `cagg_geo_hashed_daily`, keyed by `geohash` (`changesets_changeset.geohash`,
-`Changeset.geohash` in the ORM — a `varchar(12)` derived by the same trigger that maintains
-`centroid`, migration 0032) instead of a lat/lon pair. A coarser cell is just a shorter *prefix* of
+`Changeset.geohash` in the ORM — a `varchar(12)` added in migration 0032, computed at ingest
+since migration 0057, see "Location data is computed at ingest") instead of a lat/lon pair. A coarser cell is just a shorter *prefix* of
 a finer one (geohash's own nesting property), so `GeoView` serves every zoom level by truncating
 one stored key (`GEOHASH_PREFIX_LENGTH` in `changesets/geo.py`) rather than choosing between two
 pre-materialized grids — and because geohash sorts lexicographically the same way it nests, a
@@ -194,8 +194,8 @@ have very different prefixes) — fine for a density heatmap, not for exact-adja
 pass purely because both needed the same one-time full-history backfill pass and doing that twice
 would have doubled the I/O cost — **country is not "free" once geohash exists**: a
 geohash prefix is a regular-grid concept, country borders are irregular polygons, so it's resolved
-independently via `country_boundaries` (a loaded Natural Earth admin-0 table, GiST-indexed,
-point-in-polygon against `centroid`). `country` was schema + backfill only at first — no
+independently, by point-in-polygon against Natural Earth admin-0 borders
+(`changesets/data/country_boundaries.geojson`), at ingest since migration 0057. `country` was schema + backfill only at first — no
 `DIMENSION_FIELDS` entry, no CAgg pair, no dashboard wiring — until 2026-09-22, when it replaced
 `language` as the dashboard's 5th dimension (see the dimension-naming table above): `cagg_country_
 daily`/`hourly` (migration 0045), an `UPPER(country_code)` expression index (migration 0047, same
@@ -286,6 +286,28 @@ around one axis of "is this still valid" (here: geographic coverage) silently as
 (resolution) couldn't independently go stale — true for a fixed cell size, false the moment cell
 size became adaptive. Check every axis a cached response actually depends on, not just the one the
 cache key was originally built around.
+
+### Location data is computed at ingest, not in the database (2026-10-01)
+`geohash` and `country_code` are computed by the ingest parser (`changesets/ingest/locate.py`,
+called from `import_changeset_batch`), not by a Postgres trigger. The trigger (migration 0057)
+only derives `centroid`, the PostGIS geometry the Timescale backend's raw map queries use for
+their GiST-indexed viewport filter, and only when the parser produced a geohash, so the parser
+alone decides whether a bbox is trustworthy.
+
+**Why:** every analytics backend has to get identical locations without each one needing its own
+geo stack (see "Analytics backends"). The rules are the trigger's, unchanged: the bbox center,
+only when the bbox is present, within ±180/±90 and at most `BBOX_DIAG_THRESHOLD_KM` across
+(geodesic, WGS84); geohash at `GEOHASH_PRECISION`; country = the containing polygon (smallest ISO
+code on overlaps), else the nearest within 5 km. Parity measured before switching, on 3.17M rows
+over 400 random days: geohash identical everywhere, country different on 13 rows (0.0004%), all at
+the 5 km cutoff or between two near-equidistant neighbors. That's where PostGIS's geodesic polygon
+edges and the GeoJSON's straight lon/lat edges diverge on the simplified borders' long edges; the
+Python side follows the GeoJSON source.
+
+**How to apply:** change location rules in `locate.py` only, then run `recompute_locations
+--check` (samples random days and reports differences against stored values) and, if the change is
+intended, `recompute_locations --start … --end …` to rewrite the affected rows. The
+`country_boundaries` / `country_boundaries_subdivided` tables are no longer read at ingest.
 
 ### TimescaleDB hypertable
 `changesets_changeset` is a TimescaleDB hypertable (monthly chunks on `created_at`) — see
@@ -396,6 +418,7 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 | `changesets/urls.py` | API URL patterns (`/api/…`) |
 | `osm_changeset_api/urls.py` | Root URL conf (mounts API + dashboard) |
 | `changesets/osm_fetcher.py` | Fetches & parses OSM replication XML |
+| `changesets/ingest/locate.py` | geohash + country for parsed changesets (Shapely/pyproj), used at ingest |
 | `changesets/rollups.py` | Precomputed daily aggregates behind the unfiltered dashboard view |
 | `changesets/geo.py` | Shared grid-cell/bbox-quality SQL for the geo heatmap (`cagg_geo_daily`/`cagg_geo_fine_daily` + `GeoView`) |
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |
