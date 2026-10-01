@@ -4,18 +4,34 @@ Selected by settings.ANALYTICS_BACKEND (env ANALYTICS_BACKEND, default
 'timescale'). Backends are imported lazily, so an unused backend's client
 library never has to be installed or configured.
 """
+import hmac
 from importlib import import_module
 
 from django.conf import settings
 
 _BACKENDS = {
     'timescale': 'changesets.analytics.timescale.backend.TimescaleBackend',
+    'clickhouse': 'changesets.analytics.clickhouse.backend.ClickHouseBackend',
+    'clickhouse_nofinal': 'changesets.analytics.clickhouse.backend.ClickHouseNoFinalBackend',
 }
 _instances = {}
 
 
 def available_backends():
     return tuple(_BACKENDS)
+
+
+def backend_for(request):
+    """The backend for one API request: the default, unless the request names
+    another in X-Analytics-Backend *and* carries the internal override token
+    (settings.ANALYTICS_OVERRIDE_TOKEN, unset = overrides disabled). Lets the
+    benchmarks and parity checks hit every backend through the same public
+    endpoints without exposing a public switch."""
+    token = settings.ANALYTICS_OVERRIDE_TOKEN
+    name = request.headers.get('X-Analytics-Backend')
+    if name and token and hmac.compare_digest(request.headers.get('X-Analytics-Token', ''), token):
+        return get_backend(name)
+    return get_backend()
 
 
 def get_backend(name=None):

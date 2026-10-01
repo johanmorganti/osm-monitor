@@ -79,6 +79,15 @@ level of operations, not SQL, so each backend stays idiomatic: the Timescale bac
 between CAggs, pair CAggs and the raw hypertable (`changesets/analytics/timescale/`); another
 backend may simply scan its raw table.
 
+Backends today: `timescale` (default) and `clickhouse` (`changesets/analytics/clickhouse/`, plain SQL
+over the raw `changesets` table with `FINAL`; `clickhouse_nofinal` skips `FINAL` for measurement).
+The ClickHouse backend reproduces Timescale's observable semantics, including its path-dependent
+NULL grouping: aggregate-shaped questions put untagged imagery/language/country in `NONE_BUCKET`,
+raw-table ones leave NULL names out (see that module's docstring for the few deliberate
+differences). Requests can pick a backend internally with `X-Analytics-Backend` +
+`X-Analytics-Token` (`ANALYTICS_OVERRIDE_TOKEN`; unset = disabled), which is how benchmarks and
+parity checks hit every backend through the same public endpoints.
+
 Ingestion mirrors this on the write side: the poller and `import_from_dump` parse each batch
 once (`osm_fetcher`, then `ingest/locate.py`) and hand the same records to every writer listed in
 `INGEST_BACKENDS` (default `timescale`; `changesets/ingest/writers/`). A writer upserts by
@@ -422,6 +431,7 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 | `changesets/views.py` | HTML page shells only (Overview, Editors, poller status) |
 | `changesets/api/` | Public JSON API, backend-agnostic: `views.py` (endpoints + OpenAPI annotations), `params.py` (parsing, defaults, `pick_interval`), `schema.py` |
 | `changesets/analytics/` | Analytics backend interface (`base.py`: `Filters`, `AnalyticsBackend`, `NONE_BUCKET`, `DIMENSIONS`) + `registry.py` (`ANALYTICS_BACKEND`) |
+| `changesets/analytics/clickhouse/` | ClickHouse backend (`backend.py`), client, schema (`schema/*.sql`, applied by `clickhouse_migrate`) |
 | `changesets/analytics/timescale/` | TimescaleDB backend: CAgg routing (`caggs.py`), raw fallback + queries (`backend.py`), exact-value filter resolution (`canonical.py`) |
 | `changesets/serializers.py` | DRF serializer for `Changeset` |
 | `changesets/urls.py` | API URL patterns (`/api/…`) |

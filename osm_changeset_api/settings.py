@@ -173,6 +173,9 @@ LOGGING = {
 
 # Analytics backend answering the public API (see changesets/analytics/).
 ANALYTICS_BACKEND = os.environ.get('ANALYTICS_BACKEND', 'timescale')
+# Internal per-request backend override (X-Analytics-Backend + X-Analytics-Token
+# headers), for benchmarks and parity checks. Unset = disabled.
+ANALYTICS_OVERRIDE_TOKEN = os.environ.get('ANALYTICS_OVERRIDE_TOKEN', '')
 
 # Storage writers ingestion feeds, primary first (see changesets/ingest/writers/).
 INGEST_BACKENDS = [b.strip() for b in os.environ.get('INGEST_BACKENDS', 'timescale').split(',') if b.strip()]

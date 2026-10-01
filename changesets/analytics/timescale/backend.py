@@ -22,10 +22,10 @@ from ...geo import (
     geohash_prefix_range_sql, GEOHASH_PREFIX_UPPER_BOUND_CHAR,
 )
 from ...models import Changeset, FilterValue, CaggVolumeHourly, CaggEditorVersionDaily, CaggGeoHashedDaily
-from ..base import NONE_BUCKET, EDITOR_VERSION
+from ..base import NONE_BUCKET, EDITOR_VERSION, format_bucket
 from .caggs import (
     DIMENSION_FIELDS, RAW_ONLY_DIMENSIONS, CAGG_MODELS, CAGG_MODELS_HOURLY, CAGG_VOLUME_MODELS,
-    pair_cagg_lookup, format_bucket,
+    pair_cagg_lookup,
 )
 from .canonical import canonical_values
 

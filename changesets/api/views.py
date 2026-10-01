@@ -11,7 +11,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ..analytics import DIMENSIONS, EDITOR_VERSION, ChangesetQuery, get_backend
+from ..analytics import DIMENSIONS, EDITOR_VERSION, ChangesetQuery, backend_for
 from ..geo import GEOHASH_PREFIX_LENGTH, geohash_cell_size_degrees, geohash_precision_for_bbox
 from ..models import FilterValue, SequenceState
 from ..serializers import ChangesetSerializer
@@ -84,7 +84,7 @@ class ChangesetQueryView(APIView):
             bbox=bbox,
         )
         paginator = ChangesetPagination()
-        page = paginator.paginate_queryset(get_backend().changesets(query), request)
+        page = paginator.paginate_queryset(backend_for(request).changesets(query), request)
         return paginator.get_paginated_response(ChangesetSerializer(page, many=True).data)
 
 
@@ -142,7 +142,7 @@ class TimeseriesView(APIView):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        data = get_backend().timeseries(f, group_by, interval)
+        data = backend_for(request).timeseries(f, group_by, interval)
         return Response({'filters': {**f.as_dict(), 'group_by': group_by}, **data})
 
 
@@ -167,7 +167,7 @@ class SummaryView(APIView):
     )
     def get(self, request):
         f = resolve_filters(request)
-        totals = get_backend().summary(f)
+        totals = backend_for(request).summary(f)
         total_changesets = totals['total_changesets'] or 0
         total_objects = totals['total_objects'] or 0
         avg_objects = round(total_objects / total_changesets, 1) if total_changesets else 0
@@ -237,7 +237,7 @@ class ToplistView(APIView):
         if dimension == EDITOR_VERSION and not f.editor:
             return Response({'error': 'dimension=editor_version requires an editor filter'}, status=status.HTTP_400_BAD_REQUEST)
 
-        results = get_backend().toplist(f, dimension, metric, limit)
+        results = backend_for(request).toplist(f, dimension, metric, limit)
         return Response({'filters': {**f.as_dict(), 'dimension': dimension, 'metric': metric, 'limit': limit}, 'results': results})
 
 
@@ -304,7 +304,7 @@ class GeoView(APIView):
             prefix_len = GEOHASH_PREFIX_LENGTH[resolution]
         lat_size, lon_size = geohash_cell_size_degrees(prefix_len)
 
-        cells = get_backend().geo_cells(f, prefix_len, bounds)
+        cells = backend_for(request).geo_cells(f, prefix_len, bounds)
         return Response({
             'filters': f.as_dict(),
             'lat_size_degrees': lat_size, 'lon_size_degrees': lon_size,
@@ -376,4 +376,4 @@ class AutocompleteView(APIView):
         if field not in dict(FilterValue.FIELD_CHOICES):
             valid = ', '.join(dict(FilterValue.FIELD_CHOICES))
             return Response({'error': f'field must be one of: {valid}'}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(get_backend().autocomplete(field, q))
+        return Response(backend_for(request).autocomplete(field, q))

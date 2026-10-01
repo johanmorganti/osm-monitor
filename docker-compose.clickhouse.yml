@@ -59,11 +59,9 @@ services:
     # Same as the base command, plus the ClickHouse schema (idempotent).
     command: sh -c "python manage.py migrate --no-input && python manage.py load_country_boundaries --if-empty && python manage.py clickhouse_migrate"
 
-  web:
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-
+  # The poller writes to ClickHouse (INGEST_BACKENDS), so it waits for it.
+  # web doesn't: it serves the default analytics backend without ClickHouse,
+  # so a ClickHouse restart must not take the dashboard down with it.
   poller:
     depends_on:
       clickhouse:

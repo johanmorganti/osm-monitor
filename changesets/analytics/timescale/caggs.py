@@ -93,15 +93,3 @@ def pair_cagg_lookup(dim_a, dim_b):
     if model is None:
         return None
     return model, PAIR_CAGG_COLUMN[dim_a], PAIR_CAGG_COLUMN[dim_b]
-
-
-def format_bucket(bucket, interval):
-    """Render a bucket as the API's date label. `bucket` is a datetime for
-    every CAgg path and for the raw path's TruncHour, but a plain date for the
-    raw path's TruncDate, hence the hasattr check.
-
-    The hour is always zero-padded: callers sort on these formatted strings
-    (per-name/per-bucket pivot), where an unpadded "...9:00" would sort after
-    "...10:00" and scramble the x-axis."""
-    day = bucket.date() if hasattr(bucket, 'date') else bucket
-    return f'{day.isoformat()} {bucket.hour:02d}:00' if interval == 'hour' else day.isoformat()

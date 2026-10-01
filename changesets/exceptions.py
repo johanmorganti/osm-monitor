@@ -15,10 +15,21 @@ def api_exception_handler(exc, context):
     if response is not None:
         return response
 
-    if isinstance(exc, OperationalError):
+    if isinstance(exc, OperationalError) or _is_clickhouse_timeout(exc):
         return Response(
             {'error': 'Query took too long and was cancelled — try a narrower date range or filter.'},
             status=503,
         )
 
     return None
+
+
+def _is_clickhouse_timeout(exc):
+    """A ClickHouse query cut off by max_execution_time (code 159,
+    TIMEOUT_EXCEEDED): same meaning as Postgres's statement_timeout."""
+    try:
+        from clickhouse_connect.driver.exceptions import DatabaseError
+    except ImportError:
+        return False
+    return isinstance(exc, DatabaseError) and 'TIMEOUT_EXCEEDED' in str(exc)
+

@@ -82,9 +82,9 @@ changesets/
   models.py                      # Changeset (hypertable), CAgg models, FilterValue, job state
   views.py                       # HTML page shells (Overview, Editors, poller status)
   api/                           # Public JSON API: endpoints, parameter parsing, OpenAPI annotations
-  analytics/                     # Analytics backend interface + implementations (timescale/)
+  analytics/                     # Analytics backend interface + implementations (timescale/, clickhouse/)
   ingest/locate.py               # geohash + country for each changeset, computed at ingest
-  ingest/writers/                # Storage writers ingestion feeds (timescale/)
+  ingest/writers/                # Storage writers ingestion feeds (timescale, clickhouse)
   serializers.py                 # DRF serializer for Changeset
   urls.py                        # /api/... URL patterns
   osm_fetcher.py                 # Fetches & parses OSM replication XML, batched upsert logic
