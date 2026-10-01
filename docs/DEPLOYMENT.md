@@ -50,7 +50,10 @@ DD_SITE=datadoghq.com
 DD_POSTGRES_PASSWORD=...
 ```
 
-then `./deploy.sh`. `DD_POSTGRES_PASSWORD` should be set before the database is first
+then `./deploy.sh`. With the ClickHouse overlay enabled too, also set `DD_CLICKHOUSE_PASSWORD`:
+`clickhouse_migrate` (run by the `migrate` step) creates a least-privilege `datadog` user from it,
+and the ClickHouse container's autodiscovery label turns on the agent's ClickHouse check with
+Database Monitoring. `DD_POSTGRES_PASSWORD` should be set before the database is first
 initialized, since `db/init/01-datadog.sh` creates the `datadog` role from it. On an existing
 database, run that script once by hand:
 `docker compose exec db bash /docker-entrypoint-initdb.d/01-datadog.sh`.

@@ -24,6 +24,28 @@ services:
     mem_limit: 4g
     ports:
       - "127.0.0.1:8123:8123"   # HTTP interface, local only (benchmarks, manual queries)
+    # Datadog ClickHouse check + Database Monitoring, used only when the
+    # Datadog overlay's agent runs (otherwise inert). Connects as the
+    # least-privilege `datadog` user clickhouse_migrate creates from
+    # DD_CLICKHOUSE_PASSWORD.
+    labels:
+      com.datadoghq.ad.checks: |
+        {
+          "clickhouse": {
+            "instances": [
+              {
+                "server": "%%host%%",
+                "port": 8123,
+                "username": "datadog",
+                "password": "${DD_CLICKHOUSE_PASSWORD:-}",
+                "db": "${CLICKHOUSE_DB:-osm_monitor}",
+                "reported_hostname": "osm-monitor-clickhouse",
+                "tags": ["service:osm-monitor-clickhouse", "env:production"],
+                "dbm": true
+              }
+            ]
+          }
+        }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
       interval: 5s

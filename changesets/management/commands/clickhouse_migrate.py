@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from django.core.management.base import BaseCommand
@@ -23,3 +24,14 @@ class Command(BaseCommand):
                 if statement:
                     client.command(statement)
             self.stdout.write(f'applied {path.name}')
+
+        # Least-privilege monitoring user for the Datadog ClickHouse check + DBM
+        # (system tables only), when Datadog is configured. Same pattern as
+        # db/init/01-datadog.sh for Postgres.
+        password = os.environ.get('DD_CLICKHOUSE_PASSWORD')
+        if password:
+            quoted = "'" + password.replace('\\', '\\\\').replace("'", "\\'") + "'"
+            client.command(f'CREATE USER IF NOT EXISTS datadog IDENTIFIED BY {quoted}')
+            client.command(f'ALTER USER datadog IDENTIFIED BY {quoted}')
+            client.command('GRANT SELECT ON system.* TO datadog')
+            self.stdout.write('datadog monitoring user ready')
