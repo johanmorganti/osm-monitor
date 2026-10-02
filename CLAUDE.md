@@ -17,6 +17,8 @@ Key entry points:
 - `/api/changesets/summary/` → `SummaryView` (total_changesets/total_objects/avg_objects)
 - `/api/changesets/toplist/` → `ToplistView` (top 20 by dimension × metric)
 - `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`)
+- `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension, `experience` or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`) — ClickHouse only, 501 on Timescale
+- `/objects/` → `ObjectsView` (objects changed, changeset sizes, largest/widest changesets, rankings by objects incl. `toplist?dimension=hashtag`; before Editors in the nav)
 - `/editors/` → `EditorsView` (one column per top-10 editor family for the selected range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph)
 - `/api/docs/` → Swagger UI (drf-spectacular) for the public API, `/api/schema/` for the raw OpenAPI schema
 - `/changeset_import/` → `APILandingPageView` (poller status page — live catch-up batch progress)
@@ -89,6 +91,14 @@ recomputed daily from `FINAL` data, never incremental ones: `changesets` receive
 existing changesets (grown, or resurfaced through a comment), which an incremental view would count
 twice. Queries read the rollup up to its last covered day and the raw table after it, in one
 `UNION ALL`. Verified exact: 200/200 parity cases identical with and without the rollup.
+The unfiltered map has two more (80/80 random map cases identical with and without them) (`schema/0003_geo_rollups.sql`, 2026-10-02): `geo_coarse_daily`
+(3-character cells by day, ~10.7M rows, ordered by day) for the world view, and `geo_cells_daily`
+(full geohash by day, ~117M rows, **ordered by cell**) for viewports, which read only the cells
+covering them (`geohash_bbox_cover` in `changesets/geo.py`). The raw table is ordered by time, so
+before these a full-history map read every geohash: world 9-20 s → 0.6-0.9 s, Paris 30 s → 0.2 s,
+France 13 s → 2 s, all byte-identical to the raw path. Ordering by cell has one cost: a
+country-sized viewport over a short range is faster on the raw table (France, 3 months: 1.56 s vs
+0.36 s), so `_geo_rows` routes that one case to raw — re-measure before changing that rule.
 The ClickHouse backend reproduces Timescale's observable semantics, including its path-dependent
 NULL grouping: aggregate-shaped questions put untagged imagery/language/country in `NONE_BUCKET`,
 raw-table ones leave NULL names out (see that module's docstring for the few deliberate
@@ -448,7 +458,7 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 |---|---|
 | `changesets/models.py` | `SequenceState` + the deprecated Timescale `Changeset` (hypertable) and rollup models |
 | `changesets/views.py` | HTML page shells only (Overview, Editors, poller status) |
-| `changesets/api/` | Public JSON API, backend-agnostic: `views.py` (endpoints + OpenAPI annotations), `params.py` (parsing, defaults, `pick_interval`), `schema.py` |
+| `changesets/api/` | Public JSON API, backend-agnostic: `views.py` (endpoints + OpenAPI annotations), `params.py` (parsing, defaults, `pick_interval`), `sizes.py` (size histogram buckets, percentile definition, experience labels), `schema.py` |
 | `changesets/analytics/` | Analytics backend interface (`base.py`: `Filters`, `AnalyticsBackend`, `NONE_BUCKET`, `DIMENSIONS`) + `registry.py` (`ANALYTICS_BACKEND`) |
 | `changesets/analytics/clickhouse/` | ClickHouse backend (`backend.py`), client, schema (`schema/*.sql`, applied by `clickhouse_migrate`) |
 | `changesets/analytics/timescale/` | TimescaleDB backend (deprecated): CAgg routing (`caggs.py`), raw fallback + queries (`backend.py`), exact-value filter resolution (`canonical.py`) |
@@ -463,9 +473,11 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |
 | `changesets/management/commands/import_from_dump.py` | Bulk planet-dump importer |
 | `changesets/templates/changesets/dashboard.html` | Dashboard HTML shell only |
+| `changesets/templates/changesets/objects.html` | Objects-page HTML shell only |
 | `changesets/templates/changesets/editors.html` | Editors-page HTML shell only |
 | `static/js/common.js` | Shared chart factories / apiUrl/fetchJson/loadWidget / geo map / autocomplete helpers, used by both dashboard.js and editors.js |
 | `static/js/dashboard.js` | Dashboard-page-specific widget wiring |
+| `static/js/objects.js` | Objects-page-specific widget wiring |
 | `static/js/editors.js` | Editors-page-specific widget wiring |
 | `static/output.css` | Compiled Tailwind CSS |
 | `db/init/` | One-time Postgres setup (extensions, Datadog schema) for a fresh DB |

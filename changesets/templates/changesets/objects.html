@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold mb-8">Objects</h1>
+
+    <!-- Time Range -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+        <h2 class="text-xl font-semibold mb-4">Time Range</h2>
+        <div class="flex flex-wrap items-end gap-4">
+            <div>
+                <span class="block text-sm font-medium text-gray-700 mb-1">Presets</span>
+                <div class="flex flex-wrap gap-2">
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="7">7 days</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="28">4 weeks</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="90">3 months</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="180">6 months</button>
+                    <button type="button" class="date-preset-btn px-3 py-2 text-sm rounded-md border border-gray-300 hover:bg-gray-100" data-days="365">1 year</button>
+                </div>
+            </div>
+            <div class="text-sm text-gray-400 pb-2">or custom:</div>
+            <div>
+                <label for="start_date" class="block text-sm font-medium text-gray-700">Start Date</label>
+                <input type="date" name="start_date" id="start_date" value="{{ request.GET.start_date }}" form="filter-form"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+                <label for="end_date" class="block text-sm font-medium text-gray-700">End Date</label>
+                <input type="date" name="end_date" id="end_date" value="{{ request.GET.end_date }}" form="filter-form"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+        <h2 class="text-xl font-semibold mb-4">Filters</h2>
+        <form method="get" id="filter-form" class="flex flex-wrap gap-4 items-end">
+            <div class="relative">
+                <label for="contributor" class="block text-sm font-medium text-gray-700">Contributor</label>
+                <input type="text" name="contributor" id="contributor" value="{{ request.GET.contributor }}"
+                       autocomplete="off" placeholder="Search contributor…"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <div id="contributor-suggestions" class="hidden absolute z-[1100] mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto"></div>
+            </div>
+            <div class="relative">
+                <label for="editor" class="block text-sm font-medium text-gray-700">Editor</label>
+                <input type="text" name="editor" id="editor" value="{{ request.GET.editor }}"
+                       autocomplete="off" placeholder="Search editor…"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <div id="editor-suggestions" class="hidden absolute z-[1100] mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto"></div>
+            </div>
+            <div class="relative">
+                <label for="imagery" class="block text-sm font-medium text-gray-700">Imagery provider</label>
+                <input type="text" name="imagery" id="imagery" value="{{ request.GET.imagery }}"
+                       autocomplete="off" placeholder="Search imagery…"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <div id="imagery-suggestions" class="hidden absolute z-[1100] mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto"></div>
+            </div>
+            <div class="relative">
+                <label for="country" class="block text-sm font-medium text-gray-700">Country</label>
+                <input type="text" name="country" id="country" value="{{ request.GET.country }}"
+                       autocomplete="off" placeholder="Search country (e.g. FR)…"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <div id="country-suggestions" class="hidden absolute z-[1100] mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto"></div>
+            </div>
+            <div>
+                <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600">
+                    Apply
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- ══ Objects changed ═════════════════════════════════════════════════ -->
+    <h2 class="text-2xl font-semibold mb-4 flex items-center gap-2">
+        Objects changed
+        <span class="relative inline-block group cursor-help">
+            <span class="text-xs text-gray-400 border border-gray-300 rounded-full w-5 h-5 inline-flex items-center justify-center">?</span>
+            <span class="absolute left-0 top-full mt-2 hidden group-hover:block w-80 whitespace-normal text-xs font-normal leading-snug bg-gray-800 text-white rounded px-3 py-2 z-10">
+                An <strong>object</strong> is a single OSM map element — a node, way, or relation (a point, a road/building outline, or a group of other elements). This counts how many objects were added, modified, or deleted across changesets — a rough measure of actual mapping work, since one changeset can touch anywhere from 1 to 10,000 objects.
+            </span>
+        </span>
+    </h2>
+
+    <!-- KPIs: all four come from the one /distribution/ call (objects.js). -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-8 mb-8">
+        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Total Objects Changed</h3>
+            <div class="relative inline-block group w-fit cursor-help">
+                <div id="totalObjects" class="text-4xl font-bold text-blue-600 border-b border-dotted border-blue-300">–</div>
+                <div id="totalObjects-tooltip" class="absolute left-0 bottom-full mb-2 hidden group-hover:block whitespace-nowrap bg-gray-800 text-white text-xs rounded px-2 py-1 z-10"></div>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Avg Objects per Changeset</h3>
+            <div id="avgObjects" class="text-4xl font-bold text-blue-600">–</div>
+            <p class="text-xs text-gray-400 mt-2">Pulled up by the few very large changesets</p>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Median Objects per Changeset</h3>
+            <div id="medianObjects" class="text-4xl font-bold text-blue-600">–</div>
+            <p class="text-xs text-gray-400 mt-2">Half of all changesets are this size or smaller</p>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
+            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Objects from the Largest 1%</h3>
+            <div id="whaleShare" class="text-4xl font-bold text-blue-600">–</div>
+            <p class="text-xs text-gray-400 mt-2">Share of all objects changed by the largest 1% of changesets</p>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-12">
+        <h3 class="text-lg font-semibold mb-4">Objects Changed Over Time</h3>
+        <div class="relative" style="height: 300px">
+            <div id="objectsChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+            </div>
+            <canvas id="objectsChart" hidden></canvas>
+        </div>
+    </div>
+
+    <!-- ══ Changeset size ══════════════════════════════════════════════════ -->
+    <h2 class="text-2xl font-semibold mb-4 flex items-center gap-2">
+        Changeset size
+        <span class="relative inline-block group cursor-help">
+            <span class="text-xs text-gray-400 border border-gray-300 rounded-full w-5 h-5 inline-flex items-center justify-center">?</span>
+            <span class="absolute left-0 top-full mt-2 hidden group-hover:block w-80 whitespace-normal text-xs font-normal leading-snug bg-gray-800 text-white rounded px-3 py-2 z-10">
+                A changeset's <strong>size</strong> is the number of objects it changed. Most changesets are tiny (one tag fix, one StreetComplete answer), while a few (imports, bots, mass edits) change thousands of objects each. The median and percentiles describe the typical changeset; the average is pulled up by the few large ones.
+            </span>
+        </span>
+    </h2>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8 mb-8">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Size Distribution</h3>
+            <p class="text-xs text-gray-400 mb-3">Share of changesets and share of objects changed, by changeset size (objects per changeset)</p>
+            <div class="relative" style="height: 360px">
+                <div id="sizeHistogramChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="sizeHistogramChart" hidden></canvas>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Size Over Time</h3>
+            <p class="text-xs text-gray-400 mb-3">Median (p50) and p90 changeset size per day</p>
+            <div class="relative" style="height: 360px">
+                <div id="sizeOverTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="sizeOverTimeChart" hidden></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8 mb-12">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Size by Editor</h3>
+            <p class="text-xs text-gray-400 mb-3">Bar = middle half of changesets (p25–p75), dot = median, log scale. Top 10 editors by changesets. Click to filter by editor</p>
+            <div class="relative" style="height: 400px">
+                <div id="sizeByEditorChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="sizeByEditorChart" hidden></canvas>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Size by Contributor Experience</h3>
+            <p class="text-xs text-gray-400 mb-3">Same reading, by how many changesets the contributor had made. Only iD and Rapid record this, so other editors are left out</p>
+            <div class="relative" style="height: 400px">
+                <div id="sizeByExperienceChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="sizeByExperienceChart" hidden></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ Largest changesets ══════════════════════════════════════════════ -->
+    <h2 class="text-2xl font-semibold mb-4 flex items-center gap-2">
+        Largest changesets
+        <span class="relative inline-block group cursor-help">
+            <span class="text-xs text-gray-400 border border-gray-300 rounded-full w-5 h-5 inline-flex items-center justify-center">?</span>
+            <span class="absolute left-0 top-full mt-2 hidden group-hover:block w-80 whitespace-normal text-xs font-normal leading-snug bg-gray-800 text-white rounded px-3 py-2 z-10">
+                The individual changesets that changed the most objects, and the ones with the widest bounding box. A very wide changeset with few objects is often accidental (a node dragged across the map) or a revert, and worth a look.
+            </span>
+        </span>
+    </h2>
+
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+        <h3 class="text-lg font-semibold mb-1">Most Objects Changed</h3>
+        <p class="text-xs text-gray-400 mb-3">The 20 largest changesets of the range by objects changed (OSM caps a changeset at 10,000)</p>
+        <div id="largestByObjectsTable-spinner" class="flex items-center justify-center py-8">
+            <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+        </div>
+        <div class="overflow-x-auto">
+            <table id="largestByObjectsTable" class="min-w-full text-sm" hidden></table>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-12">
+        <h3 class="text-lg font-semibold mb-1">Widest Changesets</h3>
+        <p class="text-xs text-gray-400 mb-3">The 20 changesets of the range with the largest bounding box</p>
+        <div id="largestByAreaTable-spinner" class="flex items-center justify-center py-8">
+            <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+        </div>
+        <div class="overflow-x-auto">
+            <table id="largestByAreaTable" class="min-w-full text-sm" hidden></table>
+        </div>
+    </div>
+
+    <!-- ══ Who changes the most objects ════════════════════════════════════ -->
+    <h2 class="text-2xl font-semibold mb-4 flex items-center gap-2">
+        Who changes the most objects
+        <span class="relative inline-block group cursor-help">
+            <span class="text-xs text-gray-400 border border-gray-300 rounded-full w-5 h-5 inline-flex items-center justify-center">?</span>
+            <span class="absolute left-0 top-full mt-2 hidden group-hover:block w-80 whitespace-normal text-xs font-normal leading-snug bg-gray-800 text-white rounded px-3 py-2 z-10">
+                Rankings by objects changed rather than by number of changesets: one large import can outweigh thousands of small edits.
+            </span>
+        </span>
+    </h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-8 mb-12">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Top 20 Contributors by Objects Changed</h3>
+            <p class="text-xs text-gray-400 mb-3">Click a bar to filter by contributor</p>
+            <div class="relative" style="height: 560px">
+                <div id="topContributorsByObjectsChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topContributorsByObjectsChart" hidden></canvas>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Top 20 Editors by Objects Changed</h3>
+            <p class="text-xs text-gray-400 mb-3">Click a bar to filter by editor</p>
+            <div class="relative" style="height: 560px">
+                <div id="topEditorsByObjectsChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topEditorsByObjectsChart" hidden></canvas>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Top 20 Hashtags by Objects Changed</h3>
+            <p class="text-xs text-gray-400 mb-3">Campaign hashtags from the changeset's hashtags tag; a changeset counts under each of its hashtags</p>
+            <div class="relative" style="height: 560px">
+                <div id="topHashtagsByObjectsChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topHashtagsByObjectsChart" hidden></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% load static %}
+<script src="{% static 'js/common.js' %}"></script>
+<script src="{% static 'js/objects.js' %}"></script>
+{% endblock %}

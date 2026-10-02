@@ -11,12 +11,13 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ..analytics import DIMENSIONS, EDITOR_VERSION, ChangesetQuery, backend_for
+from ..analytics import DIMENSIONS, EDITOR_VERSION, EXPERIENCE, HASHTAG, ChangesetQuery, backend_for
 from ..geo import GEOHASH_PREFIX_LENGTH, geohash_cell_size_degrees, geohash_precision_for_bbox
 from ..models import FilterValue, SequenceState
 from ..serializers import ChangesetSerializer
 from .params import resolve_filters, pick_interval, parse_bbox
 from .schema import FILTER_PARAMS
+from .sizes import distribution, experience_label
 
 
 class ChangesetPagination(PageNumberPagination):
@@ -107,8 +108,9 @@ class TimeseriesView(APIView):
             'the last 7 days if no dates are given.'
         ),
         parameters=FILTER_PARAMS + [
-            OpenApiParameter('group_by', OpenApiTypes.STR, description='Split into per-name series: contributor, editor, imagery, language, or country. Omit for plain volume.'),
+            OpenApiParameter('group_by', OpenApiTypes.STR, description='Split into per-name series: contributor, editor, imagery, language, country, or hashtag (lower-cased; a changeset counts under each of its hashtags). Omit for plain volume.'),
             OpenApiParameter('interval', OpenApiTypes.STR, description='Force the bucket width: hour or day. Omit to auto-pick based on range width (see description).'),
+            OpenApiParameter('metric', OpenApiTypes.STR, description='count (changesets, default) or objects (objects changed). With group_by, also what the top 20 are ranked by.'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
         examples=[OpenApiExample(
@@ -129,8 +131,12 @@ class TimeseriesView(APIView):
     )
     def get(self, request):
         group_by = request.query_params.get('group_by') or None
-        if group_by not in (None, *DIMENSIONS):
-            return Response({'error': f'group_by must be one of: {", ".join(DIMENSIONS)}'}, status=status.HTTP_400_BAD_REQUEST)
+        if group_by not in (None, *DIMENSIONS, HASHTAG):
+            return Response({'error': f'group_by must be one of: {", ".join((*DIMENSIONS, HASHTAG))}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        metric = request.query_params.get('metric', 'count')
+        if metric not in ('count', 'objects'):
+            return Response({'error': 'metric must be count or objects'}, status=status.HTTP_400_BAD_REQUEST)
 
         interval_param = request.query_params.get('interval') or None
         if interval_param not in (None, 'hour', 'day'):
@@ -142,8 +148,8 @@ class TimeseriesView(APIView):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        data = backend_for(request).timeseries(f, group_by, interval)
-        return Response({'filters': {**f.as_dict(), 'group_by': group_by}, **data})
+        data = backend_for(request).timeseries(f, group_by, interval, metric)
+        return Response({'filters': {**f.as_dict(), 'group_by': group_by, 'metric': metric}, **data})
 
 
 class SummaryView(APIView):
@@ -192,14 +198,14 @@ class ToplistView(APIView):
         tags=['changesets'],
         summary='Top changesets by dimension',
         description=(
-            'Top N (default 20) contributors/editors/imageries/locales/countries/editor-versions, '
+            'Top N (default 20) contributors/editors/imageries/locales/countries/editor-versions/hashtags, '
             'ranked by changeset count or by objects changed, for a date range. Defaults to the '
             'last 7 days if no dates are given. dimension=editor_version requires an editor filter '
             '(created_by is unbounded across all editors, so it is only ever grouped within one '
             'already-selected editor family).'
         ),
         parameters=FILTER_PARAMS + [
-            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country, editor_version (requires an editor filter).'),
+            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country, editor_version (requires an editor filter), hashtag (lower-cased; a changeset counts under each of its hashtags).'),
             OpenApiParameter('metric', OpenApiTypes.STR, description='count (changesets) or objects (objects changed). Defaults to count.'),
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of results (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
         ],
@@ -216,8 +222,8 @@ class ToplistView(APIView):
     def get(self, request):
         dimension = request.query_params.get('dimension', '')
         metric = request.query_params.get('metric', 'count')
-        if dimension not in DIMENSIONS and dimension != EDITOR_VERSION:
-            valid = ', '.join((*DIMENSIONS, EDITOR_VERSION))
+        if dimension not in (*DIMENSIONS, EDITOR_VERSION, HASHTAG):
+            valid = ', '.join((*DIMENSIONS, EDITOR_VERSION, HASHTAG))
             return Response({'error': f'dimension must be one of: {valid}'}, status=status.HTTP_400_BAD_REQUEST)
         if metric not in ('count', 'objects'):
             return Response({'error': 'metric must be count or objects'}, status=status.HTTP_400_BAD_REQUEST)
@@ -310,6 +316,147 @@ class GeoView(APIView):
             'lat_size_degrees': lat_size, 'lon_size_degrees': lon_size,
             'cells': cells,
         })
+
+
+class DistributionView(APIView):
+    """How changeset sizes (objects changed per changeset) are distributed:
+    a roughly logarithmic histogram, exact percentiles, and how much of the
+    objects total the largest 1% of changesets account for. Derived from
+    exact per-size counts (sizes.distribution)."""
+
+    @extend_schema(
+        tags=['objects'],
+        summary='Changeset size distribution',
+        description=(
+            'Histogram of changeset sizes (objects changed per changeset) in roughly logarithmic '
+            'buckets, with changeset and object totals per bucket; exact p50/p90/p99/max sizes; and '
+            '`top_1pct_objects_share`, the share of all objects changed by the largest 1% of '
+            'changesets. Percentile = smallest size whose cumulative changeset count reaches that '
+            'fraction. Defaults to the last 7 days if no dates are given.'
+        ),
+        parameters=FILTER_PARAMS,
+        responses={200: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Sample',
+            value={
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'country': ''},
+                'total_changesets': 350000, 'total_objects': 12500000, 'avg_objects': 35.7,
+                'percentiles': {'p50': 5, 'p90': 132, 'p99': 1127, 'max': 10000},
+                'top_1pct_objects_share': 0.4512,
+                'buckets': [{'label': '2–4', 'min': 2, 'max': 4, 'changesets': 58000, 'objects': 160000}],
+            },
+            response_only=True,
+        )],
+    )
+    def get(self, request):
+        f = resolve_filters(request)
+        return Response({'filters': f.as_dict(), **distribution(backend_for(request).size_counts(f))})
+
+
+class SizeBreakdownView(APIView):
+    """Changeset-size quartiles per group: the top N names of a dimension,
+    every contributor-experience bucket, or every day."""
+
+    BY = (*DIMENSIONS, EXPERIENCE, 'day')
+    QUANTILES = (0.25, 0.5, 0.75, 0.9)
+    DEFAULT_LIMIT = 10
+    MAX_LIMIT = 50
+
+    @extend_schema(
+        tags=['objects'],
+        summary='Changeset size by group',
+        description=(
+            'Exact p25/p50/p75/p90 changeset sizes (objects changed per changeset), plus changeset '
+            'and object totals, per group. by=contributor|editor|imagery|language|country returns '
+            'the top N names by changeset count (untagged changesets left out); by=experience '
+            'groups by the author\'s changeset count at the time (the changesets_count tag, set '
+            'by iD and Rapid only, so other editors\' changesets are left out); by=day returns '
+            'every day of the range, in order. Defaults to the last 7 days if no dates are given.'
+        ),
+        parameters=FILTER_PARAMS + [
+            OpenApiParameter('by', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country, experience, day.'),
+            OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of names for a dimension (default {DEFAULT_LIMIT}, max {MAX_LIMIT}); ignored for experience/day.'),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Top editors',
+            value={
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'country': '', 'by': 'editor', 'limit': 10},
+                'groups': [{'name': 'JOSM', 'changesets': 66000, 'objects': 9100000, 'avg_objects': 137.9, 'p25': 4, 'p50': 16, 'p75': 83, 'p90': 312}],
+            },
+            response_only=True,
+        )],
+    )
+    def get(self, request):
+        by = request.query_params.get('by', '')
+        if by not in self.BY:
+            return Response({'error': f'by must be one of: {", ".join(self.BY)}'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            limit = int(request.query_params.get('limit', self.DEFAULT_LIMIT))
+        except ValueError:
+            return Response({'error': 'limit must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+        if not (1 <= limit <= self.MAX_LIMIT):
+            return Response({'error': f'limit must be between 1 and {self.MAX_LIMIT}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        f = resolve_filters(request)
+        groups = []
+        for g in backend_for(request).size_quantiles(f, by, self.QUANTILES, limit):
+            groups.append({
+                'name': experience_label(g['name']) if by == EXPERIENCE else g['name'],
+                'changesets': g['changesets'],
+                'objects': g['objects'],
+                'avg_objects': round(g['objects'] / g['changesets'], 1) if g['changesets'] else 0,
+                **{f'p{round(level * 100)}': value for level, value in zip(self.QUANTILES, g['quantiles'])},
+            })
+        return Response({'filters': {**f.as_dict(), 'by': by, 'limit': limit}, 'groups': groups})
+
+
+class LargestView(APIView):
+    """The largest individual changesets of a range, by objects changed or by
+    bounding-box area: mass edits, imports, bots, and edits that span
+    continents (often a mistake, or a revert)."""
+
+    DEFAULT_LIMIT = 20
+    MAX_LIMIT = 100
+
+    @extend_schema(
+        tags=['objects'],
+        summary='Largest changesets',
+        description=(
+            'The N largest changesets of the range, by=objects (objects changed, default) or '
+            'by=area (bounding box area in km², on a spherical Earth; changesets without a bbox '
+            'left out). Ties are broken newest first. Defaults to the last 7 days if no dates '
+            'are given.'
+        ),
+        parameters=FILTER_PARAMS + [
+            OpenApiParameter('by', OpenApiTypes.STR, description='objects (default) or area.'),
+            OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of changesets (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'By objects',
+            value={
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'country': '', 'by': 'objects', 'limit': 20},
+                'results': [{'changeset_id': 172710690, 'created_at': '2026-09-03T10:12:00Z', 'user': 'someone', 'editor': 'JOSM',
+                             'changes_count': 10000, 'area_km2': 12.4, 'country': 'FR', 'comment': 'Import buildings'}],
+            },
+            response_only=True,
+        )],
+    )
+    def get(self, request):
+        by = request.query_params.get('by', 'objects')
+        if by not in ('objects', 'area'):
+            return Response({'error': 'by must be objects or area'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            limit = int(request.query_params.get('limit', self.DEFAULT_LIMIT))
+        except ValueError:
+            return Response({'error': 'limit must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+        if not (1 <= limit <= self.MAX_LIMIT):
+            return Response({'error': f'limit must be between 1 and {self.MAX_LIMIT}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        f = resolve_filters(request)
+        results = backend_for(request).largest(f, by, limit)
+        return Response({'filters': {**f.as_dict(), 'by': by, 'limit': limit}, 'results': results})
 
 
 class BatchProgressView(APIView):

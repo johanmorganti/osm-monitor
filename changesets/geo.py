@@ -319,3 +319,27 @@ def geohash_bbox_prefix(min_lat, min_lon, max_lat, max_lon, precision=GEOHASH_PR
             break
         common.append(a)
     return ''.join(common)
+
+
+def geohash_bbox_cover(min_lat, min_lon, max_lat, max_lon, max_cells=64, max_precision=GEOHASH_PRECISION):
+    """Geohash prefixes whose cells together cover a bbox: the finest
+    precision needing at most `max_cells` of them, sorted. Unlike
+    geohash_bbox_prefix (one common prefix, '' as soon as the bbox straddles
+    a top-level boundary, as most country-sized viewports do), this stays
+    tight anywhere, so a table ordered by geohash can range-scan just these
+    cells. Returns [] for a bbox no precision covers within the budget."""
+    best = []
+    for p in range(1, max_precision + 1):
+        lat_size, lon_size = geohash_cell_size_degrees(p)
+        lat_steps = int((max_lat + 90) // lat_size) - int((min_lat + 90) // lat_size) + 1
+        lon_steps = int((max_lon + 180) // lon_size) - int((min_lon + 180) // lon_size) + 1
+        if lat_steps * lon_steps > max_cells:
+            break
+        cells = set()
+        for i in range(lat_steps):
+            lat = min(min_lat + i * lat_size, max_lat) if i < lat_steps - 1 else max_lat
+            for j in range(lon_steps):
+                lon = min(min_lon + j * lon_size, max_lon) if j < lon_steps - 1 else max_lon
+                cells.add(geohash_encode(lat, lon, p))
+        best = sorted(cells)
+    return best

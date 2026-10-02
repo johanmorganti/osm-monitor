@@ -29,6 +29,13 @@ if [ "$#" -eq 0 ]; then
     # request slots costs only modestly more than today's 2 plain workers,
     # not ~8x more the way reaching 16 via --workers 16 would. Postgres
     # max_connections=100 comfortably covers the worst case (confirmed).
+    # Re-measured 2026-10-02 with ClickHouse as the backend (4 vCPUs): the
+    # Overview page's 13 calls over a 1-year range take 6.7s in parallel
+    # vs 9.6s summed sequentially, and the difference is ClickHouse CPU
+    # (each query already uses max_threads=4), not request queueing — 16
+    # slots exceed one page load. More threads would only add contention
+    # for the same cores; the levers are cheaper queries and lazy-loading
+    # widgets, not more slots.
     # --timeout 40: must stay comfortably above DB_STATEMENT_TIMEOUT_MS
     # (docker-compose.yml, 30s) so the DB cancels a slow query cleanly
     # before gunicorn would SIGKILL the worker out from under it.

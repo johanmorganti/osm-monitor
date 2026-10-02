@@ -26,6 +26,18 @@ DIMENSIONS = ('contributor', 'editor', 'imagery', 'language', 'country')
 # Toplist-only dimension: exact editor version within one editor family.
 EDITOR_VERSION = 'editor_version'
 
+# Toplist / timeseries group_by only (no filter): campaign hashtags, from the
+# changeset's `hashtags` tag, matched case-insensitively and reported lower-case.
+HASHTAG = 'hashtag'
+
+# Size-breakdown keys besides DIMENSIONS: `experience` buckets changesets by
+# the author's changeset count at the time (the `changesets_count` tag, which
+# counts the changeset itself, so 1 = a first changeset; set by iD and Rapid
+# only), `day` by creation day.
+EXPERIENCE = 'experience'
+# Lower bound of each experience bucket (the last one is open-ended).
+EXPERIENCE_BOUNDS = (1, 2, 11, 101, 1001, 10001)
+
 
 def format_bucket(bucket, interval):
     """Render a bucket as the API's date label. `bucket` is a datetime for
@@ -94,13 +106,34 @@ class AnalyticsBackend(Protocol):
     def summary(self, f: Filters) -> dict:
         """{'total_changesets': int|None, 'total_objects': int|None} over the range."""
 
-    def timeseries(self, f: Filters, group_by: Optional[str], interval: str) -> dict:
+    def timeseries(self, f: Filters, group_by: Optional[str], interval: str, metric: str = 'count') -> dict:
         """{'interval', 'dates', 'series'}: plain volume when group_by is None,
-        else the top 20 names of that dimension, one series each.
-        `interval` ('hour'|'day') is chosen by the API layer."""
+        else the top 20 names of that dimension (or HASHTAG), one series each.
+        `interval` ('hour'|'day') is chosen by the API layer; `metric` is
+        'count' (changesets) or 'objects' (objects changed), and also ranks
+        the top 20."""
 
     def toplist(self, f: Filters, dimension: str, metric: str, limit: int) -> list:
         """[{'name', 'value'}] ranked by metric ('count'|'objects'), at most `limit`."""
+
+    def size_counts(self, f: Filters) -> list:
+        """[(changes_count, changesets)]: how many changesets have each exact
+        size. Exact and small (OSM caps a changeset at 10,000 changes today, a
+        few tens of thousands historically), so the API derives histogram
+        buckets and percentiles from it."""
+
+    def size_quantiles(self, f: Filters, by: str, quantiles: Sequence[float], limit: int) -> list:
+        """[{'name', 'changesets', 'objects', 'quantiles': [...]}], exact
+        changes_count quantiles per group. `by` is a dimension (top `limit`
+        names by changesets, NULL names left out), EXPERIENCE (every bucket,
+        named by its index in EXPERIENCE_BOUNDS, in order, untagged changesets
+        left out) or 'day' (every day, named 'YYYY-MM-DD', in order)."""
+
+    def largest(self, f: Filters, by: str, limit: int) -> list:
+        """The `limit` largest changesets by 'objects' (changes_count) or
+        'area' (bounding box, km²), as dicts: changeset_id, created_at, user,
+        editor, changes_count, area_km2 (None without a bbox), country,
+        comment."""
 
     def geo_cells(self, f: Filters, prefix_len: int, bounds: Optional[tuple]) -> list:
         """[{'lat', 'lon', 'count', 'objects'}] per geohash cell of `prefix_len`

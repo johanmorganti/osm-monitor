@@ -66,15 +66,6 @@ loadWidget('topContributorsTimeChart', apiUrl('/api/changesets/timeseries/', { g
     stackedBar('topContributorsTimeChart', contributorsTime.dates, contributorsTime.series);
 });
 
-loadWidget('topContributorsByObjectsChart', apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'objects' }), topContributorsByObjects => {
-    showChart('topContributorsByObjectsChart');
-    horizontalBar('topContributorsByObjectsChart', topContributorsByObjects.results.map(r => r.name), topContributorsByObjects.results.map(r => r.value), 'Objects changed', 'contributor');
-});
-loadWidget('topEditorsByObjectsChart', apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'objects' }), topEditorsByObjects => {
-    showChart('topEditorsByObjectsChart');
-    horizontalBar('topEditorsByObjectsChart', topEditorsByObjects.results.map(r => r.name), topEditorsByObjects.results.map(r => r.value), 'Objects changed', 'editor');
-});
-
 // Summary has no chart/spinner of its own — it fills the KPI numbers (which
 // already show "–" as their placeholder) and pre-fills the filter form with
 // the range actually applied (e.g. the default 7-day window when the page
@@ -89,15 +80,14 @@ fetchJson(apiUrl('/api/changesets/summary/'))
         document.getElementById('country').value = summary.filters.country;
 
         setKpiNumber('totalChangesets', summary.total_changesets);
-        setKpiNumber('totalObjects', summary.total_objects);
-        document.getElementById('avgObjects').textContent = summary.avg_objects;
     })
     .catch(err => {
         console.error('Failed to load summary', err);
         document.getElementById('totalChangesets').textContent = 'Error';
-        document.getElementById('totalObjects').textContent = 'Error';
-        document.getElementById('avgObjects').textContent = 'Error';
     });
+
+// Carry the current range and filters over to the Objects page.
+document.getElementById('objectsPageLink').href = `/objects/${window.location.search}`;
 
 wireSuggestions('contributor', 'contributor-suggestions', 'contributor');
 wireSuggestions('editor',      'editor-suggestions',      'editor');

@@ -201,55 +201,10 @@
         </div>
     </div>
 
-    <!-- ══ Objects changed ═════════════════════════════════════════════════ -->
-    <h2 class="text-2xl font-semibold mb-4 flex items-center gap-2">
-        Objects changed
-        <span class="relative inline-block group cursor-help">
-            <span class="text-xs text-gray-400 border border-gray-300 rounded-full w-5 h-5 inline-flex items-center justify-center">?</span>
-            <span class="absolute left-0 top-full mt-2 hidden group-hover:block w-80 whitespace-normal text-xs font-normal leading-snug bg-gray-800 text-white rounded px-3 py-2 z-10">
-                An <strong>object</strong> is a single OSM map element — a node, way, or relation (a point, a road/building outline, or a group of other elements). This counts how many objects were added, modified, or deleted across changesets — a rough measure of actual mapping work, since one changeset can touch anywhere from 1 to thousands of objects.
-            </span>
-        </span>
-    </h2>
-
-    <!-- KPIs -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 mb-8">
-        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
-            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Total Objects Changed</h3>
-            <div class="relative inline-block group w-fit cursor-help">
-                <div id="totalObjects" class="text-4xl font-bold text-blue-600 border-b border-dotted border-blue-300">–</div>
-                <div id="totalObjects-tooltip" class="absolute left-0 bottom-full mb-2 hidden group-hover:block whitespace-nowrap bg-gray-800 text-white text-xs rounded px-2 py-1 z-10"></div>
-            </div>
-        </div>
-        <div class="bg-white rounded-lg shadow-lg p-6 flex flex-col justify-center">
-            <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Avg Objects per Changeset</h3>
-            <div id="avgObjects" class="text-4xl font-bold text-blue-600">–</div>
-        </div>
-    </div>
-
-    <!-- Top 20 by objects -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 mb-12">
-        <div class="bg-white rounded-lg shadow-lg p-6">
-            <h3 class="text-lg font-semibold mb-1">Top 20 Contributors by Objects Changed</h3>
-            <p class="text-xs text-gray-400 mb-3">Click a bar to filter by contributor</p>
-            <div class="relative" style="height: 560px">
-                <div id="topContributorsByObjectsChart-spinner" class="absolute inset-0 flex items-center justify-center">
-                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
-                </div>
-                <canvas id="topContributorsByObjectsChart" hidden></canvas>
-            </div>
-        </div>
-        <div class="bg-white rounded-lg shadow-lg p-6">
-            <h3 class="text-lg font-semibold mb-1">Top 20 Editors by Objects Changed</h3>
-            <p class="text-xs text-gray-400 mb-3">Click a bar to filter by editor</p>
-            <div class="relative" style="height: 560px">
-                <div id="topEditorsByObjectsChart-spinner" class="absolute inset-0 flex items-center justify-center">
-                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
-                </div>
-                <canvas id="topEditorsByObjectsChart" hidden></canvas>
-            </div>
-        </div>
-    </div>
+    <p class="text-sm text-gray-500 mb-12">
+        Objects changed, changeset sizes and the largest changesets are on the
+        <a id="objectsPageLink" href="{% url 'objects' %}" class="text-blue-600 hover:underline">Objects page</a>.
+    </p>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>

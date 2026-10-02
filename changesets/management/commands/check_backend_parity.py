@@ -151,6 +151,7 @@ class Command(BaseCommand):
         parser.add_argument('--cases', type=int, default=200)
         parser.add_argument('--seed', type=int, default=1)
         parser.add_argument('--json', help='write every case and result here')
+        parser.add_argument('--ops', help='comma-separated operations to test (default: all), e.g. geo')
 
     def handle(self, *args, **options):
         connection.cursor().execute("SET statement_timeout = 0")
@@ -170,10 +171,12 @@ class Command(BaseCommand):
             dims = rng.sample(DIMENSIONS, rng.randint(0, max_filters))
             return with_filters(f, **{d: rng.choice(values[d]) for d in dims}), dims
 
+        weights = {'summary': 3, 'timeseries': 4, 'toplist': 5, 'geo': 3, 'changesets': 2, 'autocomplete': 1}
+        if options['ops']:
+            weights = {op: weights[op] for op in options['ops'].split(',')}
         cases = []
         for i in range(options['cases']):
-            op = rng.choices(['summary', 'timeseries', 'toplist', 'geo', 'changesets', 'autocomplete'],
-                             weights=[3, 4, 5, 3, 2, 1])[0]
+            op = rng.choices(list(weights), weights=list(weights.values()))[0]
             # Full history only without filters: filtered full-history scans
             # time out on the Timescale side.
             kind = rng.choice(['week', 'month', 'quarter', 'year', 'all'])

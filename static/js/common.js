@@ -228,6 +228,163 @@ function lineChart(canvasId, dates, counts, label) {
     });
 }
 
+// Several measures of the same unit side by side per category (e.g. share
+// of changesets vs. share of objects per size bucket) — one shared y-axis,
+// never two. `series` = [{name, values}], colored in fixed categorical order
+// with a legend, since identity can't be color-alone at >= 2 series.
+function groupedBar(canvasId, labels, series, valueFormat) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx || !labels.length) return;
+    const format = valueFormat || (v => v.toLocaleString('en-US'));
+    new Chart(ctx.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: series.map((s, i) => ({
+                label: s.name,
+                data: s.values,
+                backgroundColor: CATEGORICAL[i],
+                borderRadius: 4,
+                borderSkipped: 'bottom',
+                maxBarThickness: 24,
+            })),
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'top', align: 'start', labels: { boxWidth: 12, boxHeight: 12 } },
+                tooltip: { callbacks: { label: c => `${c.dataset.label}: ${format(c.parsed.y)}` } },
+            },
+            scales: {
+                x: { grid: { display: false }, border: { color: AXIS_BASELINE } },
+                y: { beginAtZero: true, grid: { color: GRID_HAIRLINE }, ticks: { callback: v => format(v) } },
+            },
+        },
+    });
+}
+
+// Several lines over the same dates and the same unit (e.g. p50 and p90
+// changeset size) — lineChart's multi-series sibling, with a legend.
+// `logScale` when the lines differ by orders of magnitude (p50 ~5 vs p90
+// ~130), so the smaller one isn't flattened against the baseline.
+function multiLineChart(canvasId, dates, series, logScale) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx || !dates.length) return;
+    new Chart(ctx.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: series.map((s, i) => ({
+                label: s.name,
+                data: s.values,
+                borderColor: CATEGORICAL[i],
+                backgroundColor: CATEGORICAL[i],
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                tension: 0.1,
+            })),
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 12, boxHeight: 2 } } },
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: dateAxis(dates),
+                y: logScale
+                    ? { type: 'logarithmic', grid: { color: GRID_HAIRLINE },
+                        ticks: { callback: v => ([1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].includes(v) ? v.toLocaleString('en-US') : '') } }
+                    : { beginAtZero: true, grid: { color: GRID_HAIRLINE } },
+            },
+        },
+    });
+}
+
+// Spread of a measure per category, as a compact box: a floating bar from
+// p25 to p75 (the middle half) plus a dot at the median, on a log axis since
+// sizes span 1 to 10,000. `groups` = [{name, p25, p50, p75, p90, changesets}]
+// (SizeBreakdownView). The tooltip carries every number, so nothing hides
+// behind the encoding. `filterField` works like horizontalBar's.
+function quartileChart(canvasId, groups, filterField) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx || !groups.length) return;
+    // A log axis can't place 0 (an empty changeset), so floor at 1 for drawing only.
+    const pos = v => Math.max(v, 1);
+    new Chart(ctx.getContext('2d'), {
+        data: {
+            labels: groups.map(g => g.name),
+            datasets: [
+                {
+                    type: 'bar',
+                    label: 'p25–p75',
+                    data: groups.map(g => [pos(g.p25), pos(g.p75)]),
+                    backgroundColor: 'rgba(42, 120, 214, 0.35)',
+                    borderRadius: 4,
+                    borderSkipped: false,
+                    maxBarThickness: 20,
+                },
+                {
+                    type: 'scatter',
+                    label: 'Median',
+                    data: groups.map(g => ({ x: pos(g.p50), y: g.name })),
+                    backgroundColor: CATEGORICAL[0],
+                    borderColor: '#ffffff',
+                    borderWidth: 2,
+                    pointRadius: 5,
+                    pointHoverRadius: 6,
+                },
+            ],
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        title: items => items[0].label,
+                        label: () => null,
+                        afterBody: items => {
+                            const g = groups[items[0].dataIndex];
+                            return [
+                                `Median: ${g.p50.toLocaleString('en-US')} objects`,
+                                `Middle half: ${g.p25.toLocaleString('en-US')}–${g.p75.toLocaleString('en-US')}`,
+                                `p90: ${g.p90.toLocaleString('en-US')}`,
+                                `Average: ${g.avg_objects.toLocaleString('en-US')}`,
+                                `${g.changesets.toLocaleString('en-US')} changesets`,
+                            ];
+                        },
+                        footer: () => (filterField ? 'Click to filter' : ''),
+                    },
+                    footerFont: { style: 'italic', weight: 'normal' },
+                },
+            },
+            scales: {
+                x: {
+                    type: 'logarithmic',
+                    min: 1,
+                    grid: { color: GRID_HAIRLINE },
+                    ticks: { maxRotation: 0, callback: v => ([1, 10, 100, 1000, 10000].includes(v) ? v.toLocaleString('en-US') : '') },
+                    title: { display: true, text: 'Objects per changeset' },
+                },
+                y: { type: 'category', ticks: { autoSkip: false }, grid: { display: false }, border: { color: AXIS_BASELINE } },
+            },
+            onClick: !filterField ? undefined : (evt, elements, chart) => {
+                if (!elements.length) return;
+                applyFilter(filterField, chart.data.labels[elements[0].index]);
+            },
+            onHover: !filterField ? undefined : (evt, elements) => {
+                evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+            },
+        },
+    });
+}
+
 // ── Fetch/widget-loading helpers ─────────────────────────────────────────────
 // Each widget fetches and renders independently (not gated behind
 // Promise.all) so a slow or failed one only affects its own spinner/canvas,
@@ -269,7 +426,8 @@ function fetchJson(url, options) {
 // un-hide `canvasId` itself once it actually has something to draw), and
 // on failure replaces the spinner with an inline error instead of leaving
 // it spinning forever. Widgets are independent: one failing doesn't block
-// or hide any other widget on the page.
+// or hide any other widget on the page. Resolves to true once rendered,
+// false on failure, for callers with more to fill than the widget itself.
 //
 // Hides the spinner via style.display rather than the `hidden` attribute —
 // the spinner also carries Tailwind's `flex` class, and [hidden] and .flex
@@ -282,11 +440,13 @@ function loadWidget(canvasId, url, onSuccess) {
         .then(data => {
             document.getElementById(`${canvasId}-spinner`).style.display = 'none';
             onSuccess(data);
+            return true;
         })
         .catch(err => {
             console.error(`Failed to load ${url}`, err);
             document.getElementById(`${canvasId}-spinner`).innerHTML =
                 '<span class="text-sm text-red-600">Failed to load</span>';
+            return false;
         });
 }
 

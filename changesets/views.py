@@ -10,6 +10,15 @@ class DashboardView(TemplateView):
     template_name = 'changesets/dashboard.html'
 
 
+class ObjectsView(TemplateView):
+    """Objects page: how big changesets are (size distribution, percentiles,
+    size by editor / contributor experience / day), the largest changesets by
+    objects and by area, and who and which campaigns change the most objects.
+    Filled by static/js/objects.js from the distribution/largest/toplist/
+    timeseries endpoints."""
+    template_name = 'changesets/objects.html'
+
+
 class EditorsView(TemplateView):
     """Editors page: one column per top-10 editor family for the selected range
     (default: last year), plus an "Other editor families" column, each with its

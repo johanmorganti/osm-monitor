@@ -22,6 +22,10 @@ def api_exception_handler(exc, context):
         )
     if _is_clickhouse_unavailable(exc):
         return Response({'error': 'Analytics database unavailable — try again in a minute.'}, status=503)
+    if isinstance(exc, NotImplementedError):
+        # A question the configured analytics backend doesn't answer (new
+        # features skip the deprecated Timescale backend, see CLAUDE.md).
+        return Response({'error': f'Not supported by this analytics backend: {exc}'}, status=501)
 
     return None
 

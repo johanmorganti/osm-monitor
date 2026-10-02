@@ -22,7 +22,7 @@ from ...geo import (
     geohash_prefix_range_sql, GEOHASH_PREFIX_UPPER_BOUND_CHAR,
 )
 from ...models import Changeset, FilterValue, CaggVolumeHourly, CaggEditorVersionDaily, CaggGeoHashedDaily
-from ..base import NONE_BUCKET, EDITOR_VERSION, format_bucket
+from ..base import NONE_BUCKET, EDITOR_VERSION, HASHTAG, format_bucket
 from .caggs import (
     DIMENSION_FIELDS, RAW_ONLY_DIMENSIONS, CAGG_MODELS, CAGG_MODELS_HOURLY, CAGG_VOLUME_MODELS,
     pair_cagg_lookup,
@@ -82,7 +82,9 @@ class TimescaleBackend:
 
     # -- timeseries ----------------------------------------------------------
 
-    def timeseries(self, f, group_by, interval):
+    def timeseries(self, f, group_by, interval, metric='count'):
+        if metric != 'count' or group_by == HASHTAG:
+            raise NotImplementedError('timeseries by objects or hashtag (TimescaleDB backend is deprecated)')
         single = f.single()
         pair = pair_cagg_lookup(single[0], group_by) if single and group_by is not None and interval == 'day' else None
 
@@ -188,6 +190,8 @@ class TimescaleBackend:
     # -- toplist -------------------------------------------------------------
 
     def toplist(self, f, dimension, metric, limit):
+        if dimension == HASHTAG:
+            raise NotImplementedError('hashtag toplist (TimescaleDB backend is deprecated)')
         if dimension == EDITOR_VERSION:
             # Its own CAgg only when editor is the sole filter that matters
             # here (contributor/imagery/country send it to raw; language is
@@ -318,6 +322,17 @@ class TimescaleBackend:
         return qs
 
     # -- autocomplete --------------------------------------------------------
+
+    # -- object analysis (ClickHouse only: no CAggs for these, see CLAUDE.md) --
+
+    def size_counts(self, f):
+        raise NotImplementedError('size distribution (TimescaleDB backend is deprecated)')
+
+    def size_quantiles(self, f, by, quantiles, limit):
+        raise NotImplementedError('size breakdown (TimescaleDB backend is deprecated)')
+
+    def largest(self, f, by, limit):
+        raise NotImplementedError('largest changesets (TimescaleDB backend is deprecated)')
 
     def autocomplete(self, field, q):
         # FilterValue holds one row per distinct value ever seen (not per
