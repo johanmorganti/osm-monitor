@@ -6,8 +6,9 @@ work, and keep it updated as things get fixed or newly deferred.
 
 ## Project overview
 
-Django app that ingests OSM changeset replication sequences from planet.osm.org, stores them in a
-database, and serves a Chart.js dashboard plus a REST API.
+Django app that ingests OSM changeset replication sequences from planet.osm.org, stores them in
+ClickHouse (analytics) — plus a deprecated TimescaleDB copy in Postgres, which also holds the app's
+own state — and serves a Chart.js dashboard plus a REST API.
 
 Key entry points:
 - `/` → `DashboardView` (Chart.js dashboard)
@@ -68,7 +69,7 @@ endpoint had stayed.
 The public JSON API (`changesets/api/`) is backend-agnostic: each view parses and validates its
 parameters, applies the API-level rules (date defaults, `pick_interval`, geohash precision per
 viewport, response shapes, error messages) and asks the configured analytics backend
-(`changesets/analytics/`, selected by `ANALYTICS_BACKEND`, default `timescale`) for the data.
+(`changesets/analytics/`, selected by `ANALYTICS_BACKEND`, default `clickhouse`) for the data.
 The contract is `changesets/analytics/base.py`: a `Filters` value object plus `summary`,
 `timeseries`, `toplist`, `geo_cells`, `changesets`, `autocomplete`, each returning plain data
 shaped like the JSON response.
@@ -79,7 +80,8 @@ level of operations, not SQL, so each backend stays idiomatic: the Timescale bac
 between CAggs, pair CAggs and the raw hypertable (`changesets/analytics/timescale/`); another
 backend may simply scan its raw table.
 
-Backends today: `timescale` (default) and `clickhouse` (`changesets/analytics/clickhouse/`: SQL over
+Backends today: `clickhouse` (default) and `timescale` (deprecated, see below). ClickHouse
+(`changesets/analytics/clickhouse/`: SQL over
 the raw `changesets` table with `FINAL`, plus one daily rollup; `clickhouse_raw` skips the rollup, for
 measurement). The ClickHouse rollups are **refreshable** materialized views (`schema/0002_rollups.sql`:
 `daily_rollup`, every dimension in one ~4M-row table, and `filter_values` for autocomplete),
@@ -96,12 +98,23 @@ parity checks hit every backend through the same public endpoints.
 
 Ingestion mirrors this on the write side: the poller and `import_from_dump` parse each batch
 once (`osm_fetcher`, then `ingest/locate.py`) and hand the same records to every writer listed in
-`INGEST_BACKENDS` (default `timescale`; `changesets/ingest/writers/`). A writer upserts by
+`INGEST_BACKENDS` (default `clickhouse,timescale`; `changesets/ingest/writers/`). A writer upserts by
 `changeset_id` (replace only when `changes_count` grew) and is idempotent, so a batch that failed on
 any writer is simply retried on all of them; `after_backfill(start, end)` is its post-bulk-import
 maintenance (Timescale: refresh CAggs + FilterValue). Verified with a differential test: 3 real
 replication sequences imported inside a rolled-back transaction, with rows pre-arranged to hit the
 create, update and skip paths, giving identical counts and rows before and after the refactor.
+
+**ClickHouse became the default (2026-10-02); TimescaleDB is deprecated, Postgres stays.** Measured
+over full history on the same host, with byte-identical answers: ~3.7x less disk (no CAggs needed),
+roughly 3x less total time over the 46-call benchmark, no timeouts where Timescale hit its 30s cap,
+and post-import maintenance in minutes instead of hours. Timescale keeps working and keeps receiving
+a copy of every changeset (second writer) while it's retired step by step — see `TODO.md`'s
+"Phase out TimescaleDB" entry. Postgres itself is not going away: Django's own tables and
+`SequenceState` live there. So: new analytics features go into the ClickHouse backend first; don't
+add new CAggs or Timescale-only features, and a Timescale implementation of a new backend method
+is optional (raise `NotImplementedError` rather than building new CAggs for it). The sections
+below on hypertables, CAggs and compression describe the deprecated backend.
 
 **How to apply:** behavior that defines the public API goes in `changesets/api/`, never in a
 backend; how a backend gets the numbers stays inside that backend. The refactor that introduced
@@ -333,7 +346,7 @@ Python side follows the GeoJSON source.
 intended, `recompute_locations --start … --end …` to rewrite the affected rows. The
 `country_boundaries` / `country_boundaries_subdivided` tables are no longer read at ingest.
 
-### TimescaleDB hypertable
+### TimescaleDB hypertable (deprecated backend)
 `changesets_changeset` is a TimescaleDB hypertable (monthly chunks on `created_at`) — see
 `docs/ARCHITECTURE.md`'s "Why a hypertable" section for the full reasoning and the PK/unique-
 constraint trade-off it required (`id` is no longer DB-enforced-unique; real duplicate protection
@@ -433,18 +446,18 @@ hypertable's partitioning column (`created_at`) specifically, not a surrogate ke
 
 | Path | Role |
 |---|---|
-| `changesets/models.py` | `Changeset` (hypertable) + rollup/state/job models |
+| `changesets/models.py` | `SequenceState` + the deprecated Timescale `Changeset` (hypertable) and rollup models |
 | `changesets/views.py` | HTML page shells only (Overview, Editors, poller status) |
 | `changesets/api/` | Public JSON API, backend-agnostic: `views.py` (endpoints + OpenAPI annotations), `params.py` (parsing, defaults, `pick_interval`), `schema.py` |
 | `changesets/analytics/` | Analytics backend interface (`base.py`: `Filters`, `AnalyticsBackend`, `NONE_BUCKET`, `DIMENSIONS`) + `registry.py` (`ANALYTICS_BACKEND`) |
 | `changesets/analytics/clickhouse/` | ClickHouse backend (`backend.py`), client, schema (`schema/*.sql`, applied by `clickhouse_migrate`) |
-| `changesets/analytics/timescale/` | TimescaleDB backend: CAgg routing (`caggs.py`), raw fallback + queries (`backend.py`), exact-value filter resolution (`canonical.py`) |
+| `changesets/analytics/timescale/` | TimescaleDB backend (deprecated): CAgg routing (`caggs.py`), raw fallback + queries (`backend.py`), exact-value filter resolution (`canonical.py`) |
 | `changesets/serializers.py` | DRF serializer for `Changeset` |
 | `changesets/urls.py` | API URL patterns (`/api/…`) |
 | `osm_changeset_api/urls.py` | Root URL conf (mounts API + dashboard) |
 | `changesets/osm_fetcher.py` | Fetches & parses OSM replication XML |
 | `changesets/ingest/locate.py` | geohash + country for parsed changesets (Shapely/pyproj), used at ingest |
-| `changesets/ingest/writers/` | Ingestion storage writers (`base.py` contract, `timescale.py`), selected by `INGEST_BACKENDS` |
+| `changesets/ingest/writers/` | Ingestion storage writers (`base.py` contract, `clickhouse.py`, `timescale.py`), selected by `INGEST_BACKENDS` |
 | `changesets/rollups.py` | Precomputed daily aggregates behind the unfiltered dashboard view |
 | `changesets/geo.py` | Shared grid-cell/bbox-quality SQL for the geo heatmap (`cagg_geo_daily`/`cagg_geo_fine_daily` + `GeoView`) |
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |

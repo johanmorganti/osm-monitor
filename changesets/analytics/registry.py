@@ -1,7 +1,7 @@
 """Picks the analytics backend serving the API.
 
 Selected by settings.ANALYTICS_BACKEND (env ANALYTICS_BACKEND, default
-'timescale'). Backends are imported lazily, so an unused backend's client
+'clickhouse'). Backends are imported lazily, so an unused backend's client
 library never has to be installed or configured.
 """
 import hmac

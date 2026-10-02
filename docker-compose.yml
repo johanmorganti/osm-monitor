@@ -58,6 +58,61 @@ services:
       timeout: 5s
       retries: 10
 
+  # Analytics database: holds every changeset and answers the API's
+  # questions (ANALYTICS_BACKEND, default clickhouse). Postgres (db above)
+  # keeps the app's own state and, while TimescaleDB is being phased out,
+  # still receives a copy of every changeset (INGEST_BACKENDS) — see
+  # CLAUDE.md's "Analytics backends" section.
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.9.7.9
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-osm_monitor}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-osm_monitor}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    # Host directory, like Postgres's PGDATA_DIR: survives the Docker VM
+    # being deleted/recreated.
+    volumes:
+      - ${CLICKHOUSE_DATA_DIR:?set CLICKHOUSE_DATA_DIR in .env}:/var/lib/clickhouse
+      # Retention + verbosity for ClickHouse's own system log tables (unbounded
+      # and at `trace` level by default).
+      - ./clickhouse/config.d/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    # ClickHouse sizes its own memory budget from the container limit (90% by default).
+    mem_limit: 4g
+    ports:
+      - "127.0.0.1:8123:8123"   # HTTP interface, local only (benchmarks, manual queries)
+    # Datadog ClickHouse check + Database Monitoring, used only when the
+    # Datadog overlay's agent runs (otherwise inert). Connects as the
+    # least-privilege `datadog` user clickhouse_migrate creates from
+    # DD_CLICKHOUSE_PASSWORD.
+    labels:
+      com.datadoghq.ad.checks: |
+        {
+          "clickhouse": {
+            "instances": [
+              {
+                "server": "%%host%%",
+                "port": 8123,
+                "username": "datadog",
+                "password": "${DD_CLICKHOUSE_PASSWORD:-}",
+                "db": "${CLICKHOUSE_DB:-osm_monitor}",
+                "reported_hostname": "osm-monitor-clickhouse",
+                "tags": ["service:osm-monitor-clickhouse", "env:production"],
+                "dbm": true
+              }
+            ]
+          }
+        }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+
   # One-shot: runs migrations once before web/poller start, instead of each
   # of them running `migrate` themselves on every container start (the old
   # entrypoint.sh behavior) — that raced when both started together, see
@@ -76,15 +131,20 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # load_country_boundaries --if-empty: the Changeset insert trigger
-    # resolves country_code against country_boundaries, so a fresh database
-    # needs it loaded before any changeset is ingested — a no-op once loaded.
-    command: sh -c "python manage.py migrate --no-input && python manage.py load_country_boundaries --if-empty"
+      clickhouse:
+        condition: service_healthy
+    # load_country_boundaries --if-empty: ingestion resolves country_code
+    # against country_boundaries, so a fresh database needs it loaded before
+    # any changeset is ingested — a no-op once loaded. clickhouse_migrate
+    # applies the ClickHouse schema (idempotent).
+    command: sh -c "python manage.py migrate --no-input && python manage.py load_country_boundaries --if-empty && python manage.py clickhouse_migrate"
 
   web:
     build: .
     restart: unless-stopped
     env_file: .env
+    # Deliberately no dependency on clickhouse: a ClickHouse restart must not
+    # take the pages down with it (the API answers 503 meanwhile).
     depends_on:
       db:
         condition: service_healthy
@@ -113,6 +173,8 @@ services:
     env_file: .env
     depends_on:
       db:
+        condition: service_healthy
+      clickhouse:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully

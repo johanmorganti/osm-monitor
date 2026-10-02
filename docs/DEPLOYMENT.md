@@ -1,13 +1,14 @@
 # Deployment
 
-The app runs as a Docker Compose stack: `db` (TimescaleDB + PostGIS), a one-shot `migrate`,
-`web` (gunicorn) and `poller` (`poll_sequences`).
+The app runs as a Docker Compose stack: `clickhouse` (analytics), `db` (Postgres with TimescaleDB +
+PostGIS: app state and the deprecated Timescale copy), a one-shot `migrate`, `web` (gunicorn) and
+`poller` (`poll_sequences`).
 
 ## Docker Compose
 
 ```bash
 cp env.example .env    # fill in every value (deploy.sh refuses placeholders)
-mkdir -p <PGDATA_DIR>  # the host directory named by PGDATA_DIR in .env
+mkdir -p <PGDATA_DIR> <CLICKHOUSE_DATA_DIR>   # host directories named in .env
 ./deploy.sh            # preflight checks, build, start db, migrate, web, poller
 ```
 
@@ -17,10 +18,11 @@ The dashboard is on `http://localhost:5006/`, the API docs on `http://localhost:
 (`GIT_VERSION`), then runs `docker compose build && docker compose up -d`. On a fresh data
 directory the rest is automatic: `db/init/` sets up `pg_stat_statements` and the app role's
 defaults (see that directory's comments for applying them to an *existing* data dir), and
-`migrate` creates the schema (PostGIS, the hypertable, the continuous aggregates) and loads
-`country_boundaries`, which the changeset insert trigger needs before the first row arrives.
+`migrate` creates the Postgres schema, loads `country_boundaries`, and applies the ClickHouse
+schema (`clickhouse_migrate`: tables, refreshable rollups, the optional Datadog user).
 
-Postgres data lives in a host directory (`PGDATA_DIR`, bind-mounted), not a Docker volume. If
+Postgres and ClickHouse data live in host directories (`PGDATA_DIR`, `CLICKHOUSE_DATA_DIR`,
+bind-mounted), not Docker volumes. If
 Docker runs inside a VM (Colima, Docker Desktop), that directory must be shared into the VM,
 otherwise the bind mount silently resolves to an empty VM-local directory. With Colima:
 
@@ -52,7 +54,7 @@ part of each service's config) — don't redeploy while a long import is running
 ## Observability (optional)
 
 Logs are structured JSON on stdout, so any log collector works. Datadog support (APM traces,
-log/trace correlation, container logs, Postgres Database Monitoring) is an optional overlay,
+log/trace correlation, container logs, Postgres and ClickHouse Database Monitoring) is an optional overlay,
 `docker-compose.datadog.yml`. Without it, tracing is disabled and no agent runs. To enable it,
 set in `.env`:
 
@@ -61,10 +63,10 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.datadog.yml
 DD_API_KEY=...
 DD_SITE=datadoghq.com
 DD_POSTGRES_PASSWORD=...
+DD_CLICKHOUSE_PASSWORD=...
 ```
 
-then `./deploy.sh`. With the ClickHouse overlay enabled too, also set `DD_CLICKHOUSE_PASSWORD`:
-`clickhouse_migrate` (run by the `migrate` step) creates a least-privilege `datadog` user from it,
+then `./deploy.sh`. `clickhouse_migrate` (run by the `migrate` step) creates a least-privilege `datadog` user from it,
 and the ClickHouse container's autodiscovery label turns on the agent's ClickHouse check with
 Database Monitoring. `DD_POSTGRES_PASSWORD` should be set before the database is first
 initialized, since `db/init/01-datadog.sh` creates the `datadog` role from it. On an existing

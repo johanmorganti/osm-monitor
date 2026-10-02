@@ -1,8 +1,8 @@
 # OSM Monitor
 
 A Django application that continuously ingests [OpenStreetMap](https://www.openstreetmap.org)
-changeset data, stores it in a TimescaleDB hypertable, and serves it through a Chart.js analytics
-dashboard and a public REST API.
+changeset data, stores it in ClickHouse, and serves it through a Chart.js analytics dashboard and a
+public REST API.
 
 For the deeper "how it actually works" write-up (data flow, why a hypertable, the two ingestion
 paths, observability) see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For architectural
@@ -26,17 +26,18 @@ code), see [`CLAUDE.md`](CLAUDE.md). For known issues and deferred work, see
 - **Two ingestion paths**: a continuous background poller that tails
   [planet.osm.org](https://planet.osm.org)'s minutely replication feed, and a bulk importer for
   OSM's full changesets dump (all history since 2005, much faster than the minutely feed).
-- **TimescaleDB-backed**: the changeset table is a hypertable partitioned by month, so
-  date-range queries — the overwhelming majority of real traffic here — only touch the relevant
-  chunks, and the dashboard's aggregates are served from continuous aggregates rather than the
-  raw table.
-- **Structured JSON logs**, with optional Datadog APM tracing and Postgres Database Monitoring.
+- **ClickHouse-backed**: every changeset since 2005 in one columnar table, queried directly, plus a
+  daily rollup refreshed once a day for the common date-range questions. The API sits on a
+  backend interface (`changesets/analytics/`); the original TimescaleDB backend still works but is
+  deprecated and being phased out.
+- **Structured JSON logs**, with optional Datadog APM tracing and Postgres/ClickHouse Database
+  Monitoring.
 
 ## Requirements
 
-Postgres with TimescaleDB and PostGIS is required always — there's no SQLite fallback (the schema
-relies on Postgres/Timescale-specific SQL throughout: the hypertable, continuous aggregates,
-PostGIS centroids, expression indexes). Python 3.12, dependencies in `requirements.txt`.
+ClickHouse (analytics) and Postgres (app state; with TimescaleDB and PostGIS while the deprecated
+Timescale backend is still around — its migrations need both). There's no SQLite fallback.
+Python 3.12, dependencies in `requirements.txt`.
 
 ## Getting data in
 

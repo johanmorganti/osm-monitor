@@ -8,16 +8,15 @@ stands; it doesn't track day-to-day changes.
 ## Data flow
 
 ```
-planet.osm.org (minutely replication)  ──┐
-                                          ├──> changesets_changeset (TimescaleDB hypertable)
-OSM full changesets dump (bulk import) ──┘             │
-                                                         ├──> cagg_* (continuous aggregates)
-                                                         ├──> FilterValue (autocomplete)
-                                                         │
-                                          API (timeseries/summary/toplist/changesets) ──> dashboard.js
+planet.osm.org (minutely replication)  ──┐                      ┌──> ClickHouse `changesets` ──> daily_rollup, filter_values
+                                          ├──> parse + locate ───┤        (primary, serves the API)    (refreshed daily)
+OSM full changesets dump (bulk import) ──┘   (osm_fetcher,       └──> Postgres changesets_changeset ──> cagg_*, FilterValue
+                                               ingest/locate.py)        (TimescaleDB, deprecated copy)
+
+API (timeseries/summary/toplist/geo/changesets) ──> analytics backend (ClickHouse by default) ──> dashboard.js
 ```
 
-Two independent processes write to the same table and safely converge:
+Two independent processes ingest changesets and safely converge:
 
 - **`manage.py poll_sequences`** (the `poller` service) tails OSM's *minutely* replication feed —
   one small XML file per minute of real-world OSM activity. This is how the app stays up to date
@@ -30,11 +29,18 @@ Two independent processes write to the same table and safely converge:
   for bulk historical backfill — it's dramatically faster than replaying years of minutely diffs
   through the poller.
 
-Both paths funnel through the same batched insert logic in `osm_fetcher.py`
-(`import_changeset_batch`): for each batch, one query checks which `changeset_id`s already exist,
-then only the new ones get inserted. This makes the two paths idempotent with respect to each
-other — running a bulk import that overlaps data the poller already ingested (or vice versa) just
-skips the overlap cheaply, rather than erroring or double-counting.
+Both paths funnel through the same batch logic in `osm_fetcher.py` (`import_changeset_batch`):
+parse once, compute geohash + country in Python (`changesets/ingest/locate.py`), then hand the
+records to every writer in `INGEST_BACKENDS` (`changesets/ingest/writers/`). Each writer is an
+idempotent upsert by `changeset_id` (a changeset is replaced only when its `changes_count` grew):
+ClickHouse just inserts and lets `ReplacingMergeTree` keep the latest version (queries read with
+`FINAL`); the Timescale writer checks which ids already exist and inserts only the new or grown
+ones. So the two paths — and a retried batch — overlap harmlessly instead of double-counting.
+
+The rest of this document describes the **TimescaleDB backend, which is deprecated** (see
+`TODO.md`'s "Phase out TimescaleDB"): it still runs and still receives every changeset, but the API
+reads ClickHouse by default. For the ClickHouse side, see `CLAUDE.md`'s "Analytics backends" section
+and the docstring of `changesets/analytics/clickhouse/backend.py`.
 
 ## Why a hypertable
 

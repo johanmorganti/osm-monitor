@@ -1,5 +1,5 @@
 """Storage writers for ingestion, selected by settings.INGEST_BACKENDS (env
-INGEST_BACKENDS, comma-separated, default 'timescale'). Imported lazily, so an
+INGEST_BACKENDS, comma-separated, default 'clickhouse,timescale'). Imported lazily, so an
 unused backend's client library never has to be installed or configured."""
 from importlib import import_module
 

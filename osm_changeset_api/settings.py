@@ -172,16 +172,17 @@ LOGGING = {
 }
 
 # Analytics backend answering the public API (see changesets/analytics/).
-ANALYTICS_BACKEND = os.environ.get('ANALYTICS_BACKEND', 'timescale')
+# 'timescale' still works but is deprecated (see TODO.md).
+ANALYTICS_BACKEND = os.environ.get('ANALYTICS_BACKEND', 'clickhouse')
 # Internal per-request backend override (X-Analytics-Backend + X-Analytics-Token
 # headers), for benchmarks and parity checks. Unset = disabled.
 ANALYTICS_OVERRIDE_TOKEN = os.environ.get('ANALYTICS_OVERRIDE_TOKEN', '')
 
 # Storage writers ingestion feeds, primary first (see changesets/ingest/writers/).
-INGEST_BACKENDS = [b.strip() for b in os.environ.get('INGEST_BACKENDS', 'timescale').split(',') if b.strip()]
+# Timescale keeps receiving a copy until its read path is retired (see TODO.md).
+INGEST_BACKENDS = [b.strip() for b in os.environ.get('INGEST_BACKENDS', 'clickhouse,timescale').split(',') if b.strip()]
 
-# ClickHouse connection (only used when 'clickhouse' is an analytics/ingest
-# backend; see docker-compose.clickhouse.yml).
+# ClickHouse connection (the `clickhouse` service in docker-compose.yml).
 CLICKHOUSE = {
     'host': os.environ.get('CLICKHOUSE_HOST', 'clickhouse'),
     'port': int(os.environ.get('CLICKHOUSE_PORT', '8123')),
