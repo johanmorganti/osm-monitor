@@ -10,7 +10,7 @@ Neither ingestion path needs its own CAgg-refresh code for *live* data: every CA
 background job that refreshes on its own schedule regardless of what inserted the underlying rows
 — `poll_sequences.py` (the always-running poller) never touches CAggs at all. `import_from_dump.py`
 is the one path that *does* need an explicit call, since a historical bulk import routinely lands
-outside every policy's 7-day `start_offset` window (see CLAUDE.md's "Old-dated rows..." section) —
+outside every policy's 7-day `start_offset` window (see `docs/decisions/old-dated-rows.md`) —
 it already makes one, over the imported range, using `cagg_maintenance.ALL_CAGG_NAMES` (confirmed
 2026-09-21 still current: adding a new CAgg to that one list, as the pair CAggs below did, is
 sufficient — no per-command changes needed).
@@ -38,7 +38,7 @@ Root cause at the time: the hypertable's compression was `segmentby created_by_f
 only, and filters used `UPPER(col) = UPPER(x)`, so a query that filtered or grouped by anything
 *other* than editor couldn't exclude compressed batches and ended up decompressing everything in
 range. Filters now match exact canonical values, which compressed chunks' per-batch bloom filters
-can use to skip batches (see `CLAUDE.md`'s "Compression" section). Grouping by a non-segmentby
+can use to skip batches (see `docs/decisions/timescale-storage.md`). Grouping by a non-segmentby
 dimension over long raw ranges still decompresses everything in range; the pair CAggs below are
 what cover those.
 Needs a decision before doing more work here.
@@ -134,8 +134,7 @@ All 4 dimensions are now fully cross-covered (6 pairs = C(4,2)) except `GeoView`
 the one open item above.
 
 **2026-09-22 — `country` added as the dashboard's 5th dimension, replacing `language` there.**
-`country_code` (migration 0032) had been schema + backfill only until now (see CLAUDE.md's "Geo
-storage" section) — added `cagg_country_daily`/`hourly` (migration 0045, same shape as the other
+`country_code` (migration 0032) had been schema + backfill only until now (see `docs/decisions/geo-geohash.md`) — added `cagg_country_daily`/`hourly` (migration 0045, same shape as the other
 single-dimension CAggs) and 3 new pairs — `cagg_contributor_country_daily`,
 `cagg_country_editor_daily`, `cagg_country_imagery_daily` (migration 0048; no country×language
 pair, since language has no dashboard caller left to cross it with) — bringing the total to 9
@@ -146,7 +145,7 @@ param and removing it would be a breaking change, not a side effect of a dashboa
 **This backfill is also the origin of a separate, more serious finding**: backfilling the 5 country CAggs crashed Postgres mid-run
 repeatedly (5 times across ~2 hours), including once with *no* backfill or migration running at
 all. Root-caused (partially) to the same parallel-worker `/dev/shm` exhaustion mechanism already
-documented in CLAUDE.md's "Geo storage" section, but from a source that specific fix never
+documented in `docs/decisions/geo-geohash.md`, but from a source that specific fix never
 covered: every CAgg's own automatic `add_continuous_aggregate_policy` background refresh runs
 through TimescaleDB's internal scheduler, not through `cagg_maintenance.py`, so it never got the
 `max_parallel_workers_per_gather = 0` guard that only explicit backfill scripts opted into. Now a

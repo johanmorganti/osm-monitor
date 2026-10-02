@@ -6,8 +6,8 @@ public REST API.
 
 For the deeper "how it actually works" write-up (data flow, why a hypertable, the two ingestion
 paths, observability) see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For architectural
-*decisions* and their reasoning (aimed at whoever — human or AI agent — is about to change this
-code), see [`CLAUDE.md`](CLAUDE.md). For known issues and deferred work, see
+*decisions* and their reasoning, see [`docs/decisions/`](docs/decisions/README.md); AI agents
+working on the code start from [`CLAUDE.md`](CLAUDE.md). For known issues and deferred work, see
 [`TODO.md`](TODO.md). To run it, see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Features

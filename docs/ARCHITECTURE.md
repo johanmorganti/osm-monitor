@@ -1,9 +1,32 @@
 # Architecture
 
 How this actually works, for anyone (human or AI agent) picking this up cold. For *why specific
-decisions were made* (in the terse, decision-log sense), see [`../CLAUDE.md`](../CLAUDE.md). For
+decisions were made*, see [`decisions/`](decisions/README.md). For
 open issues and deferred work, see [`../TODO.md`](../TODO.md). This doc explains the system as it
 stands; it doesn't track day-to-day changes.
+
+## Pages and endpoints
+
+- `/` → `DashboardView` (Overview: map, changeset activity, rankings)
+- `/objects/` → `ObjectsView` (objects changed, changeset sizes, largest/widest changesets, rankings by objects incl. hashtags)
+- `/editors/` → `EditorsView` (one column per top-10 editor family for the selected range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph)
+- `/changeset_import/` → `APILandingPageView` (poller status page — live catch-up batch progress)
+- `/api/changesets/` → `ChangesetQueryView` (raw changeset records, filterable; defaults to the last 24 hours, no unfiltered "everything" mode)
+- `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped, `metric=count|objects`)
+- `/api/changesets/summary/` → `SummaryView` (total_changesets/total_objects/avg_objects)
+- `/api/changesets/toplist/` → `ToplistView` (top N by dimension × metric)
+- `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`)
+- `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension, `experience` or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`) — ClickHouse only, 501 on Timescale
+- `/api/docs/` → Swagger UI (drf-spectacular), `/api/schema/` the raw OpenAPI schema — the authoritative API reference
+
+The aggregate endpoints default to the last 7 days when no dates are given. Static files are
+served by Django itself in `DEBUG` mode (`django.conf.urls.static`).
+
+Ingestion: `manage.py poll_sequences` (continuous poller; first run takes `--start <seq>` or the
+`INITIAL_SEQUENCE` env var) and `manage.py import_from_dump` (bulk planet dump) are the only two
+paths. A one-shot HTTP-triggered import (`ChangesetListView`/`ImportJobView`) was removed
+2026-09-19: it ran on a bare `threading.Thread` inside the `web` worker with no resume/recovery and
+had no real usage.
 
 ## Data flow
 
@@ -39,8 +62,8 @@ ones. So the two paths — and a retried batch — overlap harmlessly instead of
 
 The rest of this document describes the **TimescaleDB backend, which is deprecated** (see
 `TODO.md`'s "Phase out TimescaleDB"): it still runs and still receives every changeset, but the API
-reads ClickHouse by default. For the ClickHouse side, see `CLAUDE.md`'s "Analytics backends" section
-and the docstring of `changesets/analytics/clickhouse/backend.py`.
+reads ClickHouse by default. For the ClickHouse side, see
+[`decisions/analytics-backends.md`](decisions/analytics-backends.md) and the docstring of `changesets/analytics/clickhouse/backend.py`.
 
 ## Why a hypertable
 
@@ -86,8 +109,8 @@ CAggs refresh themselves via TimescaleDB's own background job scheduler
 (`add_continuous_aggregate_policy`, registered per-CAgg in each migration) — no application code
 triggers this. Each policy's `start_offset` (7 days on every CAgg here) assumes normal live
 polling, where the only thing that can change after a row is inserted is `changes_count` growing
-while the changeset is still open (bounded by OSM's 24h max open time) — see `CLAUDE.md`'s
-"Old-dated rows in the replication stream are normal" section before assuming this window is too
+while the changeset is still open (bounded by OSM's 24h max open time) — see
+[`decisions/old-dated-rows.md`](decisions/old-dated-rows.md) before assuming this window is too
 narrow or too wide. A deliberate bulk/backward import lands outside that window and needs an
 explicit `CALL refresh_continuous_aggregate(<view>, <lo>, <hi>)` — not yet automated for
 `import_from_dump.py`, see `docs/todo/continuous-aggregates-migration.md`.

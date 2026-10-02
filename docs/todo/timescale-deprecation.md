@@ -34,7 +34,7 @@ only once nothing reads it any more.
    guard first). PostGIS is already unused at ingest — country lookup is
    `changesets/ingest/locate.py` against `changesets/data/country_boundaries.geojson` — but
    `country_boundaries` and its migrations still exist.
-6. Clean up docs: the hypertable/CAgg/compression sections in `CLAUDE.md` and
+6. Clean up docs: `docs/decisions/timescale-storage.md` and
    `docs/ARCHITECTURE.md` become history (git), not live guidance.
 
 ## Things that still touch the Postgres `Changeset` model

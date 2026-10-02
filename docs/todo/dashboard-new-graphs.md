@@ -38,7 +38,7 @@ ClickHouse only: the Timescale backend answers 501.
 (2026-09-22) — filter, toplist chart, and "over time" chart, matching the other three dimensions'
 full treatment. `DIMENSION_FIELDS`/`CAGG_MODELS` entries, `cagg_country_daily`/`hourly`
 (migration 0045) and 3 pair CAggs (migration 0048) — see `docs/todo/continuous-aggregates-
-migration.md`'s 2026-09-22 entry and `CLAUDE.md`'s dimension-naming table.
+migration.md`'s 2026-09-22 entry and `docs/decisions/dimension-naming.md`.
 
 **Geographic map.** `GeoView` (`/api/changesets/geo/`, `changesets/api/views.py`) + `cagg_geo_hashed_daily`
 (migration `0033_cagg_geo_hashed_daily`) + a Leaflet grid map on the dashboard (`dashboard.js`'s
@@ -47,7 +47,7 @@ legend, not a Leaflet.heat blurred/interpolated blob layer: rectangles show the 
 boundary/color rather than an approximated surface between sparse points, which was the actual
 cause of "hard to see detail" — the resolution itself was the separate, bigger lever). As of
 2026-09-19, cell shape is geohash-derived (not the fixed-degree grid described below) — see
-`CLAUDE.md`'s "Geo storage: a single geohash key" section.
+`docs/decisions/geo-geohash.md`.
 
 Grid-cell (0.5°) and bbox-quality-gate expressions live in `changesets/geo.py`, shared between the
 CAgg's defining query and `GeoView`'s raw-fallback path so they can't drift. Bbox-quality

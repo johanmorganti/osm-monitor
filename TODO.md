@@ -1,9 +1,8 @@
 # TODO — known issues & deferred design work
 
 Index only — one line per item, newest/most-relevant first within each section. Full reasoning,
-evidence, and remaining steps live in `docs/todo/<slug>.md`; see `CLAUDE.md`'s "TODO.md stays an
-index" section for the convention. Keep this current: when something here gets fixed, delete the
-line (and its file, or fold the resolution into `CLAUDE.md` if it's worth remembering *why*); when
+evidence, and remaining steps live in `docs/todo/<slug>.md`; see `CLAUDE.md`'s documentation rules for the convention. Keep this current: when something here gets fixed, delete the
+line (and its file, or fold the resolution into `docs/decisions/` if it's worth remembering *why*); when
 something new is deferred, add a line + file rather than letting it live only in conversation
 history.
 
