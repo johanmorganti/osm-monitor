@@ -267,7 +267,8 @@ class GeoView(APIView):
         summary='Changeset density by grid cell',
         description=(
             'Changeset count and objects-changed, bucketed into geohash-derived grid cells (see '
-            '`lat_size_degrees`/`lon_size_degrees` in the response), for a date range. Defaults '
+            '`lat_size_degrees`/`lon_size_degrees` in the response; each cell\'s `cell` is its geohash, '
+            'usable with /api/changesets/geo/cell/), for a date range. Defaults '
             'to the last 7 days if no dates are given. resolution=fine requires `bbox` (the '
             'viewport to scope cells to) and returns a finer grid than the default '
             'resolution=coarse. Changesets with an unreliably large bounding box (see the view '
@@ -283,7 +284,7 @@ class GeoView(APIView):
             value={
                 'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'country': ''},
                 'lat_size_degrees': 1.40625, 'lon_size_degrees': 1.40625,
-                'cells': [{'lat': 51.5, 'lon': -0.5, 'count': 1234, 'objects': 45210}],
+                'cells': [{'cell': 'gcp', 'lat': 51.5, 'lon': -0.5, 'count': 1234, 'objects': 45210}],
             },
             response_only=True,
         )],
@@ -457,6 +458,64 @@ class LargestView(APIView):
         f = resolve_filters(request)
         results = backend_for(request).largest(f, by, limit)
         return Response({'filters': {**f.as_dict(), 'by': by, 'limit': limit}, 'results': results})
+
+
+class GeoCellView(APIView):
+    """The changesets behind one map cell: those whose geohash starts with the
+    cell's geohash (the `cell` of a /geo/ response), newest first, with the
+    same filters and date range as the map."""
+
+    GEOHASH_ALPHABET = set('0123456789bcdefghjkmnpqrstuvwxyz')
+    DEFAULT_LIMIT = 50
+    MAX_LIMIT = 200
+
+    @extend_schema(
+        tags=['changesets'],
+        summary='Changesets in a map cell',
+        description=(
+            'Changesets of one /api/changesets/geo/ cell (a changeset belongs to the cell containing '
+            'its bounding-box center, like the map counts), newest first, paginated with '
+            'limit/offset; `has_more` says whether another page exists. Same filters and date range '
+            'as /geo/, so the cell\'s `count` there is this list\'s total. Defaults to the last 7 '
+            'days if no dates are given.'
+        ),
+        parameters=FILTER_PARAMS + [
+            OpenApiParameter('cell', OpenApiTypes.STR, required=True, description='The cell\'s geohash (1-12 characters), as returned in /geo/\'s `cell`.'),
+            OpenApiParameter('limit', OpenApiTypes.INT, description=f'Page size (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
+            OpenApiParameter('offset', OpenApiTypes.INT, description='Changesets to skip (default 0).'),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Sample',
+            value={
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'country': '', 'cell': 'u09', 'limit': 50, 'offset': 0},
+                'has_more': True,
+                'results': [{'changeset_id': 172710690, 'created_at': '2026-09-07T10:12:00Z', 'user': 'someone', 'editor': 'iD',
+                             'changes_count': 12, 'area_km2': 0.4, 'country': 'FR', 'comment': 'Add shop'}],
+            },
+            response_only=True,
+        )],
+    )
+    def get(self, request):
+        cell = request.query_params.get('cell', '').lower()
+        if not (1 <= len(cell) <= 12) or not set(cell) <= self.GEOHASH_ALPHABET:
+            return Response({'error': 'cell must be a geohash of 1-12 characters'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            limit = int(request.query_params.get('limit', self.DEFAULT_LIMIT))
+            offset = int(request.query_params.get('offset', 0))
+        except ValueError:
+            return Response({'error': 'limit and offset must be integers'}, status=status.HTTP_400_BAD_REQUEST)
+        if not (1 <= limit <= self.MAX_LIMIT) or offset < 0:
+            return Response({'error': f'limit must be between 1 and {self.MAX_LIMIT}, offset >= 0'}, status=status.HTTP_400_BAD_REQUEST)
+
+        f = resolve_filters(request)
+        # One extra row tells whether another page exists, without a count.
+        rows = backend_for(request).cell_changesets(f, cell, limit + 1, offset)
+        return Response({
+            'filters': {**f.as_dict(), 'cell': cell, 'limit': limit, 'offset': offset},
+            'has_more': len(rows) > limit,
+            'results': rows[:limit],
+        })
 
 
 class BatchProgressView(APIView):

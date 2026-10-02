@@ -283,7 +283,7 @@ class TimescaleBackend:
                 min_lat, max_lat, min_lon, max_lon = bounds
                 if not (min_lat <= lat <= max_lat and min_lon <= lon <= max_lon):
                     continue
-            cells.append({'lat': lat, 'lon': lon, 'count': r['count'], 'objects': r['objects']})
+            cells.append({'cell': r['cell'], 'lat': lat, 'lon': lon, 'count': r['count'], 'objects': r['objects']})
         return cells
 
     def _geo_from_raw(self, f, prefix_len, bounds):
@@ -299,7 +299,7 @@ class TimescaleBackend:
         cells = []
         for r in rows:
             lat, lon = geohash_decode_center(r['cell'])
-            cells.append({'lat': lat, 'lon': lon, 'count': r['count'], 'objects': r['objects']})
+            cells.append({'cell': r['cell'], 'lat': lat, 'lon': lon, 'count': r['count'], 'objects': r['objects']})
         return cells
 
     # -- raw records ---------------------------------------------------------
@@ -333,6 +333,9 @@ class TimescaleBackend:
 
     def largest(self, f, by, limit):
         raise NotImplementedError('largest changesets (TimescaleDB backend is deprecated)')
+
+    def cell_changesets(self, f, cell, limit, offset):
+        raise NotImplementedError('changesets of a map cell (TimescaleDB backend is deprecated)')
 
     def autocomplete(self, field, q):
         # FilterValue holds one row per distinct value ever seen (not per

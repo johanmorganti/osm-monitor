@@ -15,7 +15,7 @@ stands; it doesn't track day-to-day changes.
 - `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped, `metric=count|objects`)
 - `/api/changesets/summary/` → `SummaryView` (total_changesets/total_objects/avg_objects)
 - `/api/changesets/toplist/` → `ToplistView` (top N by dimension × metric)
-- `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`)
+- `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`; each cell carries its geohash as `cell`), `/api/changesets/geo/cell/` → `GeoCellView` (the changesets of one cell, newest first, paginated — the Overview map's click-to-list panel; ClickHouse only)
 - `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension, `experience` or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`) — ClickHouse only, 501 on Timescale
 - `/api/docs/` → Swagger UI (drf-spectacular), `/api/schema/` the raw OpenAPI schema — the authoritative API reference
 

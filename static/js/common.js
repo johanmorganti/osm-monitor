@@ -550,20 +550,115 @@ function geoColorScale(cells, metric) {
 // unlike the old fixed-degree grid which was square by construction) — see
 // GeoView/changesets/geo.py's geohash_cell_size_degrees. Drawing a square
 // here would misrepresent the true cell shape.
-function drawGeoCells(layerGroup, cells, latSizeDegrees, lonSizeDegrees, metric) {
+// `onCellClick(cell)` (optional) makes cells clickable; `selectedCell` (a
+// cell's geohash) is outlined.
+function drawGeoCells(layerGroup, cells, latSizeDegrees, lonSizeDegrees, metric, onCellClick, selectedCell) {
     layerGroup.clearLayers();
     const halfLat = latSizeDegrees / 2;
     const halfLon = lonSizeDegrees / 2;
     const colorFor = geoColorScale(cells, metric);
     cells.forEach(c => {
-        L.rectangle([[c.lat - halfLat, c.lon - halfLon], [c.lat + halfLat, c.lon + halfLon]], {
-            stroke: false,
+        const selected = c.cell === selectedCell;
+        const rect = L.rectangle([[c.lat - halfLat, c.lon - halfLon], [c.lat + halfLat, c.lon + halfLon]], {
+            stroke: selected,
+            color: '#0d366b',
+            weight: 2,
             fillColor: colorFor(c),
             fillOpacity: 0.85,
         })
-            .bindTooltip(`${c.count.toLocaleString()} changesets<br>${c.objects.toLocaleString()} objects`, { sticky: true })
+            .bindTooltip(`${c.count.toLocaleString()} changesets<br>${c.objects.toLocaleString()} objects${onCellClick ? '<br><i>Click to list them</i>' : ''}`, { sticky: true })
             .addTo(layerGroup);
+        if (onCellClick) rect.on('click', () => onCellClick(c));
     });
+}
+
+// ── Map cell panel ───────────────────────────────────────────────────────────
+// Lists the changesets of a clicked map cell (/api/changesets/geo/cell/,
+// same filters and range as the map), newest first, a page at a time. The
+// cell's total is the count the map already has, so no count query.
+const GEO_CELL_PAGE_SIZE = 50;
+
+function geoCellPanel(onClose) {
+    const panel = document.getElementById('geoCellPanel');
+    if (!panel) return null;
+    const list = document.getElementById('geoCellPanel-list');
+    const more = document.getElementById('geoCellPanel-more');
+    const status = document.getElementById('geoCellPanel-status');
+    let current = null;   // { cell, offset }
+    let abort = null;
+
+    function close() {
+        if (abort) abort.abort();
+        current = null;
+        panel.style.display = 'none';
+        onClose();
+    }
+    document.getElementById('geoCellPanel-close').addEventListener('click', close);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && current) close(); });
+
+    // Built with DOM nodes, not innerHTML: usernames and comments are user input.
+    function row(r) {
+        const li = document.createElement('li');
+        li.className = 'px-4 py-2';
+        const top = document.createElement('div');
+        top.className = 'flex items-baseline justify-between gap-2';
+        const a = document.createElement('a');
+        a.href = `https://www.openstreetmap.org/changeset/${r.changeset_id}`;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.className = 'font-medium text-blue-600 hover:underline';
+        a.textContent = r.changeset_id;
+        const when = document.createElement('span');
+        when.className = 'text-xs text-gray-400 whitespace-nowrap';
+        when.textContent = r.created_at.slice(0, 16).replace('T', ' ');
+        top.append(a, when);
+        const meta = document.createElement('div');
+        meta.className = 'text-xs text-gray-600';
+        meta.textContent = [r.user, r.editor, `${r.changes_count.toLocaleString('en-US')} object${r.changes_count === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+        li.append(top, meta);
+        if (r.comment) {
+            const comment = document.createElement('div');
+            comment.className = 'text-xs text-gray-400 truncate';
+            comment.textContent = r.comment;
+            comment.title = r.comment;
+            li.append(comment);
+        }
+        return li;
+    }
+
+    function loadPage() {
+        const { cell, offset } = current;
+        if (abort) abort.abort();
+        abort = new AbortController();
+        more.style.display = 'none';
+        status.textContent = 'Loading…';
+        fetchJson(apiUrl('/api/changesets/geo/cell/', { cell, offset, limit: GEO_CELL_PAGE_SIZE }), { signal: abort.signal })
+            .then(page => {
+                if (!current || current.cell !== cell) return;
+                page.results.forEach(r => list.appendChild(row(r)));
+                current.offset = offset + page.results.length;
+                status.textContent = page.has_more ? '' : (current.offset ? `All ${current.offset.toLocaleString('en-US')} shown` : 'No changesets');
+                more.style.display = page.has_more ? '' : 'none';
+            })
+            .catch(err => {
+                if (err.name === 'AbortError') return;
+                console.error('Failed to load cell changesets', err);
+                status.textContent = 'Failed to load';
+                more.style.display = '';
+            });
+    }
+    more.addEventListener('click', loadPage);
+
+    return function open(c) {
+        current = { cell: c.cell, offset: 0 };
+        list.innerHTML = '';
+        document.getElementById('geoCellPanel-title').textContent =
+            `${c.count.toLocaleString('en-US')} changesets · ${c.objects.toLocaleString('en-US')} objects`;
+        document.getElementById('geoCellPanel-subtitle').textContent =
+            `Cell ${c.cell} around ${c.lat.toFixed(2)}, ${c.lon.toFixed(2)} · newest first`;
+        panel.style.display = 'flex';
+        loadPage();
+    };
 }
 
 // Bins are log-scale, so a bare color swatch would be uninterpretable —
@@ -609,6 +704,14 @@ function renderGeoMap(initialGeo) {
     let fineFetchedZoom = null;
     let fineFetchAbort = null;
 
+    let selectedCell = null;
+    const openCellPanel = geoCellPanel(() => { selectedCell = null; redraw(); });
+    const onCellClick = openCellPanel && (c => {
+        selectedCell = c.cell;
+        redraw();
+        openCellPanel(c);
+    });
+
     let legendDiv;
     const legend = L.control({ position: 'bottomright' });
     legend.onAdd = () => {
@@ -621,7 +724,7 @@ function renderGeoMap(initialGeo) {
         const cells = showingFine ? fineCells : coarseCells;
         const latSize = showingFine ? fineLatSize : coarseLatSize;
         const lonSize = showingFine ? fineLonSize : coarseLonSize;
-        drawGeoCells(showingFine ? fineLayer : coarseLayer, cells, latSize, lonSize, metric);
+        drawGeoCells(showingFine ? fineLayer : coarseLayer, cells, latSize, lonSize, metric, onCellClick, selectedCell);
         updateGeoLegend(legendDiv, cells, metric);
     }
 

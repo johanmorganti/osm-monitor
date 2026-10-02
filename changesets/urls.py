@@ -1,7 +1,7 @@
 from django.urls import path
 from .api.views import (
     ChangesetQueryView, AutocompleteView, BatchProgressView, TimeseriesView, SummaryView, ToplistView, GeoView,
-    DistributionView, SizeBreakdownView, LargestView,
+    DistributionView, SizeBreakdownView, LargestView, GeoCellView,
 )
 
 
@@ -13,6 +13,7 @@ urlpatterns = [
     path('changesets/summary/', SummaryView.as_view(), name='changeset-summary'),
     path('changesets/toplist/', ToplistView.as_view(), name='changeset-toplist'),
     path('changesets/geo/', GeoView.as_view(), name='changeset-geo'),
+    path('changesets/geo/cell/', GeoCellView.as_view(), name='changeset-geo-cell'),
     path('changesets/distribution/', DistributionView.as_view(), name='changeset-distribution'),
     path('changesets/distribution/breakdown/', SizeBreakdownView.as_view(), name='changeset-size-breakdown'),
     path('changesets/largest/', LargestView.as_view(), name='changeset-largest'),

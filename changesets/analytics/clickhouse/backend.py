@@ -397,7 +397,7 @@ class ClickHouseBackend:
                 min_lat, max_lat, min_lon, max_lon = crop
                 if not (min_lat <= lat <= max_lat and min_lon <= lon <= max_lon):
                     continue
-            cells.append({'lat': lat, 'lon': lon, 'count': count, 'objects': objects})
+            cells.append({'cell': cell, 'lat': lat, 'lon': lon, 'count': count, 'objects': objects})
         return cells
 
     def _geo_rows(self, f, q, prefix_len, cover):
@@ -485,12 +485,22 @@ class ClickHouseBackend:
             order = 'area_km2 DESC'
         else:
             order = 'changes_count DESC'
+        return self._records(q, f'{order}, changeset_id DESC', limit)
+
+    def cell_changesets(self, f, cell, limit, offset):
+        # Same membership as geo_cells: the changeset's own geohash starts
+        # with the cell's (shorter) geohash.
+        q = _Query(f).add('startsWith(geohash, {cell:String})', cell=cell)
+        return self._records(q, 'created_at DESC, changeset_id DESC', limit, offset)
+
+    def _records(self, q, order, limit, offset=0):
+        """Changeset summaries (largest / cell_changesets shape) for q."""
         fields = ('changeset_id', 'created_at', 'user', 'editor', 'changes_count', 'area_km2', 'country', 'comment')
         rows = self._rows(
             f"""SELECT changeset_id, created_at, user, created_by_family, changes_count,
                        {AREA_KM2} AS area_km2, country_code, comment
                 FROM {self._table} WHERE {q.where}
-                ORDER BY {order}, changeset_id DESC LIMIT {int(limit)}""", q.params)
+                ORDER BY {order} LIMIT {int(limit)} OFFSET {int(offset)}""", q.params)
         records = []
         for row in rows:
             record = dict(zip(fields, row))

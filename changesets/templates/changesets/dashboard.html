@@ -75,12 +75,29 @@
     <!-- Changeset activity map -->
     <div class="bg-white rounded-lg shadow-lg p-6 mb-12">
         <h3 class="text-lg font-semibold mb-1">Changeset Activity Map</h3>
-        <p class="text-xs text-gray-400 mb-3">Changeset density by location — zoom in for finer detail. Grid cells with an unreliable bounding box are omitted</p>
+        <p class="text-xs text-gray-400 mb-3">Changeset density by location — zoom in for finer detail, click a cell to list its changesets. Changesets with an unreliable bounding box are omitted</p>
         <div class="relative" style="height: 500px">
             <div id="geoMap-spinner" class="absolute inset-0 flex items-center justify-center">
                 <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
             </div>
             <div id="geoMap" style="height: 500px" hidden></div>
+            <!-- Changesets of the clicked map cell (renderGeoMap in common.js
+                 fills and shows it). A sibling of the map, not inside it, so
+                 scrolling the list doesn't zoom the map. -->
+            <aside id="geoCellPanel" class="absolute top-0 right-0 bottom-0 w-full sm:w-96 bg-white shadow-xl rounded-l-lg z-[1000] flex-col" style="display: none">
+                <div class="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-200">
+                    <div>
+                        <h4 id="geoCellPanel-title" class="text-sm font-semibold text-gray-800"></h4>
+                        <p id="geoCellPanel-subtitle" class="text-xs text-gray-500"></p>
+                    </div>
+                    <button type="button" id="geoCellPanel-close" class="text-gray-400 hover:text-gray-700 text-xl leading-none px-1" aria-label="Close">&times;</button>
+                </div>
+                <ol id="geoCellPanel-list" class="flex-1 overflow-y-auto divide-y divide-gray-100 text-sm"></ol>
+                <div class="px-4 py-2 border-t border-gray-200 text-center">
+                    <button type="button" id="geoCellPanel-more" class="text-sm text-blue-600 hover:underline" style="display: none">Load more</button>
+                    <span id="geoCellPanel-status" class="text-xs text-gray-400"></span>
+                </div>
+            </aside>
         </div>
     </div>
 

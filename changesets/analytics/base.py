@@ -136,8 +136,13 @@ class AnalyticsBackend(Protocol):
         comment."""
 
     def geo_cells(self, f: Filters, prefix_len: int, bounds: Optional[tuple]) -> list:
-        """[{'lat', 'lon', 'count', 'objects'}] per geohash cell of `prefix_len`
-        characters; `bounds` = (min_lat, max_lat, min_lon, max_lon) or None."""
+        """[{'cell', 'lat', 'lon', 'count', 'objects'}] per geohash cell of
+        `prefix_len` characters (`cell` = that geohash prefix, lat/lon its
+        center); `bounds` = (min_lat, max_lat, min_lon, max_lon) or None."""
+
+    def cell_changesets(self, f: Filters, cell: str, limit: int, offset: int) -> list:
+        """Changesets of one geo_cells cell (geohash starting with `cell`),
+        newest first, in the `largest` record shape."""
 
     def changesets(self, q: ChangesetQuery) -> Sequence:
         """Newest-first records matching q, as a sliceable sequence with
