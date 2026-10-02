@@ -10,8 +10,8 @@
 // this replaced), not computed from a ranking API call — that call was
 // itself the reason the page took a long time to show anything, since
 // every card was gated behind it resolving first. Hardcoding trades "the
-// list self-updates as rankings shift" for "every card starts loading the
-// instant the script runs" — worth it since the top of this ranking is
+// list self-updates as rankings shift" for "every card can start loading
+// as soon as it scrolls into view" — worth it since the top of this ranking is
 // stable over any reasonable timescale (see the "Other editor families"
 // column for whatever's actually near the boundary).
 const TOP_FAMILIES = ['iD', 'StreetComplete', 'JOSM', 'Rapid', 'Vespucci', 'Go Map!!', 'Organic Maps', 'Every Door', 'DeFlock', 'CoMaps', 'OsmAnd'];
@@ -104,15 +104,23 @@ const othersIdx = TOP_FAMILIES.length;
 // individually degrades (inline error / 0 fallback) rather than one bad
 // request taking down the page or the Others computation below, which
 // reuses these same per-family summary/series results.
+//
+// Lazy, like loadWidget (common.js's whenNearViewport): a card's stats and
+// graph are fetched once it nears the viewport, or once the Others card
+// does, since that one needs every family's numbers. `once` makes each
+// fetch happen a single time whichever asks first.
+const once = fn => { let promise; return () => promise || (promise = fn()); };
+const familyCards = [];
 TOP_FAMILIES.forEach((name, i) => {
     container.insertAdjacentHTML('beforeend', familyCardHtml(i, name, 'Top versions by changeset count'));
+    familyCards.push(container.lastElementChild);
     loadWidget(`family-${i}-versions`, apiUrl('/api/changesets/toplist/', { dimension: 'editor_version', editor: name, metric: 'count' }), versions => {
         showChart(`family-${i}-versions`);
         horizontalBar(`family-${i}-versions`, versions.results.map(r => r.name), versions.results.map(r => r.value), 'Changesets');
     });
 });
 
-const topSummaryPromises = TOP_FAMILIES.map((name, i) =>
+const loadTopSummaries = TOP_FAMILIES.map((name, i) => once(() =>
     fetchJson(apiUrl('/api/changesets/summary/', { editor: name }))
         .then(summary => {
             setFamilyStats(i, summary);
@@ -123,9 +131,9 @@ const topSummaryPromises = TOP_FAMILIES.map((name, i) =>
             document.getElementById(`family-${i}-ratio`).textContent = 'Stats unavailable';
             return { total_changesets: 0, total_objects: 0 };
         })
-);
+));
 
-const topSeriesPromises = TOP_FAMILIES.map((name, i) =>
+const loadTopSeries = TOP_FAMILIES.map((name, i) => once(() =>
     fetchJson(apiUrl('/api/changesets/timeseries/', { editor: name }))
         .then(volume => {
             document.getElementById(`family-${i}-graph-spinner`).style.display = 'none';
@@ -139,15 +147,22 @@ const topSeriesPromises = TOP_FAMILIES.map((name, i) =>
                 '<span class="text-sm text-red-600">Failed to load</span>';
             return { dates: [], series: [{ counts: [] }] };
         })
-);
+));
+
+familyCards.forEach((card, i) => whenNearViewport(card).then(() => {
+    loadTopSummaries[i]();
+    loadTopSeries[i]();
+}));
 
 // Others: a single trailing card for every family not in TOP_FAMILIES.
 container.insertAdjacentHTML('beforeend', familyCardHtml(othersIdx, 'Other editor families', 'Every editor family not shown above'));
+const othersCardVisible = whenNearViewport(container.lastElementChild);
 
 // Others' toplist: one high-limit unfiltered toplist call, named families
 // filtered out client-side — cheaper than N "not this one" requests, and
 // this app's toplist endpoint has no exclude-list filter to begin with.
-fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'count', limit: RANKING_LIMIT }))
+othersCardVisible
+    .then(() => fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'count', limit: RANKING_LIMIT })))
     .then(ranking => {
         const named = new Set(TOP_FAMILIES.map(n => n.toLowerCase()));
         const rest = ranking.results.filter(r => !named.has(r.name.toLowerCase()));
@@ -168,13 +183,22 @@ fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'cou
 // for the page-level KPIs below) rather than firing more requests.
 const pageSummaryPromise = fetchJson(apiUrl('/api/changesets/summary/'));
 
-Promise.all([fetchJson(apiUrl('/api/changesets/timeseries/')), pageSummaryPromise, ...topSeriesPromises, ...topSummaryPromises])
+othersCardVisible
+    .then(() => Promise.all([
+        fetchJson(apiUrl('/api/changesets/timeseries/')), pageSummaryPromise,
+        ...loadTopSeries.map(load => load()), ...loadTopSummaries.map(load => load()),
+    ]))
     .then(([total, totalSummary, ...rest]) => {
         const topSeries = rest.slice(0, TOP_FAMILIES.length);
         const topSummaries = rest.slice(TOP_FAMILIES.length);
 
-        const othersCounts = total.dates.map((_, i) =>
-            total.series[0].counts[i] - topSeries.reduce((sum, s) => sum + (s.series[0].counts[i] || 0), 0)
+        // Matched by date, not array position: a family with no changesets
+        // on some days has fewer dates than the total (DeFlock's series
+        // started a day later), which used to shift every later point and
+        // push the Others line below zero.
+        const familyByDate = topSeries.map(s => new Map(s.dates.map((d, i) => [d, s.series[0].counts[i]])));
+        const othersCounts = total.dates.map((d, i) =>
+            total.series[0].counts[i] - familyByDate.reduce((sum, byDate) => sum + (byDate.get(d) || 0), 0)
         );
         document.getElementById(`family-${othersIdx}-graph-spinner`).style.display = 'none';
         showChart(`family-${othersIdx}-graph`);

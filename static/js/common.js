@@ -422,6 +422,36 @@ function fetchJson(url, options) {
     });
 }
 
+// Lazy loading: a widget's request only starts once its card is within
+// LAZY_MARGIN of the viewport, so a page load fetches what's on screen (and
+// just below) instead of every widget at once — several of these queries
+// are CPU-heavy on the analytics database, and most visits never scroll to
+// the bottom. Browsers without IntersectionObserver load everything at once.
+const LAZY_MARGIN = '400px 0px';
+const lazyStarts = new Map(); // observed element -> callbacks waiting on it
+const lazyObserver = 'IntersectionObserver' in window
+    ? new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            lazyObserver.unobserve(entry.target);
+            const starts = lazyStarts.get(entry.target) || [];
+            lazyStarts.delete(entry.target);
+            starts.forEach(start => start());
+        });
+    }, { rootMargin: LAZY_MARGIN })
+    : null;
+
+function whenNearViewport(element) {
+    return new Promise(resolve => {
+        if (!lazyObserver || !element) return resolve();
+        if (!lazyStarts.has(element)) {
+            lazyStarts.set(element, []);
+            lazyObserver.observe(element);
+        }
+        lazyStarts.get(element).push(resolve);
+    });
+}
+
 // Fetches `url`, hands the result to `onSuccess` (which is expected to
 // un-hide `canvasId` itself once it actually has something to draw), and
 // on failure replaces the spinner with an inline error instead of leaving
@@ -429,23 +459,30 @@ function fetchJson(url, options) {
 // or hide any other widget on the page. Resolves to true once rendered,
 // false on failure, for callers with more to fill than the widget itself.
 //
+// Waits for the widget to scroll near the viewport first (see LAZY_MARGIN),
+// watching the spinner's parent: the canvas itself is hidden (no box) until
+// it has data. `{ eager: true }` fetches straight away, for a widget whose
+// response also fills something higher up the page (e.g. KPIs).
+//
 // Hides the spinner via style.display rather than the `hidden` attribute —
 // the spinner also carries Tailwind's `flex` class, and [hidden] and .flex
 // have equal CSS specificity, so whichever rule comes later in the compiled
 // stylesheet wins regardless of the hidden attribute (it's `.flex` here,
 // so `hidden = true` alone silently does nothing). An inline style always
 // wins over a class, hidden attribute or not.
-function loadWidget(canvasId, url, onSuccess) {
-    return fetchJson(url)
+function loadWidget(canvasId, url, onSuccess, options) {
+    const spinner = document.getElementById(`${canvasId}-spinner`);
+    const ready = options && options.eager ? Promise.resolve() : whenNearViewport(spinner && spinner.parentElement);
+    return ready
+        .then(() => fetchJson(url))
         .then(data => {
-            document.getElementById(`${canvasId}-spinner`).style.display = 'none';
+            spinner.style.display = 'none';
             onSuccess(data);
             return true;
         })
         .catch(err => {
             console.error(`Failed to load ${url}`, err);
-            document.getElementById(`${canvasId}-spinner`).innerHTML =
-                '<span class="text-sm text-red-600">Failed to load</span>';
+            spinner.innerHTML = '<span class="text-sm text-red-600">Failed to load</span>';
             return false;
         });
 }
@@ -696,7 +733,9 @@ const SUGGEST_MAX_RESULTS = 10; // matches AutocompleteView's own [:10] cap
 // already fetch each dimension's ranking chart, reusing that response — no
 // extra request) — read live by wireSuggestions' handlers below, not
 // captured at wire-time, since ranking data usually hasn't arrived yet
-// when wireSuggestions itself runs at page load.
+// when wireSuggestions itself runs at page load. Those widgets load lazily,
+// so the on-focus preview stays empty until the ranking has been scrolled
+// into view; typing still queries /api/autocomplete/.
 const topValueCache = {};
 function cacheTopValues(field, names) {
     topValueCache[field] = names;

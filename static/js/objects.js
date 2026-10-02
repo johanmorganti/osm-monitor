@@ -7,6 +7,7 @@
 const percent = v => `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`;
 
 // ── KPIs + size histogram: one /distribution/ call fills both ───────────────
+// Eager: the KPIs and the filter form at the top of the page wait on it.
 loadWidget('sizeHistogramChart', apiUrl('/api/changesets/distribution/'), dist => {
     document.getElementById('start_date').value = dist.filters.start_date;
     document.getElementById('end_date').value = dist.filters.end_date;
@@ -29,7 +30,7 @@ loadWidget('sizeHistogramChart', apiUrl('/api/changesets/distribution/'), dist =
         { name: 'Changesets', values: share(dist.buckets.map(b => b.changesets), dist.total_changesets) },
         { name: 'Objects changed', values: share(dist.buckets.map(b => b.objects), dist.total_objects) },
     ], percent);
-}).then(loaded => {
+}, { eager: true }).then(loaded => {
     if (loaded) return;
     ['totalObjects', 'avgObjects', 'medianObjects', 'whaleShare'].forEach(id => {
         document.getElementById(id).textContent = 'Error';

@@ -67,6 +67,14 @@ of 1 — acceptable since they're fetched concurrently (bounded by the slowest, 
 each is now independently small/cacheable, but a real cost avoided if the "aggregate everything"
 endpoint had stayed.
 
+**Widgets load lazily (2026-10-02).** `loadWidget` (`static/js/common.js`) only fetches once a
+widget's card is within 400px of the viewport (`whenNearViewport`, an `IntersectionObserver`), so
+a page load costs what's on screen, not every widget: first paint went from 11 to 2 calls on
+Overview, 10 to 2 on Objects, 28 to 10 on Editors (36 when fully scrolled). Use `{ eager: true }`
+only when a widget's response also fills something above the fold (the Objects KPIs). This, not
+more gunicorn threads, was the lever: measured with ClickHouse, a full Overview load is bound by
+ClickHouse CPU (each query uses all 4 cores), not by request slots (see `entrypoint.sh`).
+
 ### Analytics backends: the API asks, a backend answers (2026-10-01)
 The public JSON API (`changesets/api/`) is backend-agnostic: each view parses and validates its
 parameters, applies the API-level rules (date defaults, `pick_interval`, geohash precision per
