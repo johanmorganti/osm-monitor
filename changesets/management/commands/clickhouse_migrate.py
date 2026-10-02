@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from changesets.analytics.clickhouse.client import get_client
@@ -34,4 +35,9 @@ class Command(BaseCommand):
             client.command(f'CREATE USER IF NOT EXISTS datadog IDENTIFIED BY {quoted}')
             client.command(f'ALTER USER datadog IDENTIFIED BY {quoted}')
             client.command('GRANT SELECT ON system.* TO datadog')
+            # DBM explains the queries it captures (EXPLAIN PLAN ... indexes=1),
+            # which needs read access to the tables they touch: without it,
+            # every captured app query logs an ACCESS_DENIED (~800/h measured).
+            # The data is public OpenStreetMap changesets.
+            client.command(f"GRANT SELECT ON {settings.CLICKHOUSE['database']}.* TO datadog")
             self.stdout.write('datadog monitoring user ready')
