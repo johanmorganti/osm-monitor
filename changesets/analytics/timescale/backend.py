@@ -98,13 +98,16 @@ class TimescaleBackend:
         return self._timeseries_from_raw(f, group_by, interval)
 
     def _timeseries_single_filtered(self, f, dimension, value, interval):
+        # Summed per bucket: the case-insensitive filter can match several
+        # stored spellings ("Bing" and "bing"), one CAgg row each per bucket.
+        # Taking rows as they came duplicated those buckets' date labels.
         model = (CAGG_MODELS_HOURLY if interval == 'hour' else CAGG_MODELS)[dimension]
         rows = list(
             model.objects.filter(name__iexact=value, bucket__gte=f.start_date, bucket__lt=f.end_exclusive)
-            .order_by('bucket')
+            .values('bucket').annotate(cnt=Sum('cnt')).order_by('bucket')
         )
-        dates = [format_bucket(r.bucket, interval) for r in rows]
-        return {'interval': interval, 'dates': dates, 'series': [{'name': 'changesets', 'counts': [r.cnt for r in rows]}]}
+        dates = [format_bucket(r['bucket'], interval) for r in rows]
+        return {'interval': interval, 'dates': dates, 'series': [{'name': 'changesets', 'counts': [r['cnt'] for r in rows]}]}
 
     def _timeseries_from_pair(self, f, filter_value, pair):
         """`pair` is (model, filter_column, group_by_column). Daily only (every
@@ -118,12 +121,15 @@ class TimescaleBackend:
         names = [row[group_col] for row in top]
         if not names:
             return {'interval': 'day', 'dates': [], 'series': []}
+        # Summed per (bucket, name): several spellings of the filter value
+        # ("GeoPortal" / "Geoportal") give several rows per bucket and name,
+        # which the pivot would otherwise overwrite instead of adding up.
         rows = (
             model.objects.filter(
                 bucket__gte=f.start_date, bucket__lt=f.end_exclusive,
                 **{f'{group_col}__in': names}, **filter_kwargs,
             )
-            .values('bucket', group_col, 'cnt')
+            .values('bucket', group_col).annotate(cnt=Sum('cnt'))
         )
         return _pivot_top_names(rows, names, group_col, 'cnt', 'day')
 

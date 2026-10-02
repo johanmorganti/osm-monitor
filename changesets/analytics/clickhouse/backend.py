@@ -111,13 +111,14 @@ def _name_expression(dimension, with_none_bucket, query):
 class ClickHouseBackend:
     name = 'clickhouse'
     final = True
+    query_settings = QUERY_SETTINGS  # long-running tools (parity checks) can lift the cap
 
     @property
     def _table(self):
         return 'changesets FINAL' if self.final else 'changesets'
 
     def _rows(self, sql, params):
-        return get_client().query(sql, parameters=params, settings=QUERY_SETTINGS).result_rows
+        return get_client().query(sql, parameters=params, settings=self.query_settings).result_rows
 
     # -- summary -------------------------------------------------------------
 
@@ -273,10 +274,13 @@ class _ChangesetPage:
 
 class _Record:
     """Attribute access for ChangesetSerializer, with Postgres's
-    representation: JSON tags decoded, empty arrays as null (Postgres stores
-    no array when the tag is absent)."""
+    representation: UTC-aware datetimes, JSON tags decoded, empty arrays as
+    null (Postgres stores no array when the tag is absent)."""
 
     def __init__(self, values):
+        for key in ('created_at', 'closed_at'):  # the client returns naive UTC datetimes
+            if values.get(key) is not None and values[key].tzinfo is None:
+                values[key] = values[key].replace(tzinfo=timezone.utc)
         if values.get('remaining_tags') is not None:
             values['remaining_tags'] = json.loads(values['remaining_tags'])
         for key in ('imagery_used', 'hashtags'):
