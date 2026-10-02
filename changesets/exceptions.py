@@ -20,6 +20,8 @@ def api_exception_handler(exc, context):
             {'error': 'Query took too long and was cancelled — try a narrower date range or filter.'},
             status=503,
         )
+    if _is_clickhouse_unavailable(exc):
+        return Response({'error': 'Analytics database unavailable — try again in a minute.'}, status=503)
 
     return None
 
@@ -32,4 +34,14 @@ def _is_clickhouse_timeout(exc):
     except ImportError:
         return False
     return isinstance(exc, DatabaseError) and 'TIMEOUT_EXCEEDED' in str(exc)
+
+
+def _is_clickhouse_unavailable(exc):
+    """ClickHouse unreachable or still starting (connection refused, a table
+    still loading): a temporary 503, not a 500 with an HTML page."""
+    try:
+        from clickhouse_connect.driver.exceptions import OperationalError as ClickHouseOperationalError
+    except ImportError:
+        return False
+    return isinstance(exc, ClickHouseOperationalError)
 
