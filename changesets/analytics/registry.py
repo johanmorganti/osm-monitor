@@ -12,7 +12,7 @@ from django.conf import settings
 _BACKENDS = {
     'timescale': 'changesets.analytics.timescale.backend.TimescaleBackend',
     'clickhouse': 'changesets.analytics.clickhouse.backend.ClickHouseBackend',
-    'clickhouse_nofinal': 'changesets.analytics.clickhouse.backend.ClickHouseNoFinalBackend',
+    'clickhouse_raw': 'changesets.analytics.clickhouse.backend.ClickHouseRawBackend',
 }
 _instances = {}
 

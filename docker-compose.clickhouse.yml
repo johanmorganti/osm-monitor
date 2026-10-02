@@ -18,6 +18,9 @@ services:
     # same storage and their numbers compare fairly.
     volumes:
       - ${CLICKHOUSE_DATA_DIR:?set CLICKHOUSE_DATA_DIR in .env}:/var/lib/clickhouse
+      # Retention + verbosity for ClickHouse's own system log tables (unbounded
+      # and at `trace` level by default).
+      - ./clickhouse/config.d/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
     ulimits:
       nofile: {soft: 262144, hard: 262144}
     # ClickHouse sizes its own memory budget from the container limit (90% by default).

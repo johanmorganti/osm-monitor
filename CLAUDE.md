@@ -79,8 +79,14 @@ level of operations, not SQL, so each backend stays idiomatic: the Timescale bac
 between CAggs, pair CAggs and the raw hypertable (`changesets/analytics/timescale/`); another
 backend may simply scan its raw table.
 
-Backends today: `timescale` (default) and `clickhouse` (`changesets/analytics/clickhouse/`, plain SQL
-over the raw `changesets` table with `FINAL`; `clickhouse_nofinal` skips `FINAL` for measurement).
+Backends today: `timescale` (default) and `clickhouse` (`changesets/analytics/clickhouse/`: SQL over
+the raw `changesets` table with `FINAL`, plus one daily rollup; `clickhouse_raw` skips the rollup, for
+measurement). The ClickHouse rollups are **refreshable** materialized views (`schema/0002_rollups.sql`:
+`daily_rollup`, every dimension in one ~4M-row table, and `filter_values` for autocomplete),
+recomputed daily from `FINAL` data, never incremental ones: `changesets` receives new versions of
+existing changesets (grown, or resurfaced through a comment), which an incremental view would count
+twice. Queries read the rollup up to its last covered day and the raw table after it, in one
+`UNION ALL`. Verified exact: 200/200 parity cases identical with and without the rollup.
 The ClickHouse backend reproduces Timescale's observable semantics, including its path-dependent
 NULL grouping: aggregate-shaped questions put untagged imagery/language/country in `NONE_BUCKET`,
 raw-table ones leave NULL names out (see that module's docstring for the few deliberate

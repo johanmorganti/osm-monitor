@@ -1,0 +1,44 @@
+<!-- Retention and verbosity for ClickHouse's own system log tables.
+     By default they keep everything forever, and the server logs at `trace`:
+     measured ~750K text_log rows/hour and ~0.5 GB of system tables within a
+     day of light use (Datadog DBM polls every second). query_log keeps 7 days
+     because Datadog DBM reads it; profiling/metric logs keep 3. -->
+<clickhouse>
+    <logger>
+        <level>warning</level>
+    </logger>
+    <text_log>
+        <level>warning</level>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </text_log>
+    <query_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </query_log>
+    <error_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </error_log>
+    <processors_profile_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </processors_profile_log>
+    <trace_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </trace_log>
+    <metric_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </metric_log>
+    <asynchronous_metric_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </asynchronous_metric_log>
+    <part_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </part_log>
+    <query_metric_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </query_metric_log>
+    <asynchronous_insert_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </asynchronous_insert_log>
+    <background_schedule_pool_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </background_schedule_pool_log>
+</clickhouse>
