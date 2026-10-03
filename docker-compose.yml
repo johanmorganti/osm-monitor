@@ -116,6 +116,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+      # Loading the tables after a restart can outlast retries x interval
+      # (2026-10-03: a deploy failed on "clickhouse is unhealthy" while it
+      # was still starting); failures during start_period don't count.
+      start_period: 3m
 
 
   # One-shot: runs migrations once before web/poller start, instead of each
