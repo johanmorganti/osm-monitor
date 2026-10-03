@@ -67,16 +67,51 @@ is unmeasured.
 `largest`-style list. Widgets on the Objects page, with a "data since <date>" note: coverage
 starts when the poller starts.
 
+## Prototype results (2026-10-03)
+
+One day of minutely files (sequences 7310994-7312542, 2026-10-02 00:00 to 2026-10-03 02:15 UTC,
+1,549 files, 115 MB) parsed into scratch tables (`osm_proto` database; script, schema and files in
+`~/osm-monitor-data/diffs-prototype/`, outside the repo). The schema tested is the one above, with
+`object_versions` partitioned by day and ordered by `(type, id, version)`.
+
+- **Correct:** for all 51,291 changesets opened on Oct 2 and closed in the window, creates +
+  modifies + deletes equal `changes_count` exactly (4,492,269 objects on both sides).
+- **Volume:** 5.08M object versions in 26 h (4.54M nodes, 530K ways, 17K relations; 3.50M
+  creates, 683K modifies, 900K deletes); 70.6K `changeset_objects` and 161K `changeset_features`
+  rows (several partial rows per changeset, one per file it spans).
+- **Disk, everything kept:** `object_versions` 68 MB for the 26 h, **14 bytes per version**
+  compressed (467 MB uncompressed). Biggest columns: `lon` 15.9 MB and `lat` 15.6 MB (coordinates
+  barely compress), `node_refs` 12.9 MB, `tags` 7.1 MB, `id` 7.0 MB, `members` 5.2 MB. That's
+  about **5.7 GB for 3 months, 23 GB a year**. The count tables are ~2 MB a day (~0.7 GB a year).
+  Disk is not what limits the window.
+- **Parse:** 262 s for the day in one Python process (stdlib `iterparse`, no lxml), inserts 32 s;
+  peak memory 308 MB with 30-file batches, so batch by row count to stay well under the 512 MB
+  limit. Live, that's ~0.2 s a minute.
+- **Queries on one day:** most re-edited objects 1.5 s, share of re-edited objects 0.6 s (57K of
+  5.0M objects edited more than once in the day, 8.6K by more than one user), tag keys added /
+  removed / changed between consecutive versions 0.6 s (top: `tactile_paving`, `surface`,
+  `lane_markings`, `maxspeed:hgv` removals, `cycleway:both`). Over 3 months these would take
+  minutes, and grouping ~450M rows by object would hit ClickHouse's 4 GB memory cap: **query cost
+  is what limits the window**, so the API reads daily rollups (re-edits, tag-key changes per day),
+  never `object_versions` directly over a long range.
+- **Download:** via the planet.osm.org redirect, 2.6 s a file (67 min for the day); straight from
+  the S3 mirror (`osm-planet-eu-central-1.s3...`) over one reused connection, 0.47 s. The poller
+  should do the latter.
+- **Daily files keep every version:** the Oct 2 daily diff has 4,494,004 elements, the minutely
+  files 4,494,005 for the same period (the difference is the midnight boundary). So the backfill
+  reads ~90 daily files (~100 MB each) instead of ~130K minutely ones. They have no minute
+  sequence: the backfill needs its own idempotency key (e.g. the day sequence in a separate
+  range) and must stop where the minutely poller starts, so no day is counted twice.
+
 ## Plan
 
-1. **Prototype and measure** (before any schema is final): parse one full day of minutely files
-   on this host. Measure download and parse time, rows and compressed bytes per table and per
-   `object_versions` column (tags, node refs and members are likely most of it), and check the per-changeset sum against `changes_count`.
-   Extrapolate `object_versions` to 3 months and to a year.
-2. Poller and tables, then catch up from the start date.
-3. Rollup and API (with `@extend_schema`), parity check.
+1. ~~Prototype and measure~~ (done, above).
+2. Poller and tables (real schema, from the prototype's), then backfill 3 months from the daily
+   files and follow the minutely ones from there.
+3. Daily rollups (counts by changeset dimensions; re-edits and tag-key changes from
+   `object_versions`), API (with `@extend_schema`), parity check against `changes_count`.
 4. Objects page widgets.
-5. Decide whether the per-object window can grow, from the measurements.
+5. Revisit the window: disk allows a year or more; the rollups' refresh time decides.
 
 Sample seen in one minute (2026-10-03 01:14-01:15 UTC): way 148066277 modified 4 times in 15
 seconds by 4 changesets (v12 adds `surface`, v13 `cycleway:both`, v14 `lane_markings`), one quest

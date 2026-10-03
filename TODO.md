@@ -17,6 +17,6 @@ history.
 
 ## Planned work
 
-- [Object changes from the minutely diffs (tier 2)](docs/todo/object-changes.md) — architecture agreed, not started: a `poll_diffs` service writing per-changeset counts by type/action/feature (kept forever) and per-object versions (3-month window); step 1 is a one-day prototype to measure scale.
+- [Object changes from the minutely diffs (tier 2)](docs/todo/object-changes.md) — architecture agreed, one-day prototype done (counts match `changes_count` exactly; 14 bytes per object version, ~5.7 GB for 3 months): next is the `poll_diffs` service, tables and a 3-month backfill from the daily files.
 - [Widest changesets: find a list worth showing](docs/todo/widest-changesets.md) — paused: the area-ranked table was removed (all continent-sized, mostly ordinary edits); a threshold list was too slow on full history and empty for reasonable contributors; next idea is a ranking by area per object.
 - [Dashboard: new graph/section ideas](docs/todo/dashboard-new-graphs.md) — hashtag filter, Objects page speed over multi-year ranges, StreetComplete quest breakdown, discussion activity, new-vs-returning contributors. Geo map, per-country breakdown, Objects page and hashtag toplist are done.
