@@ -21,7 +21,8 @@ history planet with osmium, "tier 3") is a separate, later project.
 
 1. **Both granularities.** Per-changeset counts (what other OSM stats tools provide) kept for all
    time, plus one row per object version for a rolling **3 months** (TTL), to measure whether it
-   scales before going longer.
+   scales before going longer. `object_versions` keeps **everything** the diff has for an element:
+   tags, and geometry (node coordinates, way node lists, relation members).
 2. **Feature classification from the new version's tags:** each element gets one `feature`, its
    main tag key from a fixed list (`building`, `highway`, `amenity`, `shop`, `landuse`, `natural`,
    `waterway`, `railway`, `power`, `barrier`, `leisure`, `tourism`, …, then `addr` for
@@ -48,11 +49,12 @@ can span several minutely files, so rows are partial and summed at query time. K
 instead of double counting (the idempotency rule of `changesets/ingest/writers/base.py`).
 
 **`object_versions`**, 3 months:
-`(type, id, version, action, changeset_id, timestamp, feature, tags?)`, TTL on `timestamp`.
+`(type, id, version, action, changeset_id, timestamp, user, uid, feature, tags Map(String, String),
+lat, lon, node_refs Array(UInt64), members Array(Tuple(type, ref, role)))`, TTL on `timestamp`.
 Gives churn (objects re-edited within a day), most re-edited objects, edit wars (the same object
-toggling between contributors), and exact tag diffs between consecutive versions inside the
-window. Whether to keep the full tag map (needed for tag diffs) or only `feature` is the main size
-question for the prototype.
+toggling between contributors), and exact tag and geometry diffs between consecutive versions
+inside the window. Keeping everything (decided 2026-10-03) makes it the biggest table by far: the
+prototype measures it per column, so the window length is set from real numbers.
 
 **Dates and filters:** edits are attributed to their changeset's `created_at` day, so totals add
 up to the existing "objects changed" numbers; the date range and the dimension filters (editor,
@@ -68,8 +70,8 @@ starts when the poller starts.
 ## Plan
 
 1. **Prototype and measure** (before any schema is final): parse one full day of minutely files
-   on this host. Measure download and parse time, rows and compressed bytes per table (with and
-   without tags in `object_versions`), and check the per-changeset sum against `changes_count`.
+   on this host. Measure download and parse time, rows and compressed bytes per table and per
+   `object_versions` column (tags, node refs and members are likely most of it), and check the per-changeset sum against `changes_count`.
    Extrapolate `object_versions` to 3 months and to a year.
 2. Poller and tables, then catch up from the start date.
 3. Rollup and API (with `@extend_schema`), parity check.
