@@ -74,14 +74,21 @@ def iter_versions(fileobj) -> Iterator[ObjectVersion]:
     """Object versions of an (uncompressed) osmChange stream, in file order.
     Streams: each element is cleared once read, so memory stays flat even on
     a ~100 MB daily diff."""
-    action = block = None
+    action = block = root = None
     for event, el in ET.iterparse(fileobj, events=('start', 'end')):
         tag = el.tag
         if event == 'start':
-            if tag in ACTIONS:
+            if root is None:
+                root = el
+            elif tag in ACTIONS:
                 action, block = tag, el
             continue
         if tag not in TYPES:
+            # A finished block is dropped from the document too: some daily
+            # diffs wrap nearly every element in its own block (2026-09-16:
+            # 3.4M blocks), and empty ones kept on the root added ~250 MB.
+            if tag in ACTIONS:
+                root.clear()
             continue
         a = el.attrib
         tags, refs, members = {}, [], []

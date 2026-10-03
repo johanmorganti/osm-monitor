@@ -26,7 +26,7 @@ tell them apart. Keeping everything costs 14 bytes per version compressed (measu
 biggest columns (they barely compress), then node lists and tags.
 
 Disk is not what limits the window: query cost is. Grouping `object_versions` by object over
-92 days (~450M rows) would take minutes and exceed ClickHouse's 4 GB memory cap, so the API
+92 days (~450M rows) would take minutes and exceed ClickHouse's memory cap (6 GB), so the API
 reads daily rollups built from it, never the table itself over a long range. The window can grow
 once those rollups exist and their refresh time is measured.
 
@@ -60,13 +60,19 @@ its `changes_count` in `changesets`. Verified exactly on all 51,291 changesets o
 
 - **Downloads:** planet.osm.org redirects every file to its S3 mirror; one reused
   `requests.Session` takes a minutely file from ~2.6 s to ~0.5 s. A daily diff is ~100 MB.
-- **Memory:** the parser streams (`iterparse`) and clears each `<create>`/`<modify>`/`<delete>`
-  block as it goes; clearing only the element left millions of empty elements attached to a
-  daily diff's blocks. The writer flushes object versions every 50K versions **or** 500K way
-  node refs + relation members: a daily diff is sorted by type, and its last ~15K versions are
-  relations with ~2.7M members, which alone exceeded the 512 MB container (exit 137). Peak
-  measured after both fixes: ~310 MB on a daily diff, ~225 MB on minutely batches.
-- **Speed:** a daily diff takes ~3 min to download and write; a minutely diff ~0.2 s to parse.
-  The 92-day backfill takes several hours and runs behind live polling, one day per round.
+- **Memory** (three out-of-memory kills found the hard way, each exit 137 in a 512 MB container):
+  - The parser streams (`iterparse`) and must drop what it has read at both levels: each
+    `<create>`/`<modify>`/`<delete>` block is cleared after each element, and each finished
+    block is cleared from the root. Daily diffs differ in shape: 2026-10-02 had a few huge
+    blocks (millions of elements each), 2026-09-16 wrapped nearly every element in its own
+    block (3.4M blocks), and the empty blocks left on the root added ~250 MB.
+  - The writer flushes object versions by **estimated size** (16 MB, `FLUSH_BYTES`), not by
+    count: a daily diff is sorted by type, so a buffer can be all relations (~15K with ~2.7M
+    members) or all ways, and the insert copies the buffer again.
+  - Peak after the fixes: ~200 MB on 2026-09-16 (7.5M versions, the largest seen), ~70 MB for
+    the parser alone. The container has 1 GB (raised from 512 MB on 2026-10-03).
+- **Speed:** a daily diff takes 5-10 min to download (100-180 MB, the mirror's speed varies)
+  and write; a minutely diff ~0.2 s to parse. The 92-day backfill takes about half a day and
+  runs behind live polling, one day per round.
 - **State:** `DiffState` in Postgres (live minute position, next backfill day, floor), saved
   only after a write, like `SequenceState` ([sequence-state.md](sequence-state.md)).

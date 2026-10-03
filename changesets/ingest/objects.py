@@ -15,12 +15,17 @@ from .osmchange import iter_versions
 # back poll_diffs backfills by default.
 OBJECT_VERSIONS_DAYS = 92
 
-# Buffered before an insert, whichever comes first: object versions, or way
-# node refs + relation members. The second bound matters on a daily diff,
-# which is sorted by type: its last ~15K versions are relations with ~2.7M
-# members, enough to exceed the 512 MB container on their own.
-FLUSH_VERSIONS = 50_000
-FLUSH_ITEMS = 500_000
+# Object versions are inserted once their buffer reaches an estimated size
+# (Python objects, roughly; the insert makes its own column copy on top). A
+# count alone isn't a bound: a daily diff is sorted by type, so a buffer can be
+# all relations (2026-10-02: ~15K with ~2.7M members) or all ways. Measured on
+# the 2026-09-16 daily diff (7.5M versions): 48 MB buffers (~125K nodes)
+# peaked over 512 MB; 16 MB ones stay well under.
+FLUSH_BYTES = 16 * 1024 * 1024
+_VERSION_BYTES = 700      # the tuple, ints, timestamp, empty containers
+_TAG_BYTES = 120          # per tag, plus the key and value lengths
+_REF_BYTES = 40           # per way node ref (a list slot + an int)
+_MEMBER_BYTES = 200       # per relation member (a tuple, an int, two strings)
 
 COUNT_COLUMNS = [f'{t}_{a}' for t in ('node', 'way', 'rel') for a in ('create', 'modify', 'delete')]
 _COUNT_KEY = {(t, a): f'{short}_{a}' for t, short in (('node', 'node'), ('way', 'way'), ('relation', 'rel'))
@@ -41,7 +46,7 @@ class DiffWriter:
         self.edit_time = {}                       # (changeset, source, sequence) -> latest timestamp
         self.features = Counter()                 # (changeset, source, sequence, type, action, feature) -> n
         self.total_versions = 0
-        self.items = 0
+        self.buffered_bytes = 0
 
     def add_file(self, fileobj, source, sequence):
         """Parse one uncompressed osmChange stream into the buffer."""
@@ -54,8 +59,9 @@ class DiffWriter:
             self.features[(*key, v.type, v.action, v.feature)] += 1
             self.versions.append((v.type, v.id, v.version, v.action, v.changeset_id, v.timestamp, source, sequence,
                                   v.uid, v.user, v.feature, v.tags, v.lat, v.lon, v.node_refs, v.members))
-            self.items += len(v.node_refs) + len(v.members)
-            if len(self.versions) >= FLUSH_VERSIONS or self.items >= FLUSH_ITEMS:
+            self.buffered_bytes += (_VERSION_BYTES + _REF_BYTES * len(v.node_refs) + _MEMBER_BYTES * len(v.members)
+                                    + sum(_TAG_BYTES + len(k) + len(val) for k, val in v.tags.items()))
+            if self.buffered_bytes >= FLUSH_BYTES:
                 self._flush_versions()
 
     def _flush_versions(self):
@@ -63,7 +69,7 @@ class DiffWriter:
             self.client.insert('object_versions', self.versions, column_names=VERSION_COLUMNS)
             self.total_versions += len(self.versions)
             self.versions = []
-            self.items = 0
+            self.buffered_bytes = 0
 
     def write(self):
         """Insert everything buffered; returns (versions, changesets)."""
