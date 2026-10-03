@@ -57,6 +57,12 @@ Its daily partitions add files to ClickHouse's data directory (~70 per merged pa
 7,000-20,000 at 92 days), which count toward the open-files limit above. Progress is in its logs (`Daily diff written`,
 `backfill_remaining`) and in `changesets_diffstate`.
 
+**A ClickHouse restart rebuilds every rollup at once.** Its refreshable views (`daily_rollup`,
+the map rollups, `filter_values`, `object_daily_rollup`) all refresh right after a restart, all
+full-history rebuilds, so for ~8 minutes the API is several times slower (measured 2026-10-03: the
+most edited objects 1.3 s -> 12-28 s, objects by action 0.3 s -> 3-9 s). Deploys that don't change
+ClickHouse's own config don't restart it.
+
 **Changing `.env` recreates every service on the next `up`**, `db` included (its contents are
 part of each service's config) — don't redeploy while a long import is running.
 
