@@ -21,6 +21,7 @@ from them are summarized in [`../../CLAUDE.md`](../../CLAUDE.md); how the system
 - [TimescaleDB storage](timescale-storage.md) (deprecated backend): hypertable, compression, bloom filters, filter by equality.
 - [imagery_used as a JSON array](imagery-used-json.md)
 - [SequenceState](sequence-state.md): the poller's resume point.
+- [Object changes](object-changes.md): per-changeset counts forever and every object version for 92 days, from the replication diffs; minute/day files meet without overlap.
 
 ## Operations
 

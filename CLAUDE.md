@@ -47,6 +47,9 @@ state), and serves a Chart.js dashboard plus a public JSON API.
 - **Old-dated rows in the replication stream are normal** (comments resurface old changesets).
   Don't "fix" them, and don't widen the 7-day CAgg refresh window.
   → [old-dated-rows](docs/decisions/old-dated-rows.md)
+- **Object tables (`poll_diffs`): every row is keyed by its source file**, so replays replace;
+  never read `object_versions` over more than a few days from the API (daily rollups instead).
+  Check counts against `changes_count`. → [object-changes](docs/decisions/object-changes.md)
 - **Location rules (geohash, country) live in `changesets/ingest/locate.py` only**; after a
   change run `recompute_locations --check`. → [location-at-ingest](docs/decisions/location-at-ingest.md)
 - **Geo: one geohash key, coarser cells are prefixes.** Check what actually reaches a query (is
@@ -92,6 +95,9 @@ state), and serves a Chart.js dashboard plus a public JSON API.
 | `changesets/urls.py` | API URL patterns (`/api/…`) |
 | `osm_changeset_api/urls.py` | Root URL conf (mounts API + pages) |
 | `changesets/osm_fetcher.py` | Fetches & parses OSM replication XML |
+| `changesets/ingest/osmchange.py` | Streaming osmChange (replication diff) parser + feature classification |
+| `changesets/ingest/objects.py` | Writes parsed diffs to the ClickHouse object tables (`DiffWriter`) |
+| `changesets/management/commands/poll_diffs.py` | Diff poller (minutely live + daily backfill), `diff-poller` service |
 | `changesets/ingest/locate.py` | geohash + country for parsed changesets (Shapely/pyproj), used at ingest |
 | `changesets/ingest/writers/` | Ingestion storage writers (`base.py` contract, `clickhouse.py`, `timescale.py`), selected by `INGEST_BACKENDS` |
 | `changesets/rollups.py` | Legacy Postgres rollups + `FilterValue` refresh (Timescale side) |

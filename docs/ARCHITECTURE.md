@@ -24,7 +24,8 @@ served by Django itself in `DEBUG` mode (`django.conf.urls.static`).
 
 Ingestion: `manage.py poll_sequences` (continuous poller; first run takes `--start <seq>` or the
 `INITIAL_SEQUENCE` env var) and `manage.py import_from_dump` (bulk planet dump) are the only two
-paths. A one-shot HTTP-triggered import (`ChangesetListView`/`ImportJobView`) was removed
+changeset paths; `manage.py poll_diffs` ingests the objects themselves (see "Object changes"
+below). A one-shot HTTP-triggered import (`ChangesetListView`/`ImportJobView`) was removed
 2026-09-19: it ran on a bare `threading.Thread` inside the `web` worker with no resume/recovery and
 had no real usage.
 
@@ -35,6 +36,9 @@ planet.osm.org (minutely replication)  ──┐                      ┌──>
                                           ├──> parse + locate ───┤        (primary, serves the API)    (refreshed daily)
 OSM full changesets dump (bulk import) ──┘   (osm_fetcher,       └──> Postgres changesets_changeset ──> cagg_*, FilterValue
                                                ingest/locate.py)        (TimescaleDB, deprecated copy)
+
+planet.osm.org (minutely + daily osmChange diffs) ──> poll_diffs (ingest/osmchange.py, ingest/objects.py)
+    ──> ClickHouse object_changes, object_change_features (all time), object_versions (92 days)
 
 API (timeseries/summary/toplist/geo/changesets) ──> analytics backend (ClickHouse by default) ──> dashboard.js
 ```
@@ -59,6 +63,18 @@ idempotent upsert by `changeset_id` (a changeset is replaced only when its `chan
 ClickHouse just inserts and lets `ReplacingMergeTree` keep the latest version (queries read with
 `FINAL`); the Timescale writer checks which ids already exist and inserts only the new or grown
 ones. So the two paths — and a retried batch — overlap harmlessly instead of double-counting.
+
+### Object changes
+
+**`manage.py poll_diffs`** (the `diff-poller` service) reads the replication *diffs*, which carry
+every object version uploaded (with its changeset id, new tags and geometry), not just the
+changeset's `changes_count`. Live, it follows the minutely diffs; behind that, it backfills the
+last 92 days from the daily diffs, one day per round (a daily diff is exactly the minutely diffs
+stamped within that day, so the two never overlap). It writes ClickHouse only: per-changeset
+counts by type × action (`object_changes`) and by feature (`object_change_features`), kept for all
+time, and every object version (`object_versions`), kept 92 days. Its position is `DiffState` in
+Postgres. Nothing reads these tables from the API yet. Design, measurements and the checks against
+`changes_count`: [`decisions/object-changes.md`](decisions/object-changes.md).
 
 The rest of this document describes the **TimescaleDB backend, which is deprecated** (see
 `TODO.md`'s "Phase out TimescaleDB"): it still runs and still receives every changeset, but the API

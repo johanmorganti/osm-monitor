@@ -60,6 +60,13 @@ services:
     volumes:
       - datadog-sockets:/var/run/datadog:ro
 
+  diff-poller:
+    environment:
+      <<: *app-dd-env
+      DD_SERVICE: osm-monitor-diff-poller
+    volumes:
+      - datadog-sockets:/var/run/datadog:ro
+
   datadog-agent:
     image: gcr.io/datadoghq/agent:7
     restart: unless-stopped

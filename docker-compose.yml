@@ -184,3 +184,25 @@ services:
       DD_TRACE_ENABLED: "false"
     mem_limit: 512m
     command: python manage.py poll_sequences --interval 60
+
+  # Object changes: follows the minutely osmChange diffs into ClickHouse's
+  # object tables and backfills the last 92 days from the daily diffs (see
+  # docs/decisions/object-changes.md). ClickHouse only, so it doesn't wait
+  # for the Postgres-heavy poller; Postgres holds only its position.
+  diff-poller:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DD_TRACE_ENABLED: "false"
+    # Measured peak ~310 MB on a daily diff (changesets/ingest/objects.py
+    # bounds its buffer).
+    mem_limit: 512m
+    command: python manage.py poll_diffs --interval 60

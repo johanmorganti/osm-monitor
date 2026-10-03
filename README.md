@@ -23,6 +23,10 @@ working on the code start from [`CLAUDE.md`](CLAUDE.md). For known issues and de
   the dashboard. Fully documented and explorable at `/api/docs/` (Swagger UI, auto-generated from
   the code via drf-spectacular — that page is always the source of truth for exact
   params/responses, not this README).
+- **Object changes**: a second poller reads the replication diffs, which list every object
+  version uploaded, and stores counts per changeset by node/way/relation, create/modify/delete
+  and feature (kept for all time), plus every object version for the last 92 days (see "How data
+  is stored" below).
 - **Two ingestion paths**: a continuous background poller that tails
   [planet.osm.org](https://planet.osm.org)'s minutely replication feed, and a bulk importer for
   OSM's full changesets dump (all history since 2005, much faster than the minutely feed).
@@ -50,8 +54,10 @@ which objects:
 | 189905881 | 2026-10-03 01:14:04 | mapper_a | StreetComplete 63.4 | 2 | Specify whether there are cycleways | AddCycleway | JP | xn0mk3 |
 | 189905882 | 2026-10-03 01:14:06 | mapper_a | StreetComplete 63.4 | 2 | Specify whether roads have lane markings | AddLaneMarkings | JP | xn0mk3 |
 
-**Planned: the objects themselves**, from the minutely osmChange diffs (see
-[`docs/todo/object-changes.md`](docs/todo/object-changes.md)). The diff for that minute contains:
+**Since 2026-10-03, with the 92 days before backfilled: the objects themselves**, from the
+replication osmChange diffs (`poll_diffs`; see
+[`docs/decisions/object-changes.md`](docs/decisions/object-changes.md)). Not shown on the
+dashboard yet. The diff for that minute contains:
 
 ```xml
 <modify>
@@ -64,7 +70,7 @@ which objects:
 
 It becomes two kinds of rows:
 
-- **Counts per changeset, kept for all time** (`changeset_objects`, plus `changeset_features` split
+- **Counts per changeset, kept for all time** (`object_changes`, plus `object_change_features` split
   by the object's main tag key). This is what other OSM statistics tools provide: nodes, ways and
   relations created, modified and deleted, per editor, country or campaign. A changeset can span
   several minutely files, so there is one partial row per file, summed when queried. The
@@ -79,7 +85,7 @@ It becomes two kinds of rows:
   | 189905881 | way | modify | highway | 1 |
   | 189905882 | way | modify | highway | 1 |
 
-- **One row per object version, kept for 3 months** (`object_versions`), with everything the diff
+- **One row per object version, kept for 92 days** (`object_versions`), with everything the diff
   has: tags and geometry. Here the four "1 way modified" rows above turn out to be one object, the
   same bridge edited four times in 15 seconds, each version adding one tag:
 
@@ -111,6 +117,12 @@ python manage.py poll_sequences --reset --backfill-days 14   # one-time: also ba
 It saves its position after every sequence, so it resumes safely after a crash or restart.
 `--start` can also be set via the `INITIAL_SEQUENCE` environment variable instead. On first run
 without `--reset`, it backfills 365 days of minutely sequences behind the live point.
+
+**Object changes** (the `diff-poller` service):
+```bash
+python manage.py poll_diffs                        # live minutely diffs + 92-day daily backfill
+python manage.py poll_diffs --backfill-days 0      # live only
+```
 
 **Bulk dump import** (full history — much faster than the minutely feed):
 ```bash
@@ -147,6 +159,8 @@ changesets/
   analytics/                     # Analytics backend interface + implementations (timescale/, clickhouse/)
   ingest/locate.py               # geohash + country for each changeset, computed at ingest
   ingest/writers/                # Storage writers ingestion feeds (timescale, clickhouse)
+  ingest/osmchange.py            # Streaming parser for the replication diffs (osmChange)
+  ingest/objects.py              # Writes parsed diffs to the ClickHouse object tables
   serializers.py                 # DRF serializer for Changeset
   urls.py                        # /api/... URL patterns
   osm_fetcher.py                 # Fetches & parses OSM replication XML, batched upsert logic
@@ -157,6 +171,7 @@ changesets/
   data/                          # country_boundaries.geojson (loaded by load_country_boundaries)
   management/commands/
     poll_sequences.py            # Continuous poller (live + one-time backfill)
+    poll_diffs.py                # Object changes from the replication diffs (live + daily backfill)
     import_from_dump.py          # Bulk planet-dump importer
     load_country_boundaries.py   # Loads country_boundaries from the committed GeoJSON
     refresh_rollups.py           # Manual full-rebuild escape hatch (rarely needed)

@@ -9,7 +9,7 @@ PostGIS: app state and the deprecated Timescale copy), a one-shot `migrate`, `we
 ```bash
 cp env.example .env    # fill in every value (deploy.sh refuses placeholders)
 mkdir -p <PGDATA_DIR> <CLICKHOUSE_DATA_DIR>   # host directories named in .env
-./deploy.sh            # preflight checks, build, start db, migrate, web, poller
+./deploy.sh            # preflight checks, build, start db, migrate, web, poller, diff-poller
 ```
 
 The dashboard is on `http://localhost:5006/`, the API docs on `http://localhost:5006/api/docs/`.
@@ -47,6 +47,14 @@ colima stop && colima start
 `db`'s `mem_limit`, `shm_size` and memory settings (`shared_buffers`, `effective_cache_size`,
 ...) in `docker-compose.yml` are sized for ~13GB available to Docker; adjust them together for a
 different machine.
+
+**Object changes (`diff-poller`).** On its first start it follows the minutely diffs from the
+latest daily diff on, then backfills 92 days of daily diffs behind that, one per round (~3 min
+each, so several hours; each is a ~100 MB download). `object_versions` grows to ~6 GB at 92 days
+(14 bytes per object version) and its TTL drops older days; the count tables grow ~2 MB a day.
+Its daily partitions add files to ClickHouse's data directory (~70 per merged part, so roughly
+7,000-20,000 at 92 days), which count toward the open-files limit above. Progress is in its logs (`Daily diff written`,
+`backfill_remaining`) and in `changesets_diffstate`.
 
 **Changing `.env` recreates every service on the next `up`**, `db` included (its contents are
 part of each service's config) — don't redeploy while a long import is running.
