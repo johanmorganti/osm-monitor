@@ -21,9 +21,17 @@ object version uploaded, with its changeset id, its new tags and geometry. `poll
 Counts per changeset are small (~2 MB a day) and answer the "what kind of edits" questions for
 all time. But four "1 way modified" rows can be four unrelated edits or the same bridge edited
 four times in 15 seconds (StreetComplete answers one quest per changeset); only per-object rows
-tell them apart. Keeping everything costs 14 bytes per version compressed (measured on
-2026-10-02: 5.08M versions, 68 MB; ~5.7 GB for 92 days, ~23 GB a year). Coordinates are the
-biggest columns (they barely compress), then node lists and tags.
+tell them apart. Keeping everything costs **~26 bytes per version** compressed: measured on the
+full 92-day backfill (2026-07-03 to 2026-10-03), 356M versions in 8.6 GB, so ~34 GB a year if the
+window grew. Merging a day fully into one part changes nothing (24.6 bytes on 2026-09-16 with 6
+parts or 1). The first one-day test gave 14 bytes, but that day (2026-10-02) was mostly new nodes
+with consecutive ids and few tags, which compress unusually well; on a typical day way node lists
+are the biggest column (6.4 bytes per version), then ids (4.1), coordinates (3.6 each) and tags
+(3.3). Codecs (Delta on `id` and `node_refs`) could likely cut that; not tried yet.
+
+**Backfill check (2026-10-03):** all 4,778,558 closed changesets created from the first covered
+day (2026-07-03) to 2026-10-01 have object counts equal to their `changes_count` (342M objects,
+zero differences, checked week by week).
 
 Disk is not what limits the window: query cost is. Grouping `object_versions` by object over
 92 days (~450M rows) would take minutes and exceed ClickHouse's memory cap (6 GB), so the API

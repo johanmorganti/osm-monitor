@@ -50,8 +50,9 @@ different machine.
 
 **Object changes (`diff-poller`).** On its first start it follows the minutely diffs from the
 latest daily diff on, then backfills 92 days of daily diffs behind that, one per round (~3 min
-each, so several hours; each is a ~100 MB download). `object_versions` grows to ~6 GB at 92 days
-(14 bytes per object version) and its TTL drops older days; the count tables grow ~2 MB a day.
+each, so most of a day: the first one took 13 h, the mirror's speed varies; each is a 100-180 MB
+download). `object_versions` holds ~8.6 GB at 92 days (~26 bytes per object version) and its TTL
+drops older days; the count tables grow ~2 MB a day and `object_edits` ~6 MB a day.
 Its daily partitions add files to ClickHouse's data directory (~70 per merged part, so roughly
 7,000-20,000 at 92 days), which count toward the open-files limit above. Progress is in its logs (`Daily diff written`,
 `backfill_remaining`) and in `changesets_diffstate`.

@@ -8,9 +8,9 @@
 -- so the two never overlap; replaying a file replaces its rows instead of
 -- counting them twice (ReplacingMergeTree on a key including the file).
 --
--- Measured on one day (2026-10-02, 5.08M versions, everything kept):
--- object_versions 14 bytes per version compressed (~63 MB a day), the two
--- count tables ~2 MB a day together.
+-- Measured on the 92-day backfill (everything kept): object_versions ~26
+-- bytes per version compressed (8.6 GB for 356M versions), the two count
+-- tables ~2 MB a day together.
 
 -- Per changeset, per file: counts by type x action. Kept for all time.
 -- A changeset spans several minutely files, so its counts are the sum of its
