@@ -327,6 +327,9 @@ class TimescaleBackend:
 
     # -- object analysis (ClickHouse only: no CAggs for these, see CLAUDE.md) --
 
+    def most_edited(self, f, days, limit):
+        raise NotImplementedError('object changes (TimescaleDB backend is deprecated)')
+
     def object_coverage(self):
         raise NotImplementedError('object changes (TimescaleDB backend is deprecated)')
 

@@ -17,6 +17,7 @@ stands; it doesn't track day-to-day changes.
 - `/api/changesets/toplist/` → `ToplistView` (top N by dimension × metric; with `metric=objects` also `dimension=action|object_type|feature`)
 - `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`; each cell carries its geohash as `cell`), `/api/changesets/geo/cell/` → `GeoCellView` (the changesets of one cell, newest first, paginated — the Overview map's click-to-list panel; ClickHouse only)
 - `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`) — ClickHouse only, 501 on Timescale
+- `/api/objects/most-edited/` → `MostEditedObjectsView` (objects with the most edits over the last 7 days, from `object_edits`; the Objects page's "Most Edited Objects last week") — ClickHouse only
 - `/api/docs/` → Swagger UI (drf-spectacular), `/api/schema/` the raw OpenAPI schema — the authoritative API reference
 
 The aggregate endpoints default to the last 7 days when no dates are given. Static files are

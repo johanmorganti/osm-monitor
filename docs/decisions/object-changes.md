@@ -80,6 +80,32 @@ covers what existed at its last refresh, so a range starting earlier reads the r
 9 s and 1.4 GB for 52 days, so ~1 min and several GB after a year. Before then, bound it (a
 spilling join, or refreshing only recent days).
 
+## Edits to existing objects: object_edits and the most edited objects (2026-10-03)
+
+`object_edits` (`schema/0006_object_edits.sql`) keeps every version after the first (modifies and
+deletes; creations are ~70% of versions and left out), narrow (time, type, id, version,
+changeset, contributor), **for all time**: ~3 bytes per edit, ~1.1 GB a year, so edit statistics
+don't stop at `object_versions`' 92 days. `poll_diffs` writes it next to `object_versions`; the
+days loaded before it existed were copied from `object_versions` (84M edits).
+
+`/api/objects/most-edited/` ranks objects by edits over the **last 7 days** (a fixed window, the
+dimension filters applied to each edit's changeset), then reads the details of the top ones from
+`object_versions` (ordered by object, so a lookup). A free date range was measured and rejected:
+ranking means grouping tens of millions of distinct objects, and on `object_edits` that takes
+0.8 s for 7 days, 3.5 s for 30, 27 s for 67 (2.8 GB); ordering the table by object instead uses
+almost no memory but is slower (4.7 s / 17 s / 32 s); the full `object_versions` table, which has
+every creation too, took 19.5 s for 7 days and 4 min for 30. Every lookup by object must compare
+`(type, id)` itself, not `toString(type)`, or ClickHouse loses the sort key (2.5 s -> 0.2 s).
+
+What counts as an edit follows OSM's versioning: moving a way's nodes creates new versions of
+the nodes, not of the way, so a reshaped building shows up on its corner nodes.
+
+**Tag changes are deliberately not built.** A diff only has the new version, so a tag change is
+computable only when the previous version is also in `object_versions`: on 2026-09-30 that was
+19% of modifies (144K of 740K), at 21 s a day, and biased toward objects edited twice within the
+window. A "most changed tags" chart would show those objects' habits, not OSM's. Exact tag changes
+need every previous version: the full history planet (tier 3).
+
 ## Operations
 
 - **Downloads:** planet.osm.org redirects every file to its S3 mirror; one reused

@@ -177,6 +177,17 @@
         </div>
     </div>
 
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-12">
+        <h3 class="text-lg font-semibold mb-1">Most Edited Objects last week</h3>
+        <p class="text-xs text-gray-400 mb-3">Objects with the most edits over the last 7 days, whatever the date range above (other filters apply). An edit is a new version of an existing object, so creating one doesn't count, and reshaping a way counts on the nodes that moved, not on the way</p>
+        <div id="mostEditedTable-spinner" class="flex items-center justify-center py-8">
+            <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+        </div>
+        <div class="overflow-x-auto">
+            <table id="mostEditedTable" class="min-w-full text-sm" hidden></table>
+        </div>
+    </div>
+
     <!-- ══ Changeset size ══════════════════════════════════════════════════ -->
     <h2 class="text-2xl font-semibold mb-4 flex items-center gap-2">
         Changeset size

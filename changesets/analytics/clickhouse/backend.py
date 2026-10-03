@@ -331,6 +331,44 @@ class ClickHouseBackend:
             self._watermark_cache['object_coverage'] = (time.monotonic(), value)
         return value
 
+    def most_edited(self, f, days, limit):
+        params = {'days': int(days)}
+        in_changesets = ''
+        if f.any():
+            # Edits come up to 24 h after their changeset was opened.
+            q = _Query(f)
+            q.params['start'] = _day_start(datetime.now(timezone.utc).date() - timedelta(days=days + 1))
+            q.params['end'] = _day_start(datetime.now(timezone.utc).date() + timedelta(days=1))
+            in_changesets = f'AND changeset_id IN (SELECT changeset_id FROM {self._table} WHERE {q.where})'
+            params.update(q.params)
+        window = f'timestamp >= now() - INTERVAL {{days:UInt32}} DAY {in_changesets}'
+        # Ranked on the count alone over object_edits (ordered by time, so
+        # the week is all it reads), then the details of those objects from
+        # object_versions (ordered by object, so a lookup), filtered the same
+        # way. Distinct contributors and changesets for every object of the
+        # week would cost ~3x more. `(type, id) IN` on the columns
+        # themselves, never toString(type): that keeps the sort-key lookup
+        # (2.5 s -> 0.2 s).
+        top = self._rows(f"""
+            SELECT type, id FROM object_edits FINAL WHERE {window}
+            GROUP BY type, id ORDER BY count() DESC, type, id LIMIT {int(limit)}""", params)
+        if not top:
+            return []
+        params['objects'] = [(str(t), i) for t, i in top]
+        details = {(str(t), i): row for t, i, *row in self._rows(f"""
+            SELECT type, id, uniqExactIf(version, version > 1), uniqExactIf(uid, version > 1),
+                   uniqExactIf(changeset_id, version > 1), maxIf(timestamp, version > 1), max(version),
+                   argMax(tags['name'], version)
+            FROM object_versions WHERE {window} AND (type, id) IN {{objects:Array(Tuple(String, UInt64))}}
+            GROUP BY type, id""", params)}
+        results = []
+        for key in params['objects']:
+            edits, contributors, changesets, last_edit, version, name = details[key]
+            results.append({'type': key[0], 'id': key[1], 'edits': edits, 'contributors': contributors,
+                            'changesets': changesets, 'last_edit': last_edit.replace(tzinfo=timezone.utc),
+                            'version': version, 'name': name})
+        return results
+
     def _object_rollup_start(self):
         checked, value = self._watermark_cache.get('object_rollup_start', (float('-inf'), None))
         if time.monotonic() - checked > WATERMARK_TTL_SECONDS:

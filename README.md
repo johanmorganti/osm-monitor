@@ -100,6 +100,10 @@ It becomes two kinds of rows:
   new version of an object, so a tag change can be computed only when the previous version is
   also in the window.
 
+- **Edits to existing objects, kept for all time** (`object_edits`): just time, object, version,
+  changeset and contributor for every version after the first, ~3 bytes each. It feeds the
+  Objects page's "Most Edited Objects last week" (`/api/objects/most-edited/`).
+
 ## Requirements
 
 ClickHouse (analytics) and Postgres (app state; with TimescaleDB and PostGIS while the deprecated
@@ -144,6 +148,7 @@ Full reference: `/api/docs/` (interactive) or `/api/schema/` (raw OpenAPI). High
 | `GET /api/changesets/summary/` | Total changesets / objects changed / average, for a range |
 | `GET /api/changesets/toplist/` | Top N by count or objects changed, for one dimension |
 | `GET /api/changesets/geo/` | Changeset density per geohash-derived grid cell, for the map |
+| `GET /api/objects/most-edited/` | Objects with the most edits over the last 7 days (from the replication diffs) |
 | `GET /api/autocomplete/` | Known contributor/editor/imagery/country values matching a partial query |
 
 All the aggregate endpoints share the same filters (`start_date`, `end_date`, `contributor`,

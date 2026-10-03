@@ -115,6 +115,13 @@ class AnalyticsBackend(Protocol):
         """[{'name', 'value'}] ranked by metric ('count'|'objects'), at most
         `limit`. OBJECT_DIMENSIONS: as for timeseries."""
 
+    def most_edited(self, f: Filters, days: int, limit: int) -> list:
+        """The `limit` objects with the most edits (versions after the first)
+        in the last `days` days up to now, f's date range ignored and its
+        dimension filters applied to each edit's changeset: dicts type, id,
+        edits, contributors, changesets, last_edit, version (the latest),
+        name (its latest name tag in the window, '' if none)."""
+
     def object_coverage(self) -> Optional[date]:
         """First day the object dimensions cover (every upload of a changeset
         created that day or later is in the diffs), or None without data."""

@@ -1,6 +1,7 @@
 """Writes parsed replication diffs (osmchange.iter_versions) to the ClickHouse
-object tables (schema/0004_object_changes.sql): per-changeset counts, counts
-by feature, and every object version.
+object tables (schema/0004_object_changes.sql, 0006_object_edits.sql):
+per-changeset counts, counts by feature, every object version, and the edits
+to existing objects (versions after the first).
 
 Idempotent like the changeset writers (changesets/ingest/writers/base.py):
 every row is keyed by the file it came from (source + sequence), so writing a
@@ -30,6 +31,7 @@ _MEMBER_BYTES = 200       # per relation member (a tuple, an int, two strings)
 COUNT_COLUMNS = [f'{t}_{a}' for t in ('node', 'way', 'rel') for a in ('create', 'modify', 'delete')]
 _COUNT_KEY = {(t, a): f'{short}_{a}' for t, short in (('node', 'node'), ('way', 'way'), ('relation', 'rel'))
               for a in ('create', 'modify', 'delete')}
+EDIT_COLUMNS = ['timestamp', 'type', 'id', 'version', 'changeset_id', 'uid']
 VERSION_COLUMNS = ['type', 'id', 'version', 'action', 'changeset_id', 'timestamp', 'source', 'sequence',
                    'uid', 'user', 'feature', 'tags', 'lat', 'lon', 'node_refs', 'members']
 
@@ -67,6 +69,10 @@ class DiffWriter:
     def _flush_versions(self):
         if self.versions:
             self.client.insert('object_versions', self.versions, column_names=VERSION_COLUMNS)
+            # (timestamp, type, id, version, changeset_id, uid) of versions > 1.
+            edits = [(v[5], v[0], v[1], v[2], v[4], v[8]) for v in self.versions if v[2] > 1]
+            if edits:
+                self.client.insert('object_edits', edits, column_names=EDIT_COLUMNS)
             self.total_versions += len(self.versions)
             self.versions = []
             self.buffered_bytes = 0

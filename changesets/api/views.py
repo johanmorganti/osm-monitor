@@ -541,6 +541,57 @@ class GeoCellView(APIView):
         })
 
 
+class MostEditedObjectsView(APIView):
+    """The OSM objects (nodes, ways, relations) edited the most over the last
+    7 days, from the replication diffs: edits are versions after the first,
+    so creating an object doesn't count, and moving a way's nodes counts on
+    the nodes, not the way."""
+
+    DAYS = 7
+    DEFAULT_LIMIT = 20
+    MAX_LIMIT = 100
+
+    @extend_schema(
+        tags=['objects'],
+        summary='Most edited objects, last 7 days',
+        description=(
+            f'The objects with the most edits over the last {DAYS} days up to now (a fixed window: '
+            'start_date/end_date are ignored), ranked by edits, ties by type and id. An edit is '
+            'an object version after the first (a modify or a delete), from the replication diffs. '
+            'The dimension filters apply to each edit\'s changeset. Per object: edits, distinct '
+            'contributors and changesets, the last edit, the latest version, and its latest name tag '
+            '(\'\' if none).'
+        ),
+        parameters=FILTER_PARAMS[2:] + [
+            OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of objects (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        examples=[OpenApiExample(
+            'Sample',
+            value={
+                'filters': {'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'country': '', 'days': 7, 'limit': 20},
+                'results': [{'type': 'way', 'id': 148066277, 'edits': 14, 'contributors': 3, 'changesets': 12,
+                             'last_edit': '2026-10-03T01:14:47Z', 'version': 14, 'name': 'Grays Road'}],
+            },
+            response_only=True,
+        )],
+    )
+    def get(self, request):
+        try:
+            limit = int(request.query_params.get('limit', self.DEFAULT_LIMIT))
+        except ValueError:
+            return Response({'error': 'limit must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+        if not (1 <= limit <= self.MAX_LIMIT):
+            return Response({'error': f'limit must be between 1 and {self.MAX_LIMIT}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        f = resolve_filters(request)
+        dimensions = {k: v for k, v in f.as_dict().items() if k not in ('start_date', 'end_date')}
+        return Response({
+            'filters': {**dimensions, 'days': self.DAYS, 'limit': limit},
+            'results': backend_for(request).most_edited(f, self.DAYS, limit),
+        })
+
+
 class BatchProgressView(APIView):
     """The poller's live catch-up progress. App state (SequenceState), not
     analytics, so it reads Postgres directly whatever the analytics backend."""

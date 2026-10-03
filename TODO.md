@@ -18,6 +18,6 @@ history.
 
 ## Planned work
 
-- [Object changes: re-edits, tag changes, upkeep](docs/todo/object-changes.md) — ingestion, rollup, API (`group_by`/`dimension=action|object_type|feature`) and the Objects page section are built; next: check the backfill, re-edits and tag changes from `object_versions`, bound the rollup refresh.
+- [Object changes: upkeep and longer ranges](docs/todo/object-changes.md) — ingestion, rollup, API and the Objects page sections (what was changed, most edited objects last week) are built; next: check the backfill, bound the rollup refresh, maybe edits over longer ranges. Tag changes wait for the full history planet.
 - [Widest changesets: find a list worth showing](docs/todo/widest-changesets.md) — paused: the area-ranked table was removed (all continent-sized, mostly ordinary edits); a threshold list was too slow on full history and empty for reasonable contributors; next idea is a ranking by area per object.
 - [Dashboard: new graph/section ideas](docs/todo/dashboard-new-graphs.md) — hashtag filter, Objects page speed over multi-year ranges, StreetComplete quest breakdown, discussion activity, new-vs-returning contributors. Geo map, per-country breakdown, Objects page and hashtag toplist are done.

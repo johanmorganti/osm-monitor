@@ -114,6 +114,32 @@ loadWidget('featuresOverTimeChart', apiUrl('/api/changesets/timeseries/', { metr
     multiLineChart('featuresOverTimeChart', data.dates, series.map(s => ({ name: s.name, values: s.counts })));
 });
 
+// Most edited objects over the last 7 days (a fixed window: the date range
+// above doesn't apply, the other filters do). Built with DOM nodes, not
+// innerHTML: names are user input.
+const TYPE_SINGULAR = { node: 'Node', way: 'Way', relation: 'Relation' };
+const MOST_EDITED_COLUMNS = [
+    { label: 'Object', cell: r => {
+        const a = document.createElement('a');
+        a.href = `https://www.openstreetmap.org/${r.type}/${r.id}/history`;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.className = 'text-blue-600 hover:underline';
+        a.textContent = `${TYPE_SINGULAR[r.type]} ${r.id}`;
+        return a;
+    } },
+    { label: 'Name', wide: true, cell: r => r.name || '' },
+    { label: 'Edits', numeric: true, cell: r => r.edits.toLocaleString('en-US') },
+    { label: 'Contributors', numeric: true, cell: r => r.contributors.toLocaleString('en-US') },
+    { label: 'Changesets', numeric: true, cell: r => r.changesets.toLocaleString('en-US') },
+    { label: 'Version', numeric: true, cell: r => r.version.toLocaleString('en-US') },
+    { label: 'Last edit', cell: r => r.last_edit.slice(0, 16).replace('T', ' ') },
+];
+
+loadWidget('mostEditedTable', apiUrl('/api/objects/most-edited/'), top => {
+    renderTable('mostEditedTable', MOST_EDITED_COLUMNS, top.results, 'No edits in the last 7 days');
+});
+
 // ── Largest changesets tables ────────────────────────────────────────────────
 // Built with DOM nodes, not innerHTML: usernames and comments are user input.
 const LARGEST_COLUMNS = [
@@ -135,11 +161,12 @@ const LARGEST_COLUMNS = [
     { label: 'Comment', wide: true, cell: r => r.comment || '' },
 ];
 
-function renderLargestTable(tableId, results) {
+// A table from column specs: {label, cell(row) -> text or Node, numeric?, wide?}.
+function renderTable(tableId, columns, results, emptyText) {
     const table = document.getElementById(tableId);
     const head = table.createTHead().insertRow();
     head.className = 'text-left text-xs text-gray-500 uppercase tracking-wide border-b border-gray-200';
-    LARGEST_COLUMNS.forEach(col => {
+    columns.forEach(col => {
         const th = document.createElement('th');
         th.className = `py-2 pr-4 font-medium${col.numeric ? ' text-right' : ''}`;
         th.textContent = col.label;
@@ -149,7 +176,7 @@ function renderLargestTable(tableId, results) {
     results.forEach(r => {
         const row = body.insertRow();
         row.className = 'border-b border-gray-100 align-top';
-        LARGEST_COLUMNS.forEach(col => {
+        columns.forEach(col => {
             const td = row.insertCell();
             td.className = `py-2 pr-4${col.numeric ? ' text-right tabular-nums' : ''}${col.wide ? ' text-gray-500 max-w-md truncate' : ' whitespace-nowrap'}`;
             const value = col.cell(r);
@@ -160,15 +187,15 @@ function renderLargestTable(tableId, results) {
     });
     if (!results.length) {
         const td = body.insertRow().insertCell();
-        td.colSpan = LARGEST_COLUMNS.length;
+        td.colSpan = columns.length;
         td.className = 'py-4 text-gray-400';
-        td.textContent = 'No changesets in this range';
+        td.textContent = emptyText;
     }
     table.hidden = false;
 }
 
 loadWidget('largestByObjectsTable', apiUrl('/api/changesets/largest/', { by: 'objects' }), largest => {
-    renderLargestTable('largestByObjectsTable', largest.results);
+    renderTable('largestByObjectsTable', LARGEST_COLUMNS, largest.results, 'No changesets in this range');
 });
 
 // ── Rankings by objects (moved from the Overview page) ──────────────────────
