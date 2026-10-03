@@ -8,7 +8,7 @@ stands; it doesn't track day-to-day changes.
 ## Pages and endpoints
 
 - `/` → `DashboardView` (Overview: map, changeset activity, rankings)
-- `/objects/` → `ObjectsView` (objects changed, changeset sizes, largest/widest changesets, rankings by objects incl. hashtags)
+- `/objects/` → `ObjectsView` (objects changed, changeset sizes, largest changesets, rankings by objects incl. hashtags)
 - `/editors/` → `EditorsView` (one column per top-10 editor family for the selected range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph)
 - `/changeset_import/` → `APILandingPageView` (poller status page — live catch-up batch progress)
 - `/api/changesets/` → `ChangesetQueryView` (raw changeset records, filterable; defaults to the last 24 hours, no unfiltered "everything" mode)
@@ -16,7 +16,7 @@ stands; it doesn't track day-to-day changes.
 - `/api/changesets/summary/` → `SummaryView` (total_changesets/total_objects/avg_objects)
 - `/api/changesets/toplist/` → `ToplistView` (top N by dimension × metric)
 - `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`; each cell carries its geohash as `cell`), `/api/changesets/geo/cell/` → `GeoCellView` (the changesets of one cell, newest first, paginated — the Overview map's click-to-list panel; ClickHouse only)
-- `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension, `experience` or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`) — ClickHouse only, 501 on Timescale
+- `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`) — ClickHouse only, 501 on Timescale
 - `/api/docs/` → Swagger UI (drf-spectacular), `/api/schema/` the raw OpenAPI schema — the authoritative API reference
 
 The aggregate endpoints default to the last 7 days when no dates are given. Static files are

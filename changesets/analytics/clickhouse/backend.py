@@ -36,7 +36,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from ...geo import geohash_bbox_cover, geohash_decode_center, GEOHASH_PREFIX_UPPER_BOUND_CHAR
-from ..base import NONE_BUCKET, EDITOR_VERSION, EXPERIENCE, EXPERIENCE_BOUNDS, HASHTAG, format_bucket
+from ..base import NONE_BUCKET, EDITOR_VERSION, HASHTAG, format_bucket
 from .client import get_client
 
 COLUMNS = {
@@ -459,11 +459,6 @@ class ClickHouseBackend:
         q = _Query(f)
         if by == 'day':
             key, order = 'toDate(created_at)', 'name'
-        elif by == EXPERIENCE:
-            upper = ', '.join(str(b) for b in EXPERIENCE_BOUNDS[1:])
-            key = f'arrayFirstIndex(x -> x > assumeNotNull(changesets_count), [{upper}, 4294967295]) - 1'
-            order = 'name'
-            q.add('changesets_count IS NOT NULL')
         else:
             column = COLUMNS[by]
             key, order = column, f'changesets DESC, name LIMIT {int(limit)}'

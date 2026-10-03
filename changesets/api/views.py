@@ -11,13 +11,13 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ..analytics import DIMENSIONS, EDITOR_VERSION, EXPERIENCE, HASHTAG, ChangesetQuery, backend_for
+from ..analytics import DIMENSIONS, EDITOR_VERSION, HASHTAG, ChangesetQuery, backend_for
 from ..geo import GEOHASH_PREFIX_LENGTH, geohash_cell_size_degrees, geohash_precision_for_bbox
 from ..models import FilterValue, SequenceState
 from ..serializers import ChangesetSerializer
 from .params import resolve_filters, pick_interval, parse_bbox
 from .schema import FILTER_PARAMS
-from .sizes import distribution, experience_label
+from .sizes import distribution
 
 
 class ChangesetPagination(PageNumberPagination):
@@ -355,10 +355,10 @@ class DistributionView(APIView):
 
 
 class SizeBreakdownView(APIView):
-    """Changeset-size quartiles per group: the top N names of a dimension,
-    every contributor-experience bucket, or every day."""
+    """Changeset-size quartiles per group: the top N names of a dimension, or
+    every day."""
 
-    BY = (*DIMENSIONS, EXPERIENCE, 'day')
+    BY = (*DIMENSIONS, 'day')
     QUANTILES = (0.25, 0.5, 0.75, 0.9, 0.95)
     DEFAULT_LIMIT = 10
     MAX_LIMIT = 50
@@ -369,14 +369,12 @@ class SizeBreakdownView(APIView):
         description=(
             'Exact p25/p50/p75/p90/p95 changeset sizes (objects changed per changeset), plus changeset '
             'and object totals, per group. by=contributor|editor|imagery|language|country returns '
-            'the top N names by changeset count (untagged changesets left out); by=experience '
-            'groups by the author\'s changeset count at the time (the changesets_count tag, set '
-            'by iD and Rapid only, so other editors\' changesets are left out); by=day returns '
+            'the top N names by changeset count (untagged changesets left out); by=day returns '
             'every day of the range, in order. Defaults to the last 7 days if no dates are given.'
         ),
         parameters=FILTER_PARAMS + [
-            OpenApiParameter('by', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country, experience, day.'),
-            OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of names for a dimension (default {DEFAULT_LIMIT}, max {MAX_LIMIT}); ignored for experience/day.'),
+            OpenApiParameter('by', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country, day.'),
+            OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of names for a dimension (default {DEFAULT_LIMIT}, max {MAX_LIMIT}); ignored for day.'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
         examples=[OpenApiExample(
@@ -403,7 +401,7 @@ class SizeBreakdownView(APIView):
         groups = []
         for g in backend_for(request).size_quantiles(f, by, self.QUANTILES, limit):
             groups.append({
-                'name': experience_label(g['name']) if by == EXPERIENCE else g['name'],
+                'name': g['name'],
                 'changesets': g['changesets'],
                 'objects': g['objects'],
                 'avg_objects': round(g['objects'] / g['changesets'], 1) if g['changesets'] else 0,

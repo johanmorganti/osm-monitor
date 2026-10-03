@@ -57,11 +57,6 @@ loadWidget('sizeByEditorChart', apiUrl('/api/changesets/distribution/breakdown/'
     quartileChart('sizeByEditorChart', sizes.groups, 'editor');
 });
 
-loadWidget('sizeByExperienceChart', apiUrl('/api/changesets/distribution/breakdown/', { by: 'experience' }), sizes => {
-    showChart('sizeByExperienceChart');
-    quartileChart('sizeByExperienceChart', sizes.groups);
-});
-
 // ── Largest changesets tables ────────────────────────────────────────────────
 // Built with DOM nodes, not innerHTML: usernames and comments are user input.
 const LARGEST_COLUMNS = [
@@ -117,9 +112,6 @@ function renderLargestTable(tableId, results) {
 
 loadWidget('largestByObjectsTable', apiUrl('/api/changesets/largest/', { by: 'objects' }), largest => {
     renderLargestTable('largestByObjectsTable', largest.results);
-});
-loadWidget('largestByAreaTable', apiUrl('/api/changesets/largest/', { by: 'area' }), largest => {
-    renderLargestTable('largestByAreaTable', largest.results);
 });
 
 // ── Rankings by objects (moved from the Overview page) ──────────────────────

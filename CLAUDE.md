@@ -83,7 +83,7 @@ state), and serves a Chart.js dashboard plus a public JSON API.
 | Path | Role |
 |---|---|
 | `changesets/views.py` | HTML page shells only (Overview, Objects, Editors, poller status) |
-| `changesets/api/` | Public JSON API, backend-agnostic: `views.py` (endpoints + OpenAPI annotations), `params.py` (parsing, defaults, `pick_interval`), `sizes.py` (size histogram buckets, percentile definition, experience labels), `schema.py` |
+| `changesets/api/` | Public JSON API, backend-agnostic: `views.py` (endpoints + OpenAPI annotations), `params.py` (parsing, defaults, `pick_interval`), `sizes.py` (size histogram buckets, percentile definition), `schema.py` |
 | `changesets/analytics/` | Analytics backend interface (`base.py`: `Filters`, `AnalyticsBackend`, `NONE_BUCKET`, `DIMENSIONS`) + `registry.py` (`ANALYTICS_BACKEND`) |
 | `changesets/analytics/clickhouse/` | ClickHouse backend (`backend.py`), client, schema (`schema/*.sql`, applied by `clickhouse_migrate`) |
 | `changesets/analytics/timescale/` | TimescaleDB backend (deprecated): CAgg routing (`caggs.py`), raw fallback + queries (`backend.py`), exact-value filter resolution (`canonical.py`) |

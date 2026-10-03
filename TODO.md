@@ -17,4 +17,5 @@ history.
 
 ## Planned work
 
+- [Widest changesets: find a list worth showing](docs/todo/widest-changesets.md) — paused: the area-ranked table was removed (all continent-sized, mostly ordinary edits); a threshold list was too slow on full history and empty for reasonable contributors; next idea is a ranking by area per object.
 - [Dashboard: new graph/section ideas](docs/todo/dashboard-new-graphs.md) — hashtag filter, Objects page speed over multi-year ranges, StreetComplete quest breakdown, discussion activity, new-vs-returning contributors. Geo map, per-country breakdown, Objects page and hashtag toplist are done.

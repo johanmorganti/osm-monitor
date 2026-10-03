@@ -12,7 +12,7 @@ than losing the list.
   possible v2 — see `docs/hashtag-campaign-data.md`.
 - **Objects page over multi-year ranges** — the size endpoints scan the raw table: measured over 1
   year, `distribution` ~0.7-1 s, `breakdown?by=editor` ~2.3 s, `largest?by=area` ~5-6 s (the sine
-  per row), the hashtag toplist ~2.5 s; `size_counts` over full history ~9 s. If multi-year ranges
+  per row; no longer on the page), the hashtag toplist ~2.5 s; `size_counts` over full history ~9 s. If multi-year ranges
   become common, a refreshable daily rollup keyed `(dimension, day, name, changes_count)` would
   answer the histogram and quartiles exactly (sizes have a small domain); measure first.
 - **StreetComplete quest breakdown** — `streetcomplete_quest_type` is its own dedicated column,
@@ -28,11 +28,14 @@ than losing the list.
 
 **Objects page (2026-10-02).** `/objects/` (before Editors in the nav), with what used to be the
 Overview's "Objects changed" section plus: size histogram, exact percentiles and the largest 1%'s
-share (`/api/changesets/distribution/`), size quartiles per editor / contributor experience / day
-(`/distribution/breakdown/`), largest and widest changesets (`/api/changesets/largest/`), objects
+share (`/api/changesets/distribution/`), size quartiles per editor / day
+(`/distribution/breakdown/`), largest changesets (`/api/changesets/largest/`), objects
 over time (`timeseries?metric=objects`) and the **hashtag toplist** (`toplist?dimension=hashtag`,
 also `timeseries?group_by=hashtag`; lower-cased, one count per distinct hashtag of a changeset).
 ClickHouse only: the Timescale backend answers 501.
+Revised 2026-10-03: the contributor-experience breakdown was removed (page and `by=experience`,
+which only iD and Rapid record and would have raised more questions than it answered), and so was
+the "Widest Changesets" table (see [widest-changesets.md](widest-changesets.md)).
 
 **Per-country breakdown.** `country` replaced `language` as the dashboard's 5th dimension
 (2026-09-22) — filter, toplist chart, and "over time" chart, matching the other three dimensions'

@@ -153,7 +153,7 @@
         </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8 mb-12">
+    <div class="mb-12">
         <div class="bg-white rounded-lg shadow-lg p-6">
             <h3 class="text-lg font-semibold mb-1">Size by Editor</h3>
             <p class="text-xs text-gray-400 mb-3">Bar = middle half of changesets (p25–p75), dot = median, log scale. Top 10 editors by changesets. Click to filter by editor</p>
@@ -164,16 +164,6 @@
                 <canvas id="sizeByEditorChart" hidden></canvas>
             </div>
         </div>
-        <div class="bg-white rounded-lg shadow-lg p-6">
-            <h3 class="text-lg font-semibold mb-1">Size by Contributor Experience</h3>
-            <p class="text-xs text-gray-400 mb-3">Same reading, by how many changesets the contributor had made. Only iD and Rapid record this, so other editors are left out</p>
-            <div class="relative" style="height: 400px">
-                <div id="sizeByExperienceChart-spinner" class="absolute inset-0 flex items-center justify-center">
-                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
-                </div>
-                <canvas id="sizeByExperienceChart" hidden></canvas>
-            </div>
-        </div>
     </div>
 
     <!-- ══ Largest changesets ══════════════════════════════════════════════ -->
@@ -182,12 +172,12 @@
         <span class="relative inline-block group cursor-help">
             <span class="text-xs text-gray-400 border border-gray-300 rounded-full w-5 h-5 inline-flex items-center justify-center">?</span>
             <span class="absolute left-0 top-full mt-2 hidden group-hover:block w-80 whitespace-normal text-xs font-normal leading-snug bg-gray-800 text-white rounded px-3 py-2 z-10">
-                The individual changesets that changed the most objects, and the ones with the widest bounding box. A very wide changeset with few objects is often accidental (a node dragged across the map) or a revert, and worth a look.
+                The individual changesets that changed the most objects: imports, bots and other mass edits.
             </span>
         </span>
     </h2>
 
-    <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-12">
         <h3 class="text-lg font-semibold mb-1">Most Objects Changed</h3>
         <p class="text-xs text-gray-400 mb-3">The 20 largest changesets of the range by objects changed (OSM caps a changeset at 10,000)</p>
         <div id="largestByObjectsTable-spinner" class="flex items-center justify-center py-8">
@@ -195,17 +185,6 @@
         </div>
         <div class="overflow-x-auto">
             <table id="largestByObjectsTable" class="min-w-full text-sm" hidden></table>
-        </div>
-    </div>
-
-    <div class="bg-white rounded-lg shadow-lg p-6 mb-12">
-        <h3 class="text-lg font-semibold mb-1">Widest Changesets</h3>
-        <p class="text-xs text-gray-400 mb-3">The 20 changesets of the range with the largest bounding box</p>
-        <div id="largestByAreaTable-spinner" class="flex items-center justify-center py-8">
-            <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
-        </div>
-        <div class="overflow-x-auto">
-            <table id="largestByAreaTable" class="min-w-full text-sm" hidden></table>
         </div>
     </div>
 

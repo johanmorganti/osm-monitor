@@ -30,15 +30,6 @@ EDITOR_VERSION = 'editor_version'
 # changeset's `hashtags` tag, matched case-insensitively and reported lower-case.
 HASHTAG = 'hashtag'
 
-# Size-breakdown keys besides DIMENSIONS: `experience` buckets changesets by
-# the author's changeset count at the time (the `changesets_count` tag, which
-# counts the changeset itself, so 1 = a first changeset; set by iD and Rapid
-# only), `day` by creation day.
-EXPERIENCE = 'experience'
-# Lower bound of each experience bucket (the last one is open-ended).
-EXPERIENCE_BOUNDS = (1, 2, 11, 101, 1001, 10001)
-
-
 def format_bucket(bucket, interval):
     """Render a bucket as the API's date label. `bucket` is a datetime for
     every CAgg path and for the raw path's TruncHour, but a plain date for the
@@ -125,9 +116,8 @@ class AnalyticsBackend(Protocol):
     def size_quantiles(self, f: Filters, by: str, quantiles: Sequence[float], limit: int) -> list:
         """[{'name', 'changesets', 'objects', 'quantiles': [...]}], exact
         changes_count quantiles per group. `by` is a dimension (top `limit`
-        names by changesets, NULL names left out), EXPERIENCE (every bucket,
-        named by its index in EXPERIENCE_BOUNDS, in order, untagged changesets
-        left out) or 'day' (every day, named 'YYYY-MM-DD', in order)."""
+        names by changesets, NULL names left out) or 'day' (every day, named
+        'YYYY-MM-DD', in order)."""
 
     def largest(self, f: Filters, by: str, limit: int) -> list:
         """The `limit` largest changesets by 'objects' (changes_count) or

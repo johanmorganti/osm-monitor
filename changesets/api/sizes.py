@@ -1,9 +1,7 @@
 """Changeset-size rules shared by the distribution endpoints: histogram
-buckets, percentile definition, experience bucket labels. API-level, so every
+buckets, percentile definition. API-level, so every
 backend only reports exact counts and the shapes stay identical."""
 import math
-
-from ..analytics import EXPERIENCE_BOUNDS
 
 # Lower bound of each histogram bucket (objects changed per changeset), the
 # last one open-ended. Roughly logarithmic: sizes run from 0 (empty
@@ -22,11 +20,6 @@ def _range_label(low, high):
 def bucket_ranges(bounds):
     """[(low, high or None)] for consecutive lower bounds."""
     return [(low, bounds[i + 1] - 1 if i + 1 < len(bounds) else None) for i, low in enumerate(bounds)]
-
-
-def experience_label(index):
-    low, high = bucket_ranges(EXPERIENCE_BOUNDS)[index]
-    return 'First changeset' if low == high == 1 else f'{_range_label(low, high)} changesets'
 
 
 def quantile(sorted_counts, total, level):
