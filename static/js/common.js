@@ -300,7 +300,7 @@ function multiLineChart(canvasId, dates, series, logScale) {
                 x: dateAxis(dates),
                 y: logScale
                     ? { type: 'logarithmic', grid: { color: GRID_HAIRLINE },
-                        ticks: { callback: v => ([1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].includes(v) ? v.toLocaleString('en-US') : '') } }
+                        ticks: { callback: v => ([1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000].includes(v) ? v.toLocaleString('en-US') : '') } }
                     : { beginAtZero: true, grid: { color: GRID_HAIRLINE } },
             },
         },

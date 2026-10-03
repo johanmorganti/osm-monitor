@@ -46,7 +46,9 @@ loadWidget('sizeOverTimeChart', apiUrl('/api/changesets/distribution/breakdown/'
     showChart('sizeOverTimeChart');
     multiLineChart('sizeOverTimeChart', sizes.groups.map(g => g.name), [
         { name: 'Median (p50)', values: sizes.groups.map(g => g.p50) },
+        { name: 'p75', values: sizes.groups.map(g => g.p75) },
         { name: 'p90', values: sizes.groups.map(g => g.p90) },
+        { name: 'p95', values: sizes.groups.map(g => g.p95) },
     ], true);
 });
 

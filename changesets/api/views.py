@@ -359,7 +359,7 @@ class SizeBreakdownView(APIView):
     every contributor-experience bucket, or every day."""
 
     BY = (*DIMENSIONS, EXPERIENCE, 'day')
-    QUANTILES = (0.25, 0.5, 0.75, 0.9)
+    QUANTILES = (0.25, 0.5, 0.75, 0.9, 0.95)
     DEFAULT_LIMIT = 10
     MAX_LIMIT = 50
 
@@ -367,7 +367,7 @@ class SizeBreakdownView(APIView):
         tags=['objects'],
         summary='Changeset size by group',
         description=(
-            'Exact p25/p50/p75/p90 changeset sizes (objects changed per changeset), plus changeset '
+            'Exact p25/p50/p75/p90/p95 changeset sizes (objects changed per changeset), plus changeset '
             'and object totals, per group. by=contributor|editor|imagery|language|country returns '
             'the top N names by changeset count (untagged changesets left out); by=experience '
             'groups by the author\'s changeset count at the time (the changesets_count tag, set '
@@ -383,7 +383,7 @@ class SizeBreakdownView(APIView):
             'Top editors',
             value={
                 'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'country': '', 'by': 'editor', 'limit': 10},
-                'groups': [{'name': 'JOSM', 'changesets': 66000, 'objects': 9100000, 'avg_objects': 137.9, 'p25': 4, 'p50': 16, 'p75': 83, 'p90': 312}],
+                'groups': [{'name': 'JOSM', 'changesets': 66000, 'objects': 9100000, 'avg_objects': 137.9, 'p25': 4, 'p50': 16, 'p75': 83, 'p90': 312, 'p95': 640}],
             },
             response_only=True,
         )],
