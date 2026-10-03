@@ -213,6 +213,11 @@ function lineChart(canvasId, dates, counts, label) {
         },
         options: {
             responsive: true,
+            // Fill the container's width *and* height: Chart.js's default
+            // 2:1 aspect ratio capped a chart in a short, wide card at twice
+            // its height (half the card's width on the Objects page).
+            // Callers give the container an explicit height.
+            maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             // Points are invisible (pointRadius: 0) until hovered, so the
             // default intersect:true mode — which requires the cursor to
