@@ -33,10 +33,10 @@ skips the rollups (plain SQL only), to measure what they buy.
 """
 import json
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from ...geo import geohash_bbox_cover, geohash_decode_center, GEOHASH_PREFIX_UPPER_BOUND_CHAR
-from ..base import NONE_BUCKET, EDITOR_VERSION, HASHTAG, format_bucket
+from ..base import NONE_BUCKET, EDITOR_VERSION, HASHTAG, OBJECT_DIMENSIONS, format_bucket
 from .client import get_client
 
 COLUMNS = {
@@ -61,7 +61,11 @@ ROLLUP_WATERMARKS = {
     'daily_rollup': "daily_rollup WHERE dimension = 'volume'",
     'geo_cells_daily': 'geo_cells_daily',
     'geo_coarse_daily': 'geo_coarse_daily',
+    'object_daily_rollup': "object_daily_rollup WHERE dimension = 'volume'",
 }
+# Object dimensions (OBJECT_DIMENSIONS): their column in object_change_features
+# and object_daily_rollup (schema/0004, 0005).
+OBJECT_COLUMNS = {'action': 'toString(action)', 'object_type': 'toString(type)', 'feature': 'feature'}
 # Precision geo_coarse_daily is stored at (GEOHASH_PREFIX_LENGTH['coarse']).
 GEO_COARSE_PRECISION = 3
 
@@ -226,6 +230,10 @@ class ClickHouseBackend:
     # -- timeseries ----------------------------------------------------------
 
     def timeseries(self, f, group_by, interval, metric='count'):
+        if group_by in OBJECT_DIMENSIONS:
+            data = self._pivot(self._object_rows(f, group_by, interval), interval)
+            data['series'] = data['series'][:20]
+            return data
         rollup_value, raw_value = ROLLUP_VALUE[metric], RAW_VALUE[metric]
         hybrid = interval == 'day' and self._hybrid(f)
         if hybrid and group_by is None and self._rollup_match(f):
@@ -273,6 +281,9 @@ class ClickHouseBackend:
     # -- toplist -------------------------------------------------------------
 
     def toplist(self, f, dimension, metric, limit):
+        if dimension in OBJECT_DIMENSIONS:
+            rows = sorted(self._object_rows(f, dimension, None), key=lambda r: (-r[2], r[0]))
+            return [{'name': n, 'value': v} for n, _, v in rows[:limit]]
         hybrid = self._hybrid(f)
         only_editor = f.editor and f.editor != NONE_BUCKET and f.single() == ('editor', f.editor)
         if hybrid and not f.any() and dimension in ROLLUP_DIMENSIONS:
@@ -303,6 +314,71 @@ class ClickHouseBackend:
                 SELECT {raw_name} AS label, {raw_value} AS v FROM {self._table} WHERE {raw.where} GROUP BY label)
             GROUP BY label ORDER BY value DESC, label LIMIT {int(limit)}""", {**raw.params, **rollup, **params})
         return [{'name': n, 'value': v} for n, v in rows]
+
+    # -- object dimensions ---------------------------------------------------
+    # Counts from the replication diffs (schema/0004), attributed to the
+    # changeset's created_at day: object_daily_rollup (0005) up to its
+    # watermark when it answers the filters (as daily_rollup does), then the
+    # raw counts joined to `changesets` for the date and the filters.
+
+    def object_coverage(self):
+        checked, value = self._watermark_cache.get('object_coverage', (float('-inf'), None))
+        if time.monotonic() - checked > WATERMARK_TTL_SECONDS:
+            # The day after the earliest edit: a changeset created then or later
+            # has every upload in the diffs (same rule as the rollup).
+            (day,), = self._rows('SELECT toDate(min(edit_time)) + 1 FROM object_changes', {})
+            value = day if day and day.year > 1971 else None
+            self._watermark_cache['object_coverage'] = (time.monotonic(), value)
+        return value
+
+    def _object_rollup_start(self):
+        checked, value = self._watermark_cache.get('object_rollup_start', (float('-inf'), None))
+        if time.monotonic() - checked > WATERMARK_TTL_SECONDS:
+            (value,), = self._rows("SELECT min(day) FROM object_daily_rollup WHERE dimension = 'volume'", {})
+            self._watermark_cache['object_rollup_start'] = (time.monotonic(), value)
+        return value
+
+    def _object_rows(self, f, dimension, interval):
+        """(name, bucket, objects) rows of an object dimension, bucketed by
+        interval ('hour' | 'day') or not at all (None, bucket 0), clamped to
+        object_coverage()."""
+        coverage = self.object_coverage()
+        start = max(datetime.strptime(f.start_date, '%Y-%m-%d').date(), coverage or date.max)
+        end = f.end_exclusive
+        if start >= end:
+            return []
+        column = OBJECT_COLUMNS[dimension]
+        parts, params = [], {}
+        match = interval != 'hour' and self._rollup_match(f)
+        watermark = match and self.use_rollups and self._watermark('object_daily_rollup')
+        # The rollup starts where coverage started when it was last refreshed;
+        # while the backfill still extends coverage backward, earlier days are
+        # only in the raw tables.
+        if watermark and start < self._object_rollup_start():
+            watermark = None
+        split = min(max(watermark, start), end) if watermark else start
+        if split > start:
+            r_dim, condition, match_params = match
+            parts.append(f"""
+                SELECT {column} AS label, {'day' if interval else '0'} AS b, sum(objects) AS n FROM object_daily_rollup
+                WHERE dimension = {{r_dim:String}} AND {condition} AND day >= {{r_start:Date}} AND day < {{r_end:Date}}
+                GROUP BY label, b""")
+            params.update(match_params, r_dim=r_dim, r_start=start, r_end=split)
+        if split < end:
+            raw = _Query(f)
+            raw.params['start'] = _day_start(split)
+            bucket = {'day': 'toDate(c.created_at)', 'hour': 'toStartOfHour(c.created_at)', None: '0'}[interval]
+            # The IN narrows the read to the matching changesets (the table is
+            # ordered by changeset_id); the join brings their created_at.
+            parts.append(f"""
+                SELECT {column} AS label, {bucket} AS b, sum(count) AS n
+                FROM object_change_features FINAL
+                INNER JOIN (SELECT changeset_id, created_at FROM {self._table} WHERE {raw.where}) AS c USING changeset_id
+                WHERE changeset_id IN (SELECT changeset_id FROM {self._table} WHERE {raw.where})
+                GROUP BY label, b""")
+            params.update(raw.params)
+        return self._rows(
+            f"SELECT label, b, sum(n) FROM ({' UNION ALL '.join(parts)}) GROUP BY label, b", params)
 
     # -- autocomplete --------------------------------------------------------
 

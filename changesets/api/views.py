@@ -11,7 +11,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ..analytics import DIMENSIONS, EDITOR_VERSION, HASHTAG, ChangesetQuery, backend_for
+from ..analytics import DIMENSIONS, EDITOR_VERSION, HASHTAG, OBJECT_DIMENSIONS, ChangesetQuery, backend_for
 from ..geo import GEOHASH_PREFIX_LENGTH, geohash_cell_size_degrees, geohash_precision_for_bbox
 from ..models import FilterValue, SequenceState
 from ..serializers import ChangesetSerializer
@@ -105,10 +105,14 @@ class TimeseriesView(APIView):
             'interval=hour|day. interval=hour on a range wide enough to blow past the point '
             'budget is rejected (400) rather than silently truncated. The grain actually used '
             'is always reported back in the response\'s top-level interval field. Defaults to '
-            'the last 7 days if no dates are given.'
+            'the last 7 days if no dates are given. group_by=action|object_type|feature splits '
+            'objects changed by what the replication diffs say about each object (requires '
+            'metric=objects; objects count on their changeset\'s day, so the series add up to the '
+            'metric=objects total); those diffs only go back a few months, and the response\'s '
+            '`objects_since` gives the first day covered (earlier days count nothing).'
         ),
         parameters=FILTER_PARAMS + [
-            OpenApiParameter('group_by', OpenApiTypes.STR, description='Split into per-name series: contributor, editor, imagery, language, country, or hashtag (lower-cased; a changeset counts under each of its hashtags). Omit for plain volume.'),
+            OpenApiParameter('group_by', OpenApiTypes.STR, description='Split into per-name series: contributor, editor, imagery, language, country, or hashtag (lower-cased; a changeset counts under each of its hashtags). With metric=objects also action (create/modify/delete), object_type (node/way/relation) or feature (the object\'s main tag key: building, highway, …; untagged; unknown for deletes). Omit for plain volume.'),
             OpenApiParameter('interval', OpenApiTypes.STR, description='Force the bucket width: hour or day. Omit to auto-pick based on range width (see description).'),
             OpenApiParameter('metric', OpenApiTypes.STR, description='count (changesets, default) or objects (objects changed). With group_by, also what the top 20 are ranked by.'),
         ],
@@ -131,12 +135,14 @@ class TimeseriesView(APIView):
     )
     def get(self, request):
         group_by = request.query_params.get('group_by') or None
-        if group_by not in (None, *DIMENSIONS, HASHTAG):
-            return Response({'error': f'group_by must be one of: {", ".join((*DIMENSIONS, HASHTAG))}'}, status=status.HTTP_400_BAD_REQUEST)
+        if group_by not in (None, *DIMENSIONS, HASHTAG, *OBJECT_DIMENSIONS):
+            return Response({'error': f'group_by must be one of: {", ".join((*DIMENSIONS, HASHTAG, *OBJECT_DIMENSIONS))}'}, status=status.HTTP_400_BAD_REQUEST)
 
         metric = request.query_params.get('metric', 'count')
         if metric not in ('count', 'objects'):
             return Response({'error': 'metric must be count or objects'}, status=status.HTTP_400_BAD_REQUEST)
+        if group_by in OBJECT_DIMENSIONS and metric != 'objects':
+            return Response({'error': f'group_by={group_by} requires metric=objects'}, status=status.HTTP_400_BAD_REQUEST)
 
         interval_param = request.query_params.get('interval') or None
         if interval_param not in (None, 'hour', 'day'):
@@ -148,7 +154,10 @@ class TimeseriesView(APIView):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        data = backend_for(request).timeseries(f, group_by, interval, metric)
+        backend = backend_for(request)
+        data = backend.timeseries(f, group_by, interval, metric)
+        if group_by in OBJECT_DIMENSIONS:
+            data['objects_since'] = backend.object_coverage()
         return Response({'filters': {**f.as_dict(), 'group_by': group_by, 'metric': metric}, **data})
 
 
@@ -202,10 +211,12 @@ class ToplistView(APIView):
             'ranked by changeset count or by objects changed, for a date range. Defaults to the '
             'last 7 days if no dates are given. dimension=editor_version requires an editor filter '
             '(created_by is unbounded across all editors, so it is only ever grouped within one '
-            'already-selected editor family).'
+            'already-selected editor family). dimension=action|object_type|feature ranks objects '
+            'changed by what the replication diffs say about each object (requires metric=objects; '
+            'the response\'s `objects_since` gives the first day those diffs cover).'
         ),
         parameters=FILTER_PARAMS + [
-            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country, editor_version (requires an editor filter), hashtag (lower-cased; a changeset counts under each of its hashtags).'),
+            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country, editor_version (requires an editor filter), hashtag (lower-cased; a changeset counts under each of its hashtags); with metric=objects also action (create/modify/delete), object_type (node/way/relation), feature (the object\'s main tag key; untagged; unknown for deletes).'),
             OpenApiParameter('metric', OpenApiTypes.STR, description='count (changesets) or objects (objects changed). Defaults to count.'),
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of results (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
         ],
@@ -217,16 +228,26 @@ class ToplistView(APIView):
                 'results': [{'name': 'iD', 'value': 180000}],
             },
             response_only=True,
+        ), OpenApiExample(
+            'Objects by action',
+            value={
+                'filters': {'start_date': '2026-09-01', 'end_date': '2026-09-08', 'contributor': '', 'editor': '', 'imagery': '', 'language': '', 'country': '', 'dimension': 'action', 'metric': 'objects', 'limit': 20},
+                'results': [{'name': 'create', 'value': 22900000}, {'name': 'delete', 'value': 6100000}, {'name': 'modify', 'value': 4700000}],
+                'objects_since': '2026-07-03',
+            },
+            response_only=True,
         )],
     )
     def get(self, request):
         dimension = request.query_params.get('dimension', '')
         metric = request.query_params.get('metric', 'count')
-        if dimension not in (*DIMENSIONS, EDITOR_VERSION, HASHTAG):
-            valid = ', '.join((*DIMENSIONS, EDITOR_VERSION, HASHTAG))
+        if dimension not in (*DIMENSIONS, EDITOR_VERSION, HASHTAG, *OBJECT_DIMENSIONS):
+            valid = ', '.join((*DIMENSIONS, EDITOR_VERSION, HASHTAG, *OBJECT_DIMENSIONS))
             return Response({'error': f'dimension must be one of: {valid}'}, status=status.HTTP_400_BAD_REQUEST)
         if metric not in ('count', 'objects'):
             return Response({'error': 'metric must be count or objects'}, status=status.HTTP_400_BAD_REQUEST)
+        if dimension in OBJECT_DIMENSIONS and metric != 'objects':
+            return Response({'error': f'dimension={dimension} requires metric=objects'}, status=status.HTTP_400_BAD_REQUEST)
 
         limit_raw = request.query_params.get('limit')
         if limit_raw is None:
@@ -243,8 +264,12 @@ class ToplistView(APIView):
         if dimension == EDITOR_VERSION and not f.editor:
             return Response({'error': 'dimension=editor_version requires an editor filter'}, status=status.HTTP_400_BAD_REQUEST)
 
-        results = backend_for(request).toplist(f, dimension, metric, limit)
-        return Response({'filters': {**f.as_dict(), 'dimension': dimension, 'metric': metric, 'limit': limit}, 'results': results})
+        backend = backend_for(request)
+        body = {'filters': {**f.as_dict(), 'dimension': dimension, 'metric': metric, 'limit': limit},
+                'results': backend.toplist(f, dimension, metric, limit)}
+        if dimension in OBJECT_DIMENSIONS:
+            body['objects_since'] = backend.object_coverage()
+        return Response(body)
 
 
 class GeoView(APIView):

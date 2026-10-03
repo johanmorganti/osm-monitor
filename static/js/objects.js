@@ -57,6 +57,63 @@ loadWidget('sizeByEditorChart', apiUrl('/api/changesets/distribution/breakdown/'
     quartileChart('sizeByEditorChart', sizes.groups, 'editor');
 });
 
+// ── What was changed (replication diffs) ─────────────────────────────────────
+// group_by/dimension = action | object_type | feature with metric=objects.
+// Colors follow the name, not its rank: series are put in a fixed order
+// before charting. Each response carries objects_since (the first day the
+// diffs cover); earlier days count nothing, so the page says so.
+const ACTION_ORDER = ['create', 'modify', 'delete'];
+const ACTION_LABELS = { create: 'Created', modify: 'Modified', delete: 'Deleted' };
+const TYPE_ORDER = ['node', 'way', 'relation'];
+const TYPE_LABELS = { node: 'Nodes', way: 'Ways', relation: 'Relations' };
+// Not features: way geometry nodes (~70% of objects) and deletes (the diffs
+// carry no tags for them). Charted, they would flatten every real feature.
+const NOT_FEATURES = ['untagged', 'unknown'];
+const TOP_FEATURE_SERIES = 6;
+
+function showObjectsSince(data) {
+    if (!data.objects_since) return;
+    const since = data.objects_since;
+    const el = document.getElementById('objectsSince');
+    el.textContent = since > data.filters.start_date
+        ? `Counted from ${since} only: the diffs this comes from don't go back further, so earlier days of the range count nothing.`
+        : `Counted from OpenStreetMap's replication diffs, available since ${since}.`;
+}
+
+function fixedOrderSeries(data, order, labels) {
+    return order.map(name => {
+        const s = data.series.find(x => x.name === name);
+        return { name: labels[name], values: s ? s.counts : data.dates.map(() => 0) };
+    });
+}
+
+loadWidget('objectsByActionChart', apiUrl('/api/changesets/timeseries/', { metric: 'objects', group_by: 'action' }), data => {
+    showObjectsSince(data);
+    showChart('objectsByActionChart');
+    multiLineChart('objectsByActionChart', data.dates, fixedOrderSeries(data, ACTION_ORDER, ACTION_LABELS));
+});
+
+loadWidget('objectsByTypeChart', apiUrl('/api/changesets/timeseries/', { metric: 'objects', group_by: 'object_type' }), data => {
+    showChart('objectsByTypeChart');
+    multiLineChart('objectsByTypeChart', data.dates, fixedOrderSeries(data, TYPE_ORDER, TYPE_LABELS));
+});
+
+loadWidget('topFeaturesChart', apiUrl('/api/changesets/toplist/', { dimension: 'feature', metric: 'objects', limit: 30 }), top => {
+    const left = top.results.filter(r => NOT_FEATURES.includes(r.name));
+    const shown = top.results.filter(r => !NOT_FEATURES.includes(r.name)).slice(0, 15);
+    const count = name => (left.find(r => r.name === name) || { value: 0 }).value;
+    document.getElementById('topFeaturesNote').textContent =
+        `Objects created or modified, by their main tag. Not shown: ${compactNumber.format(count('untagged'))} untagged objects (mostly nodes shaping ways) and ${compactNumber.format(count('unknown'))} deletes (the diffs don't say what they were)`;
+    showChart('topFeaturesChart');
+    horizontalBar('topFeaturesChart', shown.map(r => r.name), shown.map(r => r.value), 'Objects changed');
+});
+
+loadWidget('featuresOverTimeChart', apiUrl('/api/changesets/timeseries/', { metric: 'objects', group_by: 'feature' }), data => {
+    const series = data.series.filter(s => !NOT_FEATURES.includes(s.name)).slice(0, TOP_FEATURE_SERIES);
+    showChart('featuresOverTimeChart');
+    multiLineChart('featuresOverTimeChart', data.dates, series.map(s => ({ name: s.name, values: s.counts })));
+});
+
 // ── Largest changesets tables ────────────────────────────────────────────────
 // Built with DOM nodes, not innerHTML: usernames and comments are user input.
 const LARGEST_COLUMNS = [

@@ -8,6 +8,7 @@ history.
 
 ## Known issues (deferred)
 
+- [Some changesets miss their final update](docs/todo/stale-changesets.md) — 2 of ~2M stored as open with too small a `changes_count` (found by the object diffs, which also give a detector).
 - [Phase out TimescaleDB](docs/todo/timescale-deprecation.md) — ClickHouse is the default backend and primary writer; Timescale is deprecated, still written to as a fallback. Steps to stop writing, drop the schema and move to plain Postgres (which stays for app state).
 - [Cross-dimension queries + CAgg cleanup](docs/todo/continuous-aggregates-migration.md) — all 9 dimension pairs (contributor/editor/imagery/language/country) now have their own CAggs; `GeoView` with any filter (different shape) still falls back to a raw scan and can time out; old rollup tables/index still need a drop migration.
 - [Existence check spans old chunks](docs/todo/existence-check-wide-range.md) — a batch mixing today's changesets with an old one (comment-driven) makes the Timescale writer's existence check scan every chunk in between.
@@ -17,6 +18,6 @@ history.
 
 ## Planned work
 
-- [Object changes: rollups, API, widgets](docs/todo/object-changes.md) — ingestion built (`poll_diffs`: per-changeset counts for all time, every object version for 92 days); next: check the first backfill, then daily rollups, API parameters and Objects page widgets.
+- [Object changes: re-edits, tag changes, upkeep](docs/todo/object-changes.md) — ingestion, rollup, API (`group_by`/`dimension=action|object_type|feature`) and the Objects page section are built; next: check the backfill, re-edits and tag changes from `object_versions`, bound the rollup refresh.
 - [Widest changesets: find a list worth showing](docs/todo/widest-changesets.md) — paused: the area-ranked table was removed (all continent-sized, mostly ordinary edits); a threshold list was too slow on full history and empty for reasonable contributors; next idea is a ranking by area per object.
 - [Dashboard: new graph/section ideas](docs/todo/dashboard-new-graphs.md) — hashtag filter, Objects page speed over multi-year ranges, StreetComplete quest breakdown, discussion activity, new-vs-returning contributors. Geo map, per-country breakdown, Objects page and hashtag toplist are done.

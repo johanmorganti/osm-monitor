@@ -22,7 +22,7 @@ from ...geo import (
     geohash_prefix_range_sql, GEOHASH_PREFIX_UPPER_BOUND_CHAR,
 )
 from ...models import Changeset, FilterValue, CaggVolumeHourly, CaggEditorVersionDaily, CaggGeoHashedDaily
-from ..base import NONE_BUCKET, EDITOR_VERSION, HASHTAG, format_bucket
+from ..base import NONE_BUCKET, EDITOR_VERSION, HASHTAG, OBJECT_DIMENSIONS, format_bucket
 from .caggs import (
     DIMENSION_FIELDS, RAW_ONLY_DIMENSIONS, CAGG_MODELS, CAGG_MODELS_HOURLY, CAGG_VOLUME_MODELS,
     pair_cagg_lookup,
@@ -192,6 +192,8 @@ class TimescaleBackend:
     def toplist(self, f, dimension, metric, limit):
         if dimension == HASHTAG:
             raise NotImplementedError('hashtag toplist (TimescaleDB backend is deprecated)')
+        if dimension in OBJECT_DIMENSIONS:
+            raise NotImplementedError('object changes (TimescaleDB backend is deprecated)')
         if dimension == EDITOR_VERSION:
             # Its own CAgg only when editor is the sole filter that matters
             # here (contributor/imagery/country send it to raw; language is
@@ -324,6 +326,9 @@ class TimescaleBackend:
     # -- autocomplete --------------------------------------------------------
 
     # -- object analysis (ClickHouse only: no CAggs for these, see CLAUDE.md) --
+
+    def object_coverage(self):
+        raise NotImplementedError('object changes (TimescaleDB backend is deprecated)')
 
     def size_counts(self, f):
         raise NotImplementedError('size distribution (TimescaleDB backend is deprecated)')

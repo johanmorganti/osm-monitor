@@ -30,6 +30,12 @@ EDITOR_VERSION = 'editor_version'
 # changeset's `hashtags` tag, matched case-insensitively and reported lower-case.
 HASHTAG = 'hashtag'
 
+# Timeseries group_by / toplist dimensions over the objects themselves (the
+# replication diffs, see docs/decisions/object-changes.md), metric 'objects'
+# only, no filter: what was done (create/modify/delete), to what
+# (node/way/relation), and the feature (osmchange.feature_of).
+OBJECT_DIMENSIONS = ('action', 'object_type', 'feature')
+
 def format_bucket(bucket, interval):
     """Render a bucket as the API's date label. `bucket` is a datetime for
     every CAgg path and for the raw path's TruncHour, but a plain date for the
@@ -102,10 +108,16 @@ class AnalyticsBackend(Protocol):
         else the top 20 names of that dimension (or HASHTAG), one series each.
         `interval` ('hour'|'day') is chosen by the API layer; `metric` is
         'count' (changesets) or 'objects' (objects changed), and also ranks
-        the top 20."""
+        the top 20. With group_by in OBJECT_DIMENSIONS (metric 'objects'),
+        counts come from the diffs and start at object_coverage()."""
 
     def toplist(self, f: Filters, dimension: str, metric: str, limit: int) -> list:
-        """[{'name', 'value'}] ranked by metric ('count'|'objects'), at most `limit`."""
+        """[{'name', 'value'}] ranked by metric ('count'|'objects'), at most
+        `limit`. OBJECT_DIMENSIONS: as for timeseries."""
+
+    def object_coverage(self) -> Optional[date]:
+        """First day the object dimensions cover (every upload of a changeset
+        created that day or later is in the diffs), or None without data."""
 
     def size_counts(self, f: Filters) -> list:
         """[(changes_count, changesets)]: how many changesets have each exact

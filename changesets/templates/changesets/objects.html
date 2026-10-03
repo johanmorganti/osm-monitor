@@ -119,6 +119,64 @@
         </div>
     </div>
 
+    <!-- ══ What was changed (replication diffs) ════════════════════════════ -->
+    <h2 class="text-2xl font-semibold mb-1 flex items-center gap-2">
+        What was changed
+        <span class="relative inline-block group cursor-help">
+            <span class="text-xs text-gray-400 border border-gray-300 rounded-full w-5 h-5 inline-flex items-center justify-center">?</span>
+            <span class="absolute left-0 top-full mt-2 hidden group-hover:block w-80 whitespace-normal text-xs font-normal leading-snug bg-gray-800 text-white rounded px-3 py-2 z-10">
+                Each changed object, from OpenStreetMap's replication diffs: whether it was <strong>created, modified or deleted</strong>, whether it's a <strong>node</strong> (a point), a <strong>way</strong> (a line or outline) or a <strong>relation</strong> (a group), and its <strong>feature</strong>, the main tag it carries (building, highway, …). Objects count on their changeset's day, so the totals match "Objects changed" above.
+            </span>
+        </span>
+    </h2>
+    <p id="objectsSince" class="text-sm text-gray-500 mb-4">&nbsp;</p>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8 mb-8">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Created, Modified, Deleted</h3>
+            <p class="text-xs text-gray-400 mb-3">Objects changed per day, by what was done to them</p>
+            <div class="relative" style="height: 300px">
+                <div id="objectsByActionChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="objectsByActionChart" hidden></canvas>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Nodes, Ways, Relations</h3>
+            <p class="text-xs text-gray-400 mb-3">Objects changed per day, by type. Most nodes are the points that shape ways</p>
+            <div class="relative" style="height: 300px">
+                <div id="objectsByTypeChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="objectsByTypeChart" hidden></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8 mb-12">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Top Features</h3>
+            <p id="topFeaturesNote" class="text-xs text-gray-400 mb-3">Objects created or modified, by their main tag</p>
+            <div class="relative" style="height: 400px">
+                <div id="topFeaturesChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="topFeaturesChart" hidden></canvas>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h3 class="text-lg font-semibold mb-1">Features Over Time</h3>
+            <p class="text-xs text-gray-400 mb-3">Objects changed per day for the 6 top features (untagged nodes and deletes left out)</p>
+            <div class="relative" style="height: 400px">
+                <div id="featuresOverTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <canvas id="featuresOverTimeChart" hidden></canvas>
+            </div>
+        </div>
+    </div>
+
     <!-- ══ Changeset size ══════════════════════════════════════════════════ -->
     <h2 class="text-2xl font-semibold mb-4 flex items-center gap-2">
         Changeset size

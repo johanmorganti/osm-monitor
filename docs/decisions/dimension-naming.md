@@ -17,6 +17,16 @@ The convention, and the current mapping for every dimension:
 | `locale_family` | `language` | *(none — see below)* |
 | `country_code` | `country` | Country |
 
+Object dimensions (2026-10-03, `OBJECT_DIMENSIONS`; group_by / toplist dimension with
+`metric=objects` only, not filters), columns of the ClickHouse object tables
+([object-changes.md](object-changes.md)):
+
+| DB column | API param | UI label |
+|---|---|---|
+| `action` (`create`/`modify`/`delete`) | `action` | Created / Modified / Deleted |
+| `type` (`node`/`way`/`relation`) | `object_type` (`type` is too generic in a query string) | Nodes / Ways / Relations |
+| `feature` | `feature` | Feature (shown as the tag key itself: building, highway, …) |
+
 `language` is the one exception to "every dimension has a UI label": it was the dashboard's 5th
 dimension until 2026-09-22, when `country` replaced it there (filter, toplist chart, "over time"
 chart). `language` itself was deliberately left alone at the API layer — `DIMENSION_FIELDS`, its

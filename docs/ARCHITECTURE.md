@@ -12,9 +12,9 @@ stands; it doesn't track day-to-day changes.
 - `/editors/` → `EditorsView` (one column per top-10 editor family for the selected range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph)
 - `/changeset_import/` → `APILandingPageView` (poller status page — live catch-up batch progress)
 - `/api/changesets/` → `ChangesetQueryView` (raw changeset records, filterable; defaults to the last 24 hours, no unfiltered "everything" mode)
-- `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped, `metric=count|objects`)
+- `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped, `metric=count|objects`; with `metric=objects` also `group_by=action|object_type|feature`, from the object tables)
 - `/api/changesets/summary/` → `SummaryView` (total_changesets/total_objects/avg_objects)
-- `/api/changesets/toplist/` → `ToplistView` (top N by dimension × metric)
+- `/api/changesets/toplist/` → `ToplistView` (top N by dimension × metric; with `metric=objects` also `dimension=action|object_type|feature`)
 - `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`; each cell carries its geohash as `cell`), `/api/changesets/geo/cell/` → `GeoCellView` (the changesets of one cell, newest first, paginated — the Overview map's click-to-list panel; ClickHouse only)
 - `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`) — ClickHouse only, 501 on Timescale
 - `/api/docs/` → Swagger UI (drf-spectacular), `/api/schema/` the raw OpenAPI schema — the authoritative API reference
@@ -73,7 +73,9 @@ last 92 days from the daily diffs, one day per round (a daily diff is exactly th
 stamped within that day, so the two never overlap). It writes ClickHouse only: per-changeset
 counts by type × action (`object_changes`) and by feature (`object_change_features`), kept for all
 time, and every object version (`object_versions`), kept 92 days. Its position is `DiffState` in
-Postgres. Nothing reads these tables from the API yet. Design, measurements and the checks against
+Postgres. The API reads them through `object_daily_rollup` (schema/0005, refreshed daily, joined
+to `changesets` for the day and the filters) for `group_by`/`dimension=action|object_type|feature`,
+shown in the Objects page's "What was changed" section. Design, measurements and the checks against
 `changes_count`: [`decisions/object-changes.md`](decisions/object-changes.md).
 
 The rest of this document describes the **TimescaleDB backend, which is deprecated** (see

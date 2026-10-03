@@ -12,7 +12,8 @@ class DashboardView(TemplateView):
 
 class ObjectsView(TemplateView):
     """Objects page: how big changesets are (size distribution, percentiles,
-    size by editor / day), the largest changesets by objects, and who and which campaigns change the most objects.
+    size by editor / day), what was changed (action, object type, feature, from
+    the replication diffs), the largest changesets by objects, and who and which campaigns change the most objects.
     Filled by static/js/objects.js from the distribution/largest/toplist/
     timeseries endpoints."""
     template_name = 'changesets/objects.html'

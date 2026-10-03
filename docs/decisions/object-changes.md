@@ -56,6 +56,30 @@ type × action × feature group.
 its `changes_count` in `changesets`. Verified exactly on all 51,291 changesets opened on
 2026-10-02 and closed in the window (4,492,269 objects).
 
+## Reading them: object_daily_rollup and the API (2026-10-03)
+
+`timeseries` and `toplist` take `group_by`/`dimension=action|object_type|feature` with
+`metric=objects` (`OBJECT_DIMENSIONS`), plus `objects_since` in the response. Objects count on
+their changeset's `created_at` day, like `changes_count`, so the series add up to the existing
+"objects changed"; that day and the filters come from joining `changesets` on `changeset_id`.
+Per query, that join was too slow for daily series (6.9 s for 52 days by action), so
+`object_daily_rollup` (`schema/0005_object_rollup.sql`) precomputes it per (dimension, day, name,
+type, action, feature), refreshed daily, read up to its watermark with the raw tables after it
+(`IN` on `changeset_id` narrows the raw read: 0.2-1.9 s raw against 0.02-0.17 s through the
+rollup). Checked: rollup and raw paths identical on 21 cases (unfiltered, editor, country,
+contributor, `(none)` imagery, ranges before coverage); totals equal `summary`'s `total_objects`
+except 6 objects in 199M, from 2 changesets our `changesets` table missed the final update of
+(the diffs and the OSM API agree on the real count).
+
+**Coverage:** `object_coverage()` is the day after the earliest edit in the diffs: a changeset
+created that day or later has every upload in them (they continue for up to 24 h). Queries clamp
+to it and the rollup starts there. While a backfill extends coverage backward, the rollup only
+covers what existed at its last refresh, so a range starting earlier reads the raw tables.
+
+**Refresh cost grows:** the rollup is rebuilt from all of `object_change_features` (kept forever):
+9 s and 1.4 GB for 52 days, so ~1 min and several GB after a year. Before then, bound it (a
+spilling join, or refreshing only recent days).
+
 ## Operations
 
 - **Downloads:** planet.osm.org redirects every file to its S3 mirror; one reused
