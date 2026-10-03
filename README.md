@@ -33,6 +33,67 @@ working on the code start from [`CLAUDE.md`](CLAUDE.md). For known issues and de
 - **Structured JSON logs**, with optional Datadog APM tracing and Postgres/ClickHouse Database
   Monitoring.
 
+## How data is stored
+
+One real example, followed through each table: in a single minute (2026-10-03, 01:14-01:15 UTC),
+a StreetComplete user in Osaka answered four quests about the same bridge, one changeset per
+quest. (Username replaced; everything else is real data.)
+
+**Today: one row per changeset** (`changesets` in ClickHouse, from the changeset replication
+feed and the full-history dump). It says who, with what, where and how many objects, but not
+which objects:
+
+| changeset_id | created_at | user | created_by | changes_count | comment | streetcomplete_quest_type | country | geohash |
+|---|---|---|---|---|---|---|---|---|
+| 189905890 | 2026-10-03 01:14:32 | mapper_a | StreetComplete 63.4 | 1 | Specify maximum allowed weights | AddMaxWeight | JP | xn0mk3 |
+| 189905879 | 2026-10-03 01:13:57 | mapper_a | StreetComplete 63.4 | 1 | Specify road surfaces | AddRoadSurface | JP | xn0mk3 |
+| 189905881 | 2026-10-03 01:14:04 | mapper_a | StreetComplete 63.4 | 2 | Specify whether there are cycleways | AddCycleway | JP | xn0mk3 |
+| 189905882 | 2026-10-03 01:14:06 | mapper_a | StreetComplete 63.4 | 2 | Specify whether roads have lane markings | AddLaneMarkings | JP | xn0mk3 |
+
+**Planned: the objects themselves**, from the minutely osmChange diffs (see
+[`docs/todo/object-changes.md`](docs/todo/object-changes.md)). The diff for that minute contains:
+
+```xml
+<modify>
+  <way id="148066277" version="12" changeset="189905879" timestamp="2026-10-03T01:14:34Z">
+    <nd ref="…"/><nd ref="…"/>
+    <tag k="highway" v="unclassified"/><tag k="bridge" v="yes"/><tag k="surface" v="asphalt"/> …
+  </way>
+</modify>
+```
+
+It becomes two kinds of rows:
+
+- **Counts per changeset, kept for all time** (`changeset_objects`, plus `changeset_features` split
+  by the object's main tag key). This is what other OSM statistics tools provide: nodes, ways and
+  relations created, modified and deleted, per editor, country or campaign. A changeset can span
+  several minutely files, so there is one partial row per file, summed when queried. The
+  creates, modifies and deletes of a changeset add up to its `changes_count` above, which serves as
+  a built-in check. The rows for this minute's file (189905881 and 189905882 each changed one
+  more object, which arrived in another file):
+
+  | changeset_id | type | action | feature | count |
+  |---|---|---|---|---|
+  | 189905890 | way | modify | highway | 1 |
+  | 189905879 | way | modify | highway | 1 |
+  | 189905881 | way | modify | highway | 1 |
+  | 189905882 | way | modify | highway | 1 |
+
+- **One row per object version, kept for 3 months** (`object_versions`), with everything the diff
+  has: tags and geometry. Here the four "1 way modified" rows above turn out to be one object, the
+  same bridge edited four times in 15 seconds, each version adding one tag:
+
+  | type | id | version | changeset_id | timestamp | tags added since the previous version |
+  |---|---|---|---|---|---|
+  | way | 148066277 | 11 | 189905890 | 01:14:32 | (previous version not in the window) |
+  | way | 148066277 | 12 | 189905879 | 01:14:34 | `surface=asphalt` |
+  | way | 148066277 | 13 | 189905881 | 01:14:44 | `cycleway:both=no` |
+  | way | 148066277 | 14 | 189905882 | 01:14:47 | `lane_markings=no` |
+
+  That's what makes re-edits, edit wars and tag-level changes visible. The diff only carries the
+  new version of an object, so a tag change can be computed only when the previous version is
+  also in the window.
+
 ## Requirements
 
 ClickHouse (analytics) and Postgres (app state; with TimescaleDB and PostGIS while the deprecated
