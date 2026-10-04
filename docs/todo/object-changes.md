@@ -1,9 +1,10 @@
-# Object changes from the replication diffs: upkeep and longer ranges
+# Object changes from the replication diffs: longer ranges, window
 
 Built (2026-10-03): `poll_diffs` (the `diff-poller` service) writes per-changeset counts
 (`object_changes`, `object_change_features`, all time), every object version
 (`object_versions`, 92 days) and edits to existing objects (`object_edits`, all time) to
-ClickHouse; `/api/objects/most-edited/` ranks the last 7 days; `object_daily_rollup` serves
+ClickHouse; `/api/objects/most-edited/` ranks the last 7 days; `object_daily_rollup` is built
+one day at a time; `object_daily_rollup` serves
 `group_by`/`dimension=action|object_type|feature` on `timeseries`/`toplist`, shown in the Objects
 page's "What was changed" section. Design, measurements and checks are in
 [`decisions/object-changes.md`](../decisions/object-changes.md).
@@ -14,15 +15,12 @@ page's "What was changed" section. Design, measurements and checks are in
    days is too slow, see the decision file). If longer ranges matter: a weekly rollup of objects
    edited at least twice in a week gives the exact top N whenever the Nth object has more edits
    than the range has weeks. Also possible from `object_edits`: re-edits per day (same vs another
-   contributor). Tag changes wait for tier 3 (decision file).
-2. **Bound the rollup refresh** before `object_change_features` reaches about a year: it's rebuilt
-   from the whole table daily (9 s / 1.4 GB for 52 days).
-3. **Features Over Time colors** follow rank among the top 6 features, so a feature's color can
+   contributor).
+2. **Features Over Time colors** follow rank among the top 6 features, so a feature's color can
    change with the range; give features a fixed order if that confuses.
-4. **Revisit the 92-day window** once the rollups' refresh time is known: ~26 bytes per version
-   measured on the full backfill (8.6 GB for 92 days, ~34 GB a year). Try codecs first (Delta on
-   `id` and `node_refs`, the two columns that compress worst on typical days).
-5. Later, separate project: history backfill from the full history planet (osmium), which also
+3. **The 92-day window** of `object_versions` can grow if needed: ~26 bytes per version (8.6 GB
+   for 92 days, ~34 GB a year), and disk isn't the constraint (261 GB free on 2026-10-04).
+4. Later, separate project: history backfill from the full history planet (osmium), which also
    has the previous version of every object.
 
 ## Notes

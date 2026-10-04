@@ -65,6 +65,10 @@ ClickHouse just inserts and lets `ReplacingMergeTree` keep the latest version (q
 `FINAL`); the Timescale writer checks which ids already exist and inserts only the new or grown
 ones. So the two paths — and a retried batch — overlap harmlessly instead of double-counting.
 
+The feed sometimes never publishes a changeset's closing update, so the poller also re-fetches,
+hourly, the changesets still stored as open 25 h after creation from the OSM API
+(`changesets/ingest/reconcile.py`, [`decisions/stale-open-changesets.md`](decisions/stale-open-changesets.md)).
+
 ### Object changes
 
 **`manage.py poll_diffs`** (the `diff-poller` service) reads the replication *diffs*, which carry

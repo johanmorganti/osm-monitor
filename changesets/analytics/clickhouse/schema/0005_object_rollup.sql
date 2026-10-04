@@ -26,12 +26,34 @@ CREATE TABLE IF NOT EXISTS object_daily_rollup
 ENGINE = MergeTree
 ORDER BY (dimension, day, name, type, action, feature);
 
--- Covers changesets created before yesterday (UTC) at refresh time, like
--- daily_rollup: a changeset can still receive uploads for 24 h.
-CREATE MATERIALIZED VIEW IF NOT EXISTS object_daily_rollup_refresh
-REFRESH EVERY 1 DAY OFFSET 6 HOUR
+-- Built one day at a time and never rebuilt: a changeset's objects don't
+-- change once it's closed (24 h after creation at most), and neither does the
+-- day it counts on or its dimensions. Each hourly refresh APPENDs the oldest
+-- missing day, from the first covered day up to the day before yesterday
+-- (UTC; a changeset created then can no longer receive uploads), reading only
+-- that day's changesets and their rows in object_change_features (ordered by
+-- changeset_id). So the cost stays one day's (~1 s) however long the count
+-- tables get, unlike a full rebuild (9 s / 1.4 GB at 52 days, growing). Days
+-- missing before the existing ones (coverage extended backward by a
+-- backfill) are filled oldest first; one day per refresh keeps each insert a
+-- single block (~10K rows), so a day is either fully in or not at all.
+--
+-- Replaces object_daily_rollup_refresh (2026-10-03), a daily full rebuild.
+DROP VIEW IF EXISTS object_daily_rollup_refresh;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS object_daily_rollup_append
+REFRESH EVERY 1 HOUR APPEND
 TO object_daily_rollup
-AS SELECT
+AS WITH
+    (SELECT toDate(min(edit_time)) + 1 FROM object_changes) AS first_day,
+    (
+        SELECT min(d) FROM
+        (
+            SELECT arrayJoin(arrayMap(i -> first_day + i, range(toUInt32(greatest(today() - 1, first_day) - first_day)))) AS d
+        )
+        WHERE d NOT IN (SELECT DISTINCT day FROM object_daily_rollup WHERE dimension = 'volume')
+    ) AS target
+SELECT
     d.1 AS dimension,
     toDate(c.created_at) AS day,
     d.2 AS name,
@@ -43,14 +65,16 @@ FROM
 (
     SELECT changeset_id, type, action, feature, sum(count) AS n
     FROM object_change_features FINAL
+    WHERE changeset_id IN (
+        SELECT changeset_id FROM changesets
+        WHERE created_at >= toDateTime(target) AND created_at < toDateTime(target + 1))
     GROUP BY changeset_id, type, action, feature
 ) AS f
 INNER JOIN
 (
     SELECT changeset_id, created_at, created_by_family, imagery_family, locale_family, country_code
     FROM changesets FINAL
-    WHERE created_at >= (SELECT toDateTime(toDate(min(edit_time)) + 1) FROM object_changes)
-      AND created_at < toDateTime(today() - 1)
+    WHERE created_at >= toDateTime(target) AND created_at < toDateTime(target + 1)
 ) AS c USING changeset_id
 ARRAY JOIN [
     ('volume', ''),
@@ -59,4 +83,5 @@ ARRAY JOIN [
     ('language', coalesce(c.locale_family, '(none)')),
     ('country', coalesce(c.country_code, '(none)'))
 ] AS d
-GROUP BY dimension, day, name, type, action, feature;
+GROUP BY dimension, day, name, type, action, feature
+SETTINGS max_insert_threads = 1;

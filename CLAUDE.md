@@ -98,6 +98,7 @@ state), and serves a Chart.js dashboard plus a public JSON API.
 | `changesets/ingest/osmchange.py` | Streaming osmChange (replication diff) parser + feature classification |
 | `changesets/ingest/objects.py` | Writes parsed diffs to the ClickHouse object tables (`DiffWriter`) |
 | `changesets/management/commands/poll_diffs.py` | Diff poller (minutely live + daily backfill), `diff-poller` service |
+| `changesets/ingest/reconcile.py` | Re-fetches from the OSM API changesets still open 25 h after creation (hourly from the poller; `reconcile_open_changesets`) |
 | `changesets/ingest/locate.py` | geohash + country for parsed changesets (Shapely/pyproj), used at ingest |
 | `changesets/ingest/writers/` | Ingestion storage writers (`base.py` contract, `clickhouse.py`, `timescale.py`), selected by `INGEST_BACKENDS` |
 | `changesets/rollups.py` | Legacy Postgres rollups + `FilterValue` refresh (Timescale side) |

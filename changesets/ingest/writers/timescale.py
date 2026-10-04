@@ -31,29 +31,34 @@ class TimescaleWriter:
         # other chunk, compressed ones included. Derived from the batch's own
         # data, so it's right for live and backfill batches alike.
         created_ats = [r['created_at'] for r in records]
-        existing_changes_count_by_id = dict(
-            Changeset.objects.filter(
+        existing_by_id = {
+            changeset_id: (changes_count, closed_at)
+            for changeset_id, changes_count, closed_at in Changeset.objects.filter(
                 changeset_id__in=[r['changeset_id'] for r in records],
                 created_at__gte=min(created_ats),
                 created_at__lte=max(created_ats),
-            ).values_list('changeset_id', 'changes_count')
-        )
+            ).values_list('changeset_id', 'changes_count', 'closed_at')
+        }
 
         to_create = []
         to_delete = []  # (changeset_id, created_at) pairs, not bare ids
         skipped = updated = 0
         for record in records:
             changeset_id = record['changeset_id']
-            existing = existing_changes_count_by_id.get(changeset_id)
+            existing = existing_by_id.get(changeset_id)
             if existing is not None:
+                existing_count, existing_closed_at = existing
                 incoming = record.get('changes_count') or 0
                 extra = {**log_extra, 'osm.changeset_id': changeset_id,
-                         'osm.changes_count.existing': existing, 'osm.changes_count.incoming': incoming}
-                if existing >= incoming:
+                         'osm.changes_count.existing': existing_count, 'osm.changes_count.incoming': incoming}
+                # A closing record often has the same count: it still
+                # replaces a stored open copy (closed_at, open).
+                closes = existing_closed_at is None and record.get('closed_at') is not None
+                if existing_count > incoming or (existing_count == incoming and not closes):
                     logger.debug("Changeset already up to date, skipping", extra=extra)
                     skipped += 1
                     continue
-                logger.debug("Changeset has grown, updating", extra=extra)
+                logger.debug("Changeset has grown or closed, updating", extra=extra)
                 to_delete.append((changeset_id, record['created_at']))
                 updated += 1
             to_create.append(record)

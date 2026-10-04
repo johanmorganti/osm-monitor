@@ -27,7 +27,8 @@ window grew. Merging a day fully into one part changes nothing (24.6 bytes on 20
 parts or 1). The first one-day test gave 14 bytes, but that day (2026-10-02) was mostly new nodes
 with consecutive ids and few tags, which compress unusually well; on a typical day way node lists
 are the biggest column (6.4 bytes per version), then ids (4.1), coordinates (3.6 each) and tags
-(3.3). Codecs (Delta on `id` and `node_refs`) could likely cut that; not tried yet.
+(3.3). Codecs (Delta on `id` and `node_refs`) could likely cut that; not pursued, disk isn't the
+constraint (261 GB free on 2026-10-04).
 
 **Backfill check (2026-10-03):** all 4,778,558 closed changesets created from the first covered
 day (2026-07-03) to 2026-10-01 have object counts equal to their `changes_count` (342M objects,
@@ -84,9 +85,13 @@ created that day or later has every upload in them (they continue for up to 24 h
 to it and the rollup starts there. While a backfill extends coverage backward, the rollup only
 covers what existed at its last refresh, so a range starting earlier reads the raw tables.
 
-**Refresh cost grows:** the rollup is rebuilt from all of `object_change_features` (kept forever):
-9 s and 1.4 GB for 52 days, so ~1 min and several GB after a year. Before then, bound it (a
-spilling join, or refreshing only recent days).
+**Built once per day, never rebuilt (2026-10-04):** a closed changeset's objects don't change, nor
+its day or dimensions, so `object_daily_rollup_append` (refreshable, `APPEND`, hourly) adds the
+oldest missing day and leaves the rest: ~1 s for a day, whatever the count tables' size. It
+replaced a daily full rebuild (`object_daily_rollup_refresh`: 9 s and 1.4 GB for 52 days, growing
+with the count tables, kept forever). Recomputing a stored day gave identical rows (15,542 of
+15,542). Days missing before the existing ones (coverage extended backward) are filled oldest
+first; one day per refresh keeps each insert a single block, so a day is fully in or not at all.
 
 ## Edits to existing objects: object_edits and the most edited objects (2026-10-03)
 
@@ -108,7 +113,7 @@ every creation too, took 19.5 s for 7 days and 4 min for 30. Every lookup by obj
 What counts as an edit follows OSM's versioning: moving a way's nodes creates new versions of
 the nodes, not of the way, so a reshaped building shows up on its corner nodes.
 
-**Tag changes are deliberately not built.** A diff only has the new version, so a tag change is
+**Tag changes: dropped for now (2026-10-04), to revisit later.** A diff only has the new version, so a tag change is
 computable only when the previous version is also in `object_versions`: on 2026-09-30 that was
 19% of modifies (144K of 740K), at 21 s a day, and biased toward objects edited twice within the
 window. A "most changed tags" chart would show those objects' habits, not OSM's. Exact tag changes

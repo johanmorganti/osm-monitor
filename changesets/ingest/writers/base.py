@@ -5,9 +5,11 @@ records to every configured writer (settings.INGEST_BACKENDS). Each writer
 stores them its own way, with these semantics:
 
 - Upsert keyed by changeset_id: a changeset not stored yet is inserted; one
-  already stored is replaced only if its changes_count grew (a changeset can
-  keep growing while open, up to 24h), and left alone otherwise (e.g. it
-  resurfaced in the replication feed because someone commented on it).
+  already stored is replaced if its changes_count grew (a changeset can keep
+  growing while open, up to 24h) or if it closed with the same count (the
+  stored copy is open, the incoming one closed), and left alone otherwise
+  (e.g. it resurfaced in the replication feed because someone commented on
+  it).
 - Idempotent: writing the same records twice leaves the same data, so a
   batch that failed on one writer can simply be retried on all of them.
 """

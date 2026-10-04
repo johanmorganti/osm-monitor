@@ -1,9 +1,11 @@
 """ClickHouse writer: plain inserts into the ReplacingMergeTree `changesets` table.
 
 No read-before-write: the table keeps, per (created_at, changeset_id), the row
-with the highest changes_count (schema/0001_changesets.sql), which is exactly
-the writer contract's "replace only if it grew". So this writer can't tell
-created from updated from skipped; it reports every record as created.
+with the highest changes_count, the last inserted on a tie
+(schema/0001_changesets.sql), which is exactly the writer contract's "replace
+if it grew, or if it closed with the same count" (a closing record arrives
+after the open one). So this writer can't tell created from updated from
+skipped; it reports every record as created.
 """
 import json
 

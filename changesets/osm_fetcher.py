@@ -22,6 +22,7 @@ COLUMNS_MAPPING = {
     "closed_at": "closed_at",
     "open": "open",
     "num_changes": "changes_count",
+    "changes_count": "changes_count",  # the OSM API's name for it (reconcile_open_changesets)
     "user": "user",
     "uid": "user_id",
     "min_lat": "min_lat",
@@ -30,6 +31,9 @@ COLUMNS_MAPPING = {
     "max_lon": "max_lon",
     "comments_count": "comments_count"
 }
+# OSM API-only attributes we don't store (the replication feed and the dump
+# don't have them): skipped without the unknown-attribute warning.
+IGNORED_ATTRIBUTES = {"created_count", "modified_count", "deleted_count"}
 
 
 def urlized_sequence_number(sequence_number):
@@ -141,7 +145,7 @@ def _parse_changeset_element(changeset, log_extra):
                 value = timezone.make_aware(naive_datetime, timezone.utc) # prevents from RuntimeWarning about time zone
 
             changeset_to_add[column] = value
-        else:
+        elif attribute not in IGNORED_ATTRIBUTES:
             logger.warning(
                 "Unknown changeset attribute",
                 extra={

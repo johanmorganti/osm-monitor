@@ -6,6 +6,7 @@ import yaml
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from changesets.models import SequenceState
+from changesets.ingest.reconcile import reconcile, stale_open_changesets
 from changesets.osm_fetcher import process_sequence
 from changesets.rollups import refresh_filter_values_incremental
 
@@ -60,6 +61,11 @@ class Command(BaseCommand):
             help='Minimum seconds between incremental FilterValue refreshes (default: 120)'
         )
         parser.add_argument(
+            '--reconcile-interval', type=int, default=3600,
+            help='Minimum seconds between re-fetching, from the OSM API, the changesets of the last '
+                 '3 days still open more than 25 h after creation (default: 3600; 0 disables)'
+        )
+        parser.add_argument(
             '--reset', action='store_true',
             help='Reset live polling to start from the current latest sequence and restart the '
                  'backfill window from there, then exit without entering the poll loop. Run this '
@@ -74,6 +80,7 @@ class Command(BaseCommand):
         sequences_per_day = options['sequences_per_day']
         backfill_batch_size = options['backfill_batch_size']
         filter_values_interval = options['filter_values_interval']
+        reconcile_interval = options['reconcile_interval']
 
         if options['reset']:
             self._reset(start_arg, backfill_days, sequences_per_day)
@@ -82,6 +89,7 @@ class Command(BaseCommand):
         logger.info("Starting sequence poller")
 
         last_filter_values_refresh = 0.0
+        last_reconcile = 0.0
 
         while True:
             try:
@@ -195,6 +203,15 @@ class Command(BaseCommand):
                         "FilterValue refreshed",
                         extra={'osm.filter_values_refresh_seconds': round(last_filter_values_refresh - refresh_start, 2)},
                     )
+
+                # The feed sometimes never publishes a changeset's closing
+                # update (docs/decisions/stale-open-changesets.md). Stamped
+                # before the call, so an API outage isn't retried every round.
+                if reconcile_interval and time.monotonic() - last_reconcile >= reconcile_interval:
+                    last_reconcile = time.monotonic()
+                    stale = stale_open_changesets(days=3)
+                    if stale:
+                        reconcile(stale)
 
                 if not did_work:
                     logger.info(
