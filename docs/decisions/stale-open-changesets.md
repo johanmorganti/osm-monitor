@@ -27,7 +27,7 @@ copy open, the incoming one closed), in both writers' docstrings and `writers/ba
 
 **Result (2026-10-04):** the 61,116 fetched, none still open; afterwards every changeset with
 object data (4,884,036 since 2026-07-03) has object counts equal to its `changes_count`, the 3 that
-differed included. Postgres had a second, larger set: 35,673 changesets the feed *had* closed
+differed included. Postgres had a second, larger set: 35,161 changesets the feed *had* closed
 (ClickHouse had them closed) but the old Timescale writer skipped, the closing record having the
 same count. The hourly check reads ClickHouse, so they were re-fetched once by id from Postgres
 (every changeset created before the writer fix and still open there); since the fix, closing
