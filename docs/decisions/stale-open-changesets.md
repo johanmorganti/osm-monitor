@@ -25,6 +25,15 @@ closing record with the same count was dropped by the Timescale writer (ClickHou
 row inserted on a tie, so it took it). It's now "grew, or closed with the same count" (the stored
 copy open, the incoming one closed), in both writers' docstrings and `writers/base.py`.
 
+**Result (2026-10-04):** the 61,116 fetched, none still open; afterwards every changeset with
+object data (4,884,036 since 2026-07-03) has object counts equal to its `changes_count`, the 3 that
+differed included. Postgres had a second, larger set: 35,673 changesets the feed *had* closed
+(ClickHouse had them closed) but the old Timescale writer skipped, the closing record having the
+same count. The hourly check reads ClickHouse, so they were re-fetched once by id from Postgres
+(every changeset created before the writer fix and still open there); since the fix, closing
+records reach Postgres too. The API answered 503 after ~170 requests in a row: `reconcile` waits
+and retries (30 / 60 / 120 s) on 429 and 5xx.
+
 Not changed: TimescaleDB's continuous aggregates only refresh the last 7 days
 ([old-dated-rows.md](old-dated-rows.md)), so a corrected count older than that stays stale there
 (TimescaleDB is deprecated; ClickHouse's rollups are rebuilt from deduplicated data daily).

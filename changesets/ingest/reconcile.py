@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 API_URL = 'https://api.openstreetmap.org/api/0.6/changesets'
 BATCH = 100              # the API's limit for ?changesets=
 PAUSE_SECONDS = 1.0      # between API requests
+# The API answers 429/503 under load (seen 2026-10-04 after ~170 requests in
+# a row): wait and retry rather than give up the rest of the run.
+RETRY_STATUSES = {429, 500, 502, 503, 504}
+RETRY_WAITS = (30, 60, 120)
 USER_AGENT = 'osm-monitor (https://github.com/johanmorganti/osm-monitor)'
 
 
@@ -39,6 +43,17 @@ def stale_open_changesets(days, limit=None):
     return [r[0] for r in rows]
 
 
+def _get(session, chunk):
+    for wait in (*RETRY_WAITS, None):
+        response = session.get(API_URL, params={'changesets': ','.join(map(str, chunk))}, timeout=60)
+        if response.status_code not in RETRY_STATUSES or wait is None:
+            response.raise_for_status()
+            return response
+        logger.warning("OSM API busy, retrying", extra={
+            'osm.reconcile.status': response.status_code, 'osm.reconcile.wait_seconds': wait})
+        time.sleep(wait)
+
+
 def reconcile(changeset_ids, session=None):
     """Re-fetch `changeset_ids` from the OSM API and write them. Returns
     (fetched, still_open)."""
@@ -47,8 +62,7 @@ def reconcile(changeset_ids, session=None):
     fetched = still_open = 0
     for start in range(0, len(changeset_ids), BATCH):
         chunk = changeset_ids[start:start + BATCH]
-        response = session.get(API_URL, params={'changesets': ','.join(map(str, chunk))}, timeout=60)
-        response.raise_for_status()
+        response = _get(session, chunk)
         elements = ET.fromstring(response.content).findall('changeset')
         log_extra = {'osm.reconcile.first_id': chunk[0], 'osm.reconcile.requested': len(chunk)}
         if elements:
