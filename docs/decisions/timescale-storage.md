@@ -1,5 +1,7 @@
 # TimescaleDB storage (deprecated backend)
 
+> **2026-10-05:** TimescaleDB is gone; this describes the removed storage, kept as history. See [timescale-removal.md](timescale-removal.md).
+
 ## TimescaleDB hypertable (deprecated backend)
 
 `changesets_changeset` is a TimescaleDB hypertable (monthly chunks on `created_at`) — see

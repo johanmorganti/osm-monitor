@@ -1,28 +1,28 @@
 # Deployment
 
-The app runs as a Docker Compose stack: `clickhouse` (analytics), `db` (Postgres with TimescaleDB +
-PostGIS: app state and the deprecated Timescale copy), a one-shot `migrate`, `web` (gunicorn) and
-`poller` (`poll_sequences`).
+The app runs as a Docker Compose stack: `clickhouse` (every changeset and object, answers the API),
+a one-shot `migrate`, `web` (gunicorn), `poller` (`poll_sequences`) and `diff-poller`
+(`poll_diffs`). The app's own state (the pollers' positions, Django's tables) is a SQLite file in a
+host directory shared by the last four.
 
 ## Docker Compose
 
 ```bash
 cp env.example .env    # fill in every value (deploy.sh refuses placeholders)
-mkdir -p <PGDATA_DIR> <CLICKHOUSE_DATA_DIR>   # host directories named in .env
-./deploy.sh            # preflight checks, build, start db, migrate, web, poller, diff-poller
+mkdir -p <SQLITE_DIR> <CLICKHOUSE_DATA_DIR>   # host directories named in .env
+./deploy.sh            # preflight checks, build, start clickhouse, migrate, web, poller, diff-poller
 ```
 
 The dashboard is on `http://localhost:5006/`, the API docs on `http://localhost:5006/api/docs/`.
 
 `deploy.sh` checks `.env` and the Docker daemon, stamps the build with the current git commit
-(`GIT_VERSION`), then runs `docker compose build && docker compose up -d`. On a fresh data
-directory the rest is automatic: `db/init/` sets up `pg_stat_statements` and the app role's
-defaults (see that directory's comments for applying them to an *existing* data dir), and
-`migrate` creates the Postgres schema, loads `country_boundaries`, and applies the ClickHouse
-schema (`clickhouse_migrate`: tables, refreshable rollups, the optional Datadog user).
+(`GIT_VERSION`), then runs `docker compose build && docker compose up -d`. On fresh data
+directories the rest is automatic: `migrate` creates the SQLite file and its tables, and applies
+the ClickHouse schema (`clickhouse_migrate`: tables, refreshable rollups, the optional Datadog
+user).
 
-Postgres and ClickHouse data live in host directories (`PGDATA_DIR`, `CLICKHOUSE_DATA_DIR`,
-bind-mounted), not Docker volumes. If
+The SQLite file and ClickHouse's data live in host directories (`SQLITE_DIR`,
+`CLICKHOUSE_DATA_DIR`, bind-mounted), not Docker volumes. If
 Docker runs inside a VM (Colima, Docker Desktop), that directory must be shared into the VM,
 otherwise the bind mount silently resolves to an empty VM-local directory. With Colima:
 
@@ -33,9 +33,11 @@ colima start --cpu 4 --memory 13 --disk 80 --vm-type vz --mount-type virtiofs \
 
 **Open files on a shared folder.** The process that serves a VM-shared folder (Colima's VZ
 process, Docker Desktop's file sharing) keeps a host-side file descriptor open for every shared
-file the VM has open or cached, for all databases together. ClickHouse stores each column of each
+file the VM has open or cached, for all databases together. It also means deleted files stay
+allocated on the host until it lets go of them, i.e. until Colima restarts (seen 2026-10-05:
+the 56 GB Postgres directory removed with Postgres stayed held by 12,631 handles). ClickHouse stores each column of each
 data part as separate files, so a large table can need well over 100,000. macOS caps a process at
-`kern.maxfilesperproc` (61,440 by default); past it, Postgres and ClickHouse both fail with "Too many
+`kern.maxfilesperproc` (61,440 by default); past it, ClickHouse fails with "Too many
 open files" (ClickHouse can even fail to load a table at startup). Raise the limits and restart the
 VM so its process picks them up:
 
@@ -44,8 +46,9 @@ sudo sh -c 'sysctl -w kern.maxfiles=524288 kern.maxfilesperproc=262144 && printf
 colima stop && colima start
 ```
 
-`db`'s `mem_limit`, `shm_size` and memory settings (`shared_buffers`, `effective_cache_size`,
-...) in `docker-compose.yml` are sized for ~13GB available to Docker; adjust them together for a
+The services' `mem_limit`s in `docker-compose.yml` are sized for ~13GB available to Docker:
+ClickHouse 6 GB (it sizes its own memory budget from it), the diff poller 1 GB, `web` and the
+changeset poller 512 MB each, the optional Datadog agent 1 GB; adjust them together for a
 different machine.
 
 **Object changes (`diff-poller`).** On its first start it follows the minutely diffs from the
@@ -63,13 +66,14 @@ the map rollups, `filter_values`) all refresh right after a restart, all full-hi
 most edited objects 1.3 s -> 12-28 s, objects by action 0.3 s -> 3-9 s). Deploys that don't change
 ClickHouse's own config don't restart it.
 
-**Changing `.env` recreates every service on the next `up`**, `db` included (its contents are
-part of each service's config) — don't redeploy while a long import is running.
+**Changing `.env` recreates every service that reads it on the next `up`** (`migrate`, `web` and
+both pollers; ClickHouse only when one of its own values changes) — don't redeploy while a long
+import is running.
 
 ## Observability (optional)
 
 Logs are structured JSON on stdout, so any log collector works. Datadog support (APM traces,
-log/trace correlation, container logs, Postgres and ClickHouse Database Monitoring) is an optional overlay,
+log/trace correlation, container logs, ClickHouse Database Monitoring) is an optional overlay,
 `docker-compose.datadog.yml`. Without it, tracing is disabled and no agent runs. To enable it,
 set in `.env`:
 
@@ -77,16 +81,12 @@ set in `.env`:
 COMPOSE_FILE=docker-compose.yml:docker-compose.datadog.yml
 DD_API_KEY=...
 DD_SITE=datadoghq.com
-DD_POSTGRES_PASSWORD=...
 DD_CLICKHOUSE_PASSWORD=...
 ```
 
 then `./deploy.sh`. `clickhouse_migrate` (run by the `migrate` step) creates a least-privilege `datadog` user from it,
 and the ClickHouse container's autodiscovery label turns on the agent's ClickHouse check with
-Database Monitoring. `DD_POSTGRES_PASSWORD` should be set before the database is first
-initialized, since `db/init/01-datadog.sh` creates the `datadog` role from it. On an existing
-database, run that script once by hand:
-`docker compose exec db bash /docker-entrypoint-initdb.d/01-datadog.sh`.
+Database Monitoring.
 
 ## Full-history import on a fresh database
 
@@ -100,9 +100,9 @@ docker compose up -d poller
 
 Then import the dump (https://planet.openstreetmap.org/planet/changesets-latest.osm.bz2, weekly,
 ~8GB). A single `import_from_dump` process alternates between parsing and inserting, so it leaves
-both itself and Postgres half idle; for full history, decompress once and split the file between
+both itself and ClickHouse half idle; for full history, decompress once and split the file between
 several workers with `--byte-range` (each snaps to changeset boundaries, so ranges neither overlap
-nor drop anything), then refresh the continuous aggregates once at the end:
+nor drop anything):
 
 ```bash
 # Parallel decompression (~8x larger than the .bz2)
@@ -115,32 +115,14 @@ N=4
 for i in $(seq 0 $((N-1))); do
   docker compose run -d --name osm-import-$i --no-deps -v <dump dir>:/dump:ro web \
     python manage.py import_from_dump /dump/changesets-YYMMDD.osm \
-      --byte-range $((SIZE*i/N)):$((SIZE*(i+1)/N)) --skip-cagg-refresh --batch-size 2000
+      --byte-range $((SIZE*i/N)):$((SIZE*(i+1)/N)) --batch-size 2000
 done
-
-# Once every worker has exited 0:
-docker compose run --rm --no-deps web python manage.py refresh_caggs 2005-04-01 <dump date>
 ```
 
-Pause the compression policy for the import (it would otherwise compress chunks the workers are
-still writing to), then compress the backlog chunk by chunk, oldest first, and re-enable it:
+ClickHouse's rollups rebuild from the deduplicated table on their daily refresh, so nothing needs
+refreshing by hand afterwards (`SYSTEM REFRESH VIEW <view>` does it sooner).
 
-```bash
-docker compose exec db psql -U osm_monitor -d osm_monitor -c \
-  "SELECT alter_job(job_id, scheduled => false) FROM timescaledb_information.jobs
-   WHERE proc_name = 'policy_compression' AND hypertable_name = 'changesets_changeset'"
-# ... import + refresh_caggs ...
-for c in $(docker compose exec -T db psql -U osm_monitor -d osm_monitor -At -c \
-    "SELECT chunk_schema||'.'||chunk_name FROM timescaledb_information.chunks
-     WHERE hypertable_name='changesets_changeset' AND NOT is_compressed
-       AND range_end < now() - interval '30 days' ORDER BY range_start"); do
-  docker compose exec -T db psql -U osm_monitor -d osm_monitor -c \
-    "SET statement_timeout = 0; SELECT compress_chunk('$c', if_not_compressed => true)"
-done
-# then the same alter_job(...) with scheduled => true
-```
-
-A single process without `--byte-range` (reading the `.bz2` directly) also works and refreshes
-the aggregates itself at the end, just slower. If a worker is interrupted, re-run it with the
-same `--byte-range`: already-imported rows are skipped by the existence check, or pass
+A single process without `--byte-range` (reading the `.bz2` directly) also works, just slower. If
+a worker is interrupted, re-run it with the same `--byte-range`: re-inserted rows collapse into one
+(ReplacingMergeTree), or pass
 `--skip <changesets already seen>` (from its progress logs) to fast-forward.

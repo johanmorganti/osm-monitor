@@ -1,5 +1,7 @@
 # Changesets the feed leaves open are re-fetched from the OSM API (2026-10-04)
 
+> **2026-10-05:** Postgres was removed the next day ([timescale-removal.md](timescale-removal.md)); the Postgres-only part below is history, the reconcile still runs.
+
 OSM's changeset replication feed sometimes never publishes a changeset's closing update. Found
 2026-10-03 while checking the object counts from the diffs against `changes_count`: 61,116
 changesets created since September (~1,600 a day, ~3.5%) were stored as open, with no

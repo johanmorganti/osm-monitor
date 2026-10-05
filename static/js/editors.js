@@ -97,8 +97,8 @@ const othersIdx = TOP_FAMILIES.length;
 
 // One card per named family, built immediately (no network round-trip
 // gates this) — each wires its own stats line (SummaryView), its own
-// version-drill-down toplist (dimension=editor_version, backed by
-// cagg_editor_version_daily), and its own plain volume-over-time graph
+// version-drill-down toplist (dimension=editor_version, from daily_rollup),
+// and its own plain volume-over-time graph
 // (editor=<family>, no group_by — the same single-filter fast path every
 // other per-name graph in this app already uses). On failure, each
 // individually degrades (inline error / 0 fallback) rather than one bad

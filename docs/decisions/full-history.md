@@ -1,5 +1,7 @@
 # Design for full history
 
+> **2026-10-05:** TimescaleDB and Postgres were removed ([timescale-removal.md](timescale-removal.md)); what this says about them (CAggs, the hypertable, Postgres queries) is history, the rest still holds.
+
 The target dataset is full 2005-present OSM changeset history (~190M+ rows, growing), not a recent
 subset — a deployment may hold less (e.g. only the poller's default 365-day backfill), but code
 must not assume it. When adding a query, index, or background job, sanity-check it against the

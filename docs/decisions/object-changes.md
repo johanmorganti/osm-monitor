@@ -137,5 +137,5 @@ need every previous version: the full history planet (tier 3).
 - **Speed:** a daily diff takes 5-10 min to download (100-180 MB, the mirror's speed varies)
   and write; a minutely diff ~0.2 s to parse. The 92-day backfill takes about half a day and
   runs behind live polling, one day per round.
-- **State:** `DiffState` in Postgres (live minute position, next backfill day, floor), saved
+- **State:** `DiffState` in the app's SQLite file (Postgres until 2026-10-05; live minute position, next backfill day, floor), saved
   only after a write, like `SequenceState` ([sequence-state.md](sequence-state.md)).

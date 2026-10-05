@@ -4,8 +4,8 @@ backend (changesets/analytics/<name>/).
 The API layer owns everything that defines the public behavior: parameter
 parsing and validation, defaults, interval choice, geohash precision per
 viewport, response shapes. A backend only answers the questions below, in
-whatever way suits its database (continuous aggregates for TimescaleDB, plain
-scans for a column store, ...). Results are plain Python data shaped like the
+whatever way suits its database (ClickHouse: rollups up to a watermark, raw
+scans after it; TimescaleDB's continuous aggregates until 2026-10-05). Results are plain Python data shaped like the
 JSON the API returns, so every backend can be compared byte for byte through
 the same endpoints.
 """
@@ -38,8 +38,7 @@ OBJECT_DIMENSIONS = ('action', 'object_type', 'feature')
 
 def format_bucket(bucket, interval):
     """Render a bucket as the API's date label. `bucket` is a datetime for
-    every CAgg path and for the raw path's TruncHour, but a plain date for the
-    raw path's TruncDate, hence the hasattr check.
+    hourly buckets but a plain date for daily ones, hence the hasattr check.
 
     The hour is always zero-padded: callers sort on these formatted strings
     (per-name/per-bucket pivot), where an unpadded "...9:00" would sort after

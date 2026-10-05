@@ -1,5 +1,7 @@
 # NULL-tag volume gets its own "(none)" bucket, never silently excluded
 
+> **2026-10-05:** TimescaleDB and Postgres were removed ([timescale-removal.md](timescale-removal.md)); what this says about them (CAggs, the hypertable, Postgres queries) is history, the rest still holds.
+
 `cagg_imagery_daily`/`cagg_locale_daily` (and any future per-dimension CAgg) group untagged rows
 under a real `COALESCE(<field>, '(none)')` bucket rather than filtering them out with `WHERE
 <field> IS NOT NULL`. A large campaign that never sets a given tag (e.g. imagery) still counts

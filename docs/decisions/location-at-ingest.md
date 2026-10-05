@@ -1,5 +1,7 @@
 # Location data is computed at ingest, not in the database (2026-10-01)
 
+> **2026-10-05:** TimescaleDB and Postgres were removed ([timescale-removal.md](timescale-removal.md)); what this says about them (CAggs, the hypertable, Postgres queries) is history, the rest still holds.
+
 `geohash` and `country_code` are computed by the ingest parser (`changesets/ingest/locate.py`,
 called from `import_changeset_batch`), not by a Postgres trigger. The trigger (migration 0057)
 only derives `centroid`, the PostGIS geometry the Timescale backend's raw map queries use for

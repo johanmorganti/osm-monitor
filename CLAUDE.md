@@ -7,9 +7,9 @@ changing anything in its area. How the system works: [`docs/ARCHITECTURE.md`](do
 [`TODO.md`](TODO.md) — check it before starting non-trivial work, and keep it current.
 
 Django app that ingests OSM changeset replication and object diffs from planet.osm.org into
-ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. Postgres only holds the
-app's own state (poller positions, Django's tables); TimescaleDB is being removed
-([timescale-deprecation](docs/todo/timescale-deprecation.md)).
+ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The app's own state
+(the pollers' positions, Django's tables) is a SQLite file. Postgres/TimescaleDB were removed on
+2026-10-05 ([timescale-removal](docs/decisions/timescale-removal.md)).
 
 ## Rules
 
@@ -35,7 +35,8 @@ app's own state (poller positions, Django's tables); TimescaleDB is being remove
   numbers stays inside it. Contract: `changesets/analytics/base.py`.
   → [analytics-backends](docs/decisions/analytics-backends.md)
 - **ClickHouse is the only analytics store** (backends `clickhouse`, and `clickhouse_raw` without
-  its rollups, for comparisons). Nothing analytical goes to Postgres.
+  its rollups, for comparisons). SQLite holds only app state (two poller rows, Django's tables):
+  nothing analytical goes there. → [timescale-removal](docs/decisions/timescale-removal.md)
 - **ClickHouse rollups are refreshable materialized views, never incremental ones**
   (`changesets` receives new versions of existing changesets). Queries read a rollup up to its
   watermark and the raw table after it.
@@ -58,10 +59,6 @@ app's own state (poller positions, Django's tables); TimescaleDB is being remove
   adapt to the request. → [geo-geohash](docs/decisions/geo-geohash.md)
 
 ### Operations
-- **A long-running command that queries Postgres runs `SET statement_timeout = 0` on its own
-  connection** (the role default is 120s, `web` 30s); re-issue it after any reconnect. Only the
-  pollers' state is in Postgres now.
-  → [statement-timeout](docs/decisions/statement-timeout.md)
 - **Several sessions share this checkout.** Stage only your own files (never `git add -A`), and
   remember `deploy.sh` builds whatever is in the working tree, others' work in progress included.
 
@@ -88,7 +85,7 @@ app's own state (poller positions, Django's tables); TimescaleDB is being remove
 | `changesets/api/` | Public JSON API, backend-agnostic: `views.py` (endpoints + OpenAPI annotations), `params.py` (parsing, defaults, `pick_interval`), `sizes.py` (size histogram buckets, percentile definition), `schema.py` |
 | `changesets/analytics/` | Analytics backend interface (`base.py`: `Filters`, `AnalyticsBackend`, `NONE_BUCKET`, `DIMENSIONS`) + `registry.py` (`ANALYTICS_BACKEND`) |
 | `changesets/analytics/clickhouse/` | ClickHouse backend (`backend.py`), client, schema (`schema/*.sql`, applied by `clickhouse_migrate`) |
-| `changesets/models.py` | `SequenceState`, `DiffState` (poller positions); the TimescaleDB-era models stay until their tables are dropped |
+| `changesets/models.py` | `SequenceState`, `DiffState`: the pollers' positions, in SQLite (`SQLITE_PATH`, WAL mode set in `apps.py`) |
 | `changesets/serializers.py` | DRF serializer for raw changeset records (`/api/changesets/`) |
 | `changesets/urls.py` | API URL patterns (`/api/…`) |
 | `osm_changeset_api/urls.py` | Root URL conf (mounts API + pages) |
@@ -106,7 +103,6 @@ app's own state (poller positions, Django's tables); TimescaleDB is being remove
 | `static/js/common.js` | Shared chart factories, `apiUrl`/`fetchJson`/`loadWidget` (lazy), geo map, autocomplete |
 | `static/js/{dashboard,objects,editors}.js` | Page-specific widget wiring |
 | `static/output.css` | Compiled Tailwind CSS (poller status page only; the other pages use the Tailwind CDN) |
-| `db/init/` | One-time Postgres setup (extensions, Datadog schema) for a fresh DB |
 | `docs/decisions/` | Architecture decisions, one per file (index: `README.md`) |
 | `docs/ARCHITECTURE.md` | Pages and endpoints, data flow, observability |
 | `docs/DEPLOYMENT.md` | Running the Compose stack, optional Datadog overlay, full-history import |

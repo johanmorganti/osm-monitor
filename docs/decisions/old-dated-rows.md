@@ -1,5 +1,7 @@
 # Old-dated rows in the replication stream are normal — don't "fix" them
 
+> **2026-10-05:** TimescaleDB and Postgres were removed ([timescale-removal.md](timescale-removal.md)); what this says about them (CAggs, the hypertable, Postgres queries) is history, the rest still holds.
+
 **Read this before concluding anything about data coverage, backfill health, or the continuous
 aggregates' 7-day refresh window.** It reverses two conclusions that look obvious from the data
 alone and have already been reached (wrongly) once.

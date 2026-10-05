@@ -133,12 +133,10 @@ class Command(BaseCommand):
         'Bulk-import changesets from the full OSM changesets planet dump '
         '(changesets-latest.osm.bz2 — the whole history since 2005, not the '
         'minutely replication diffs poll_sequences uses). Streams and parses '
-        'the dump without loading it into memory, importing in batches via '
-        'the same batched existence-check path as poll_sequences, so rows '
-        'already present (e.g. from the 1-year backfill) are skipped cheaply. '
-        'Automatically refreshes every CAgg (stats + geo) and FilterValue over '
-        'the imported date range afterward, since this data lands far outside '
-        'every CAgg policy\'s normal refresh window — see --skip-cagg-refresh.'
+        'the dump without loading it into memory, writing in batches through '
+        'the same writers as poll_sequences, so rows already present (e.g. '
+        'from the backfill) collapse into one. ClickHouse\'s rollups pick the '
+        'imported range up at their next daily refresh.'
     )
 
     def add_arguments(self, parser):
@@ -168,7 +166,7 @@ class Command(BaseCommand):
             '--byte-range', type=str, default=None, metavar='START:END',
             help='Only import changesets whose line starts in this byte range of a decompressed '
                  '.osm dump (snapped to changeset boundaries), so several processes can split one '
-                 'dump between them. Combine with --skip-cagg-refresh and refresh once afterwards. '
+                 'dump between them. '
                  'Not supported on .bz2 input.'
         )
         parser.add_argument(
@@ -199,10 +197,8 @@ class Command(BaseCommand):
         seen_at_last_log = 0
         last_created_at = None
         # Actual min/max created_at across every changeset imported this
-        # run (not just the batch currently being processed) — the range a
-        # bulk import needs its CAggs explicitly refreshed over at the end,
-        # since it lands far outside every CAgg policy's 7-day start_offset
-        # window (see CLAUDE.md's "Old-dated rows..." section). Parsed
+        # run (not just the batch currently being processed) — the range
+        # handed to each writer's after_backfill at the end. Parsed
         # once per element here rather than reusing import_changeset_batch's
         # own per-batch parse, to avoid changing that function's return
         # shape just for this.

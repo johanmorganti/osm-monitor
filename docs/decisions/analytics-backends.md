@@ -1,5 +1,7 @@
 # Analytics backends: the API asks, a backend answers (2026-10-01)
 
+> **2026-10-05:** TimescaleDB and Postgres were removed ([timescale-removal.md](timescale-removal.md)); what this says about them (CAggs, the hypertable, Postgres queries) is history, the rest still holds.
+
 The public JSON API (`changesets/api/`) is backend-agnostic: each view parses and validates its
 parameters, applies the API-level rules (date defaults, `pick_interval`, geohash precision per
 viewport, response shapes, error messages) and asks the configured analytics backend

@@ -178,7 +178,7 @@ class Command(BaseCommand):
         for i in range(options['cases']):
             op = rng.choices(list(weights), weights=list(weights.values()))[0]
             # Full history only without filters: filtered full-history scans
-            # time out on the Timescale side.
+            # are slow on the raw side (clickhouse_raw).
             kind = rng.choice(['week', 'month', 'quarter', 'year', 'all'])
             f = date_range(rng, kind)
             if op == 'summary':

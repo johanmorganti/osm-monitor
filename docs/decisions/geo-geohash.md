@@ -1,5 +1,7 @@
 # Geo storage: a single geohash key, not two lat/lon-grid CAggs (2026-09-19)
 
+> **2026-10-05:** TimescaleDB and Postgres were removed ([timescale-removal.md](timescale-removal.md)); what this says about them (CAggs, the hypertable, Postgres queries) is history, the rest still holds.
+
 The geo heatmap (`GeoView`) used to be backed by two separate continuous aggregates —
 `cagg_geo_daily` (coarse, 0.5° cells) and `cagg_geo_fine_daily` (fine, ~0.05° cells) — each with
 its own `grid_lat`/`grid_lon` columns and its own independent 1-D index per axis. A one-month,

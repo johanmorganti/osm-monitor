@@ -8,9 +8,6 @@ history.
 
 ## Known issues (deferred)
 
-- [Phase out TimescaleDB](docs/todo/timescale-deprecation.md) — ClickHouse is the default backend and primary writer; Timescale is deprecated, still written to as a fallback. Steps to stop writing, drop the schema and move to plain Postgres (which stays for app state).
-- [Existence check spans old chunks](docs/todo/existence-check-wide-range.md) — a batch mixing today's changesets with an old one (comment-driven) makes the Timescale writer's existence check scan every chunk in between.
-- [Poller SequenceState checkpoint granularity](docs/todo/sequencestate-write-amplification.md) — checkpoints every sequence; every-N would cut write count but changes crash-recovery granularity, needs its own decision.
 - [Favicon](docs/todo/favicon.md) — the site has none; needs a design, then the icon files and a `<link rel="icon">` in the page templates.
 
 ## Planned work

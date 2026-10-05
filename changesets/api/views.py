@@ -594,7 +594,7 @@ class MostEditedObjectsView(APIView):
 
 class BatchProgressView(APIView):
     """The poller's live catch-up progress. App state (SequenceState), not
-    analytics, so it reads Postgres directly whatever the analytics backend."""
+    analytics, so it reads the app's SQLite file, not ClickHouse."""
 
     @extend_schema(
         tags=['import'],

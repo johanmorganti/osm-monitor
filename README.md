@@ -4,7 +4,7 @@ A Django application that continuously ingests [OpenStreetMap](https://www.opens
 changeset data, stores it in ClickHouse, and serves it through a Chart.js analytics dashboard and a
 public REST API.
 
-For the deeper "how it actually works" write-up (data flow, why a hypertable, the two ingestion
+For the deeper "how it actually works" write-up (data flow, the ingestion
 paths, observability) see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For architectural
 *decisions* and their reasoning, see [`docs/decisions/`](docs/decisions/README.md); AI agents
 working on the code start from [`CLAUDE.md`](CLAUDE.md). For known issues and deferred work, see
@@ -32,10 +32,9 @@ working on the code start from [`CLAUDE.md`](CLAUDE.md). For known issues and de
   OSM's full changesets dump (all history since 2005, much faster than the minutely feed).
 - **ClickHouse-backed**: every changeset since 2005 in one columnar table, queried directly, plus a
   daily rollup refreshed once a day for the common date-range questions. The API sits on a
-  backend interface (`changesets/analytics/`); the original TimescaleDB backend still works but is
-  deprecated and being phased out.
-- **Structured JSON logs**, with optional Datadog APM tracing and Postgres/ClickHouse Database
-  Monitoring.
+  backend interface (`changesets/analytics/`). The app's own state (the pollers' positions) is a
+  small SQLite file; the original TimescaleDB/Postgres storage was removed in October 2026.
+- **Structured JSON logs**, with optional Datadog APM tracing and ClickHouse Database Monitoring.
 
 ## How data is stored
 
@@ -106,9 +105,8 @@ It becomes two kinds of rows:
 
 ## Requirements
 
-ClickHouse (analytics) and Postgres (app state; with TimescaleDB and PostGIS while the deprecated
-Timescale backend is still around — its migrations need both). There's no SQLite fallback.
-Python 3.12, dependencies in `requirements.txt`.
+ClickHouse (every changeset and object, answers the API) and a writable directory for the SQLite
+file holding the app's own state. Python 3.12, dependencies in `requirements.txt`.
 
 ## Getting data in
 
@@ -133,9 +131,8 @@ python manage.py poll_diffs --backfill-days 0      # live only
 python manage.py import_from_dump path/to/changesets-latest.osm[.bz2] --skip N
 ```
 Streams and parses OSM's full [changesets planet dump](https://planet.openstreetmap.org/planet/)
-without loading it into memory, using the same batched existence-check as the poller, so it's
-safe to run concurrently with live polling. Refreshes every continuous aggregate over the
-imported range at the end. See `docs/ARCHITECTURE.md` for when/why to use this over the poller.
+without loading it into memory, through the same writer as the poller (re-inserted changesets
+collapse into one), so it's safe to run concurrently with live polling. See `docs/ARCHITECTURE.md` for when/why to use this over the poller.
 
 ## API
 
@@ -158,21 +155,21 @@ All the aggregate endpoints share the same filters (`start_date`, `end_date`, `c
 
 ```
 changesets/
-  models.py                      # Poller state (SequenceState, DiffState); TimescaleDB-era models until dropped
+  models.py                      # Poller state (SequenceState, DiffState), in SQLite
   views.py                       # HTML page shells (Overview, Objects, Editors, poller status)
   api/                           # Public JSON API: endpoints, parameter parsing, OpenAPI annotations
-  analytics/                     # Analytics backend interface + implementations (timescale/, clickhouse/)
+  analytics/                     # Analytics backend interface + the ClickHouse implementation
   analytics/clickhouse/schema/   # ClickHouse tables and refreshable rollups (applied by clickhouse_migrate)
   ingest/locate.py               # geohash + country for each changeset, computed at ingest
-  ingest/writers/                # Storage writers ingestion feeds (timescale, clickhouse)
+  ingest/writers/                # Storage writers ingestion feeds (clickhouse)
   ingest/osmchange.py            # Streaming parser for the replication diffs (osmChange)
   ingest/objects.py              # Writes parsed diffs to the ClickHouse object tables
   ingest/reconcile.py            # Re-fetches changesets the feed left open, from the OSM API
   serializers.py                 # DRF serializer for Changeset
   urls.py                        # /api/... URL patterns
   osm_fetcher.py                 # Fetches & parses OSM replication XML, batched upsert logic
-  geo.py                         # Geohash/grid SQL fragments shared by GeoView and its CAgg
-  migrations/                    # Includes 0018_timescale_hypertable (the Timescale conversion)
+  geo.py                         # Geohash helpers for the map and the ingest locator
+  migrations/                    # Django migrations for the SQLite state (0001_initial)
   data/                          # country_boundaries.geojson (read at ingest by ingest/locate.py)
   management/commands/
     poll_sequences.py            # Continuous poller (live + one-time backfill)
@@ -192,7 +189,6 @@ static/js/
   dashboard.js, objects.js, editors.js  # Per-page widget wiring; fetch from the API above
 osm_changeset_api/
   urls.py, settings.py, logging_json.py
-db/init/                         # One-time Postgres setup for a fresh data directory
 docs/
   ARCHITECTURE.md                # How it works: pages and endpoints, data flow, observability
   decisions/                     # Architecture decisions and their reasoning, one per file

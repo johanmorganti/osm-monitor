@@ -129,11 +129,8 @@ class Command(BaseCommand):
                         process_sequence(seq)
                         state.last_sequence = seq
                         # update_fields: this fires once per sequence (up to
-                        # backfill_batch_size times per outer loop iteration)
-                        # — a full-row UPDATE + WAL for every column on a
-                        # 1-row table was pure write amplification on a disk
-                        # that has none to spare (see docs/todo/
-                        # sequencestate-write-amplification.md).
+                        # backfill_batch_size times per outer loop iteration),
+                        # so it writes only the columns that changed.
                         state.save(update_fields=['last_sequence', 'updated_at'])
 
                     logger.info(

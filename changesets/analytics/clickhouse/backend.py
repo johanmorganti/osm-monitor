@@ -11,8 +11,9 @@ The unfiltered map does the same with `geo_coarse_daily` / `geo_cells_daily`
 (schema/0003_geo_rollups.sql).
 Autocomplete reads `filter_values` plus the last two days of raw data.
 
-Matches the TimescaleDB backend's observable behavior (see the parity
-checker), including how NULL names are grouped, which in Timescale depends on
+Keeps the observable behavior of the TimescaleDB backend it replaced (removed
+2026-10-05, docs/decisions/timescale-removal.md), so the API's answers didn't
+change, including how NULL names are grouped, which in Timescale depended on
 whether a continuous aggregate or the raw table answered:
 
 - "aggregate-shaped" questions (no filter; or one filter crossed with another
@@ -20,11 +21,11 @@ whether a continuous aggregate or the raw table answered:
   under NONE_BUCKET and leave NULL editors/contributors out;
 - everything else leaves every NULL name out.
 
-Known, deliberate differences: ties in rankings are broken by name (Postgres
-leaves them unordered); with dimension=editor_version every filter applies
-(Timescale's aggregate path ignores a language filter there); autocomplete
-reads this table's own values (Timescale reads FilterValue, which also lists
-countries with no changesets yet).
+Known, deliberate differences from Timescale: ties in rankings are broken by
+name (Postgres left them unordered); with dimension=editor_version every
+filter applies (Timescale's aggregate path ignored a language filter there);
+autocomplete reads this table's own values (Timescale read FilterValue, which
+also listed countries with no changesets yet).
 
 FINAL makes the ReplacingMergeTree return one version per changeset (an
 updated changeset can exist twice until a background merge); measured as

@@ -15,9 +15,9 @@ stands; it doesn't track day-to-day changes.
 - `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped, `metric=count|objects`; with `metric=objects` also `group_by=action|object_type|feature`, from the object tables)
 - `/api/changesets/summary/` → `SummaryView` (total_changesets/total_objects/avg_objects)
 - `/api/changesets/toplist/` → `ToplistView` (top N by dimension × metric; with `metric=objects` also `dimension=action|object_type|feature`)
-- `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`; each cell carries its geohash as `cell`), `/api/changesets/geo/cell/` → `GeoCellView` (the changesets of one cell, newest first, paginated — the Overview map's click-to-list panel; ClickHouse only)
-- `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`) — ClickHouse only, 501 on Timescale
-- `/api/objects/most-edited/` → `MostEditedObjectsView` (objects with the most edits over the last 7 days, from `object_edits`; the Objects page's "Most Edited Objects last week") — ClickHouse only
+- `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`; each cell carries its geohash as `cell`), `/api/changesets/geo/cell/` → `GeoCellView` (the changesets of one cell, newest first, paginated — the Overview map's click-to-list panel)
+- `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`)
+- `/api/objects/most-edited/` → `MostEditedObjectsView` (objects with the most edits over the last 7 days, from `object_edits`; the Objects page's "Most Edited Objects last week")
 - `/api/docs/` → Swagger UI (drf-spectacular), `/api/schema/` the raw OpenAPI schema — the authoritative API reference
 
 The aggregate endpoints default to the last 7 days when no dates are given. Static files are
@@ -78,82 +78,24 @@ last 92 days from the daily diffs, one day per round (a daily diff is exactly th
 stamped within that day, so the two never overlap). It writes ClickHouse only: per-changeset
 counts by type × action (`object_changes`) and by feature (`object_change_features`), kept for all
 time, and every object version (`object_versions`), kept 92 days. Its position is `DiffState` in
-Postgres. The API reads them through `object_daily_rollup` (schema/0005, refreshed daily, joined
+SQLite. The API reads them through `object_daily_rollup` (schema/0005, built a day at a time, joined
 to `changesets` for the day and the filters) for `group_by`/`dimension=action|object_type|feature`,
 shown in the Objects page's "What was changed" section. Design, measurements and the checks against
 `changes_count`: [`decisions/object-changes.md`](decisions/object-changes.md).
 
-**The TimescaleDB sections below describe a removed design.** Since 2026-10-05 nothing writes
-to or reads from TimescaleDB; its tables are being dropped
-([`todo/timescale-deprecation.md`](todo/timescale-deprecation.md)), and these sections go with
-them. For how analytics work now, see
-[`decisions/analytics-backends.md`](decisions/analytics-backends.md) and the docstring of `changesets/analytics/clickhouse/backend.py`.
+## Analytics: ClickHouse and its rollups
 
-## Why a hypertable
+Every API question goes through the backend contract (`changesets/analytics/base.py`) to the
+ClickHouse backend (`changesets/analytics/clickhouse/backend.py`; its docstring says which
+questions read which rollup). The rollups are refreshable materialized views
+(`changesets/analytics/clickhouse/schema/`), read up to their watermark with the raw table after
+it: see [`decisions/analytics-backends.md`](decisions/analytics-backends.md). Until 2026-10-05 a
+TimescaleDB copy in Postgres served the same API through continuous aggregates; it was removed,
+see [`decisions/timescale-removal.md`](decisions/timescale-removal.md) (its design is in
+[`decisions/timescale-storage.md`](decisions/timescale-storage.md) and in git history).
 
-Nearly all real query traffic here is time-filtered — the dashboard's default views, the
-`timeseries`/`summary`/`toplist` API endpoints, `/api/changesets/`'s 24h-default list. A plain
-Postgres table has no way to skip irrelevant data for those queries beyond a btree index scan
-across the *whole* table. `changesets_changeset` is a TimescaleDB hypertable, partitioned by
-`created_at` into monthly chunks (`changesets/migrations/0018_timescale_hypertable.py`), so a
-query bounded to a week only opens the 1-2 chunks that could contain matching rows.
-
-**The one real schema wrinkle**: TimescaleDB requires every UNIQUE constraint on a hypertable
-(including the primary key) to include the partitioning column. `Changeset.id` is still Django's
-`pk` for ORM purposes (`.get()`, `.filter(pk=...)`, etc. all work normally), but it's **not**
-physically enforced unique by Postgres anymore — the PK constraint was dropped as part of the
-hypertable conversion, replaced by a plain (non-unique) index for lookup performance. Real
-duplicate-import protection is `UNIQUE (changeset_id, created_at)` instead, which does satisfy
-Timescale's rule. `id` values stay practically unique regardless (never-reused sequence); this is
-the standard, documented trade-off for using an ORM built around single-column PKs with
-TimescaleDB.
-
-Queries and Django ORM code are otherwise unaffected — TimescaleDB is a Postgres extension, not a
-different query interface. `changesets/rollups.py`'s raw SQL and every `Changeset.objects...`
-query in the Timescale backend work exactly as they would against a plain table.
-
-## Aggregates: precomputed via TimescaleDB continuous aggregates, not query-time aggregation
-
-The dashboard's *unfiltered* view, and any query filtered on exactly one of
-contributor/editor/imagery/language, reads from TimescaleDB continuous aggregates (`cagg_*`
-materialized views — migration `0020` onward) instead of aggregating the raw table on every
-request. There's one CAgg per (dimension × grain): `cagg_volume_{hourly,daily}` for plain volume,
-and `cagg_{editor,imagery,locale,contributor}_{hourly,daily}` for per-dimension breakdowns — see
-`changesets/models.py`'s `Cagg*` classes (all `managed=False`; TimescaleDB owns their schema and
-refresh, Django only maps onto them for querying) and `changesets/analytics/timescale/caggs.py`'s `CAGG_MODELS` /
-`CAGG_MODELS_HOURLY` mapping.
-
-A query filtered by *two or more* of those dimensions at once (e.g. a toplist filtered by
-`imagery`, grouped by `editor`) has no matching CAgg — each one only tracks its own single
-dimension — and falls back to querying `Changeset` directly (`changesets/analytics/timescale/backend.py`'s
-`filtered_changesets`). This is a real, unsolved performance cliff for that specific
-query shape on the TimescaleDB backend, which is being phased out; see `docs/todo/timescale-deprecation.md`.
-
-CAggs refresh themselves via TimescaleDB's own background job scheduler
-(`add_continuous_aggregate_policy`, registered per-CAgg in each migration) — no application code
-triggers this. Each policy's `start_offset` (7 days on every CAgg here) assumes normal live
-polling, where the only thing that can change after a row is inserted is `changes_count` growing
-while the changeset is still open (bounded by OSM's 24h max open time) — see
-[`decisions/old-dated-rows.md`](decisions/old-dated-rows.md) before assuming this window is too
-narrow or too wide. A deliberate bulk/backward import lands outside that window and needs an
-explicit `CALL refresh_continuous_aggregate(<view>, <lo>, <hi>)` — not yet automated for
-`import_from_dump.py`, see `docs/todo/timescale-deprecation.md`.
-
-**`FilterValue`** (distinct known contributor/editor/imagery values, globally deduplicated — no
-date dimension) backs the dashboard's autocomplete inputs. Populated incrementally by
-`changesets/rollups.py`'s `refresh_filter_values_incremental()`, called from the poller's own loop
-every ~120s (watermarked on `created_at` — the hypertable's partitioning column, so this gets real
-chunk exclusion), and backfilled once for pre-existing data via `manage.py
-backfill_filter_values`. Its size tracks the number of distinct values ever seen, not the number
-of changesets, so it stays small (editor/imagery) or slow-growing (contributor) regardless of how
-much history is imported — unlike querying `Changeset` directly for autocomplete, which would be
-a full-table scan on every keystroke.
-
-**Not live, but still on disk**: `DailyVolume`/`DailyBreakdown` tables and three rollup functions
-in `changesets/rollups.py` predate the CAgg design above and nothing reads them anymore —
-`refresh_rollups()` remains callable only as a manual escape hatch (`manage.py refresh_rollups`).
-Dropping them outright is a pending follow-up migration — see
-`docs/todo/timescale-deprecation.md`.
+**App state** (the pollers' positions, Django's own tables) is a SQLite file (`SQLITE_PATH`),
+shared by `web` and both pollers, in WAL mode.
 
 ## API design
 
@@ -161,16 +103,16 @@ Dropping them outright is a pending follow-up migration — see
 single bundled stats endpoint. They're split by resource *shape*, not business concept —
 analogous to a metrics platform's widget types:
 
-- **`timeseries`**: anything date-bucketed. `group_by` omitted = plain hourly volume;
-  `group_by=editor|imagery|locale|contributor` = daily volume as up to N per-name series (the
-  top N by total count over the range).
-- **`toplist`**: any ranked list. `dimension` (contributor/editor/imagery/locale) ×
-  `metric` (count/objects) × `limit` (default 20). Combinations the old bundled endpoint never
-  exposed (e.g. contributor × count) are just other parameter values now, not new code.
+- **`timeseries`**: anything date-bucketed. `group_by` omitted = plain volume;
+  `group_by=contributor|editor|imagery|language|country|hashtag` (or, with `metric=objects`,
+  `action|object_type|feature`) = up to 20 per-name series (the top 20 over the range).
+- **`toplist`**: any ranked list. `dimension` × `metric` (count/objects) × `limit` (default 20).
+  Combinations the old bundled endpoint never exposed (e.g. contributor × count) are just other
+  parameter values now, not new code.
 - **`summary`**: the handful of single-number KPIs for a range.
 
-All three share filter-resolution and queryset-building helpers (`resolve_filters`,
-`filtered_changesets`, `DIMENSION_FIELDS`) rather than duplicating that logic per view.
+All three share the filter parsing (`changesets/api/params.py`: `resolve_filters`,
+`pick_interval`) and the backend contract rather than duplicating that logic per view.
 `dashboard.js` fetches all of what it needs in parallel (`Promise.all`) — more requests than the
 old bundled endpoint, but each is small and independently cacheable, and total load time is
 bounded by the slowest request rather than their sum.
@@ -184,52 +126,38 @@ authoritative reference, not this file or the README.
 Datadog is optional. The base `docker-compose.yml` runs without it (tracing off); the
 `docker-compose.datadog.yml` override adds everything below, enabled by setting
 `COMPOSE_FILE=docker-compose.yml:docker-compose.datadog.yml` in `.env` along with `DD_API_KEY`
-and `DD_POSTGRES_PASSWORD`.
+and `DD_CLICKHOUSE_PASSWORD`.
 
-- **Agent**: the override adds a `datadog-agent` compose service. `web`/`poller` reach it over
-  unix sockets in the shared `datadog-sockets` volume (`apm.socket`, `dsd.socket`); it discovers
-  containers and tails their logs via the docker socket, and picks up the Postgres check from the
-  `db` service's `com.datadoghq.ad.checks` label.
-- **APM + structured logs**: with tracing enabled, `entrypoint.sh` wraps both `web` (gunicorn) and
-  `poller` in `ddtrace-run`; `osm_changeset_api/logging_json.py` emits structured JSON logs with
+- **Agent**: the override adds a `datadog-agent` compose service. `web` and both pollers reach it
+  over unix sockets in the shared `datadog-sockets` volume (`apm.socket`, `dsd.socket`); it
+  discovers containers and tails their logs via the docker socket, and picks up the ClickHouse
+  check from the `clickhouse` service's `com.datadoghq.ad.checks` label.
+- **APM + structured logs**: with tracing enabled, `entrypoint.sh` wraps `web` (gunicorn) and
+  the pollers in `ddtrace-run`; `osm_changeset_api/logging_json.py` emits structured JSON logs with
   `dd.trace_id`/`dd.span_id` injected (`DD_LOGS_INJECTION=true`), so a log line and the trace it
   happened during are correlated in Datadog.
-- **Database Monitoring**: the `db` service always preloads `pg_stat_statements` alongside
-  `timescaledb` (`shared_preload_libraries`), and `db/init/01-datadog.sh` always creates the
-  extension, so query-level stats are available with or without Datadog. When
-  `DD_POSTGRES_PASSWORD` is set, the same script also creates the low-privilege `datadog` role and
-  a `datadog` schema with a `SECURITY DEFINER` `explain_statement()` function, so the agent can
-  request `EXPLAIN` plans without broader query access (fresh data directory only; on an existing
-  one, run the script once by hand). The override's postgres check has `dbm: true`.
-- **Resource limits**: every service has a `mem_limit`, and `db` a non-default
-  `effective_cache_size` (`docker-compose.yml`), so one heavy query/index build/import can't
-  starve everything else running alongside it. If DBM's query collection ever
-  needs to be paused during a heavy bulk operation (it polls frequently and will contend for I/O
-  under load), the clean way is `REVOKE CONNECT ON DATABASE ... FROM datadog;` (and `GRANT` it
-  back after) — no service restart required, unlike disabling the check via its Docker label.
+- **Database Monitoring**: ClickHouse, through the `datadog` user `clickhouse_migrate` creates from
+  `DD_CLICKHOUSE_PASSWORD` (read access to `system.*`, plus the app database so it can `EXPLAIN`
+  the queries it captures).
+- **Resource limits**: every service has a `mem_limit` (ClickHouse sizes its own memory budget
+  from its own), so one heavy query or import can't starve everything else running alongside it.
 
 ## Deployment
 
-`docker-compose.yml` defines six services:
+`docker-compose.yml` defines five services, plus the SQLite file (`SQLITE_DIR`) that
+`migrate`, `web` and both pollers share:
 
-- `db`: Postgres with TimescaleDB and PostGIS (app state, `SequenceState`/`DiffState`, the
-  deprecated Timescale copy of the changesets).
 - `clickhouse`: the analytics store the API reads (changesets, object tables, rollups).
-- `migrate`: one-shot, runs before the others start: Django migrations, `load_country_boundaries
-  --if-empty`, `clickhouse_migrate` (the ClickHouse schema and refreshable rollups). A separate
-  service so two containers never run migrations concurrently.
+- `migrate`: one-shot, runs before the others start: Django migrations (SQLite),
+  `clickhouse_migrate` (the ClickHouse schema and refreshable rollups). A separate service so two
+  containers never run migrations concurrently.
 - `web`: gunicorn, 2 `gthread` workers × 8 threads (`entrypoint.sh` has the measurement behind
-  that number), behind a 30 s Postgres statement timeout and ClickHouse's 30 s query cap.
-- `poller`: `poll_sequences`, the changeset feed (plus FilterValue refreshes and the hourly
-  re-fetch of changesets left open, `ingest/reconcile.py`).
+  that number), behind ClickHouse's 30 s query cap.
+- `poller`: `poll_sequences`, the changeset feed (plus the hourly re-fetch of changesets left
+  open, `ingest/reconcile.py`).
 - `diff-poller`: `poll_diffs`, the minutely/daily osmChange diffs into the object tables.
 
 `docker-compose.datadog.yml` optionally adds `datadog-agent` (see Observability). `deploy.sh`
 checks `.env`, stamps the build with the current git commit (`GIT_VERSION`, Datadog's
 `DD_VERSION` tag when enabled), then runs `docker compose build && up -d`; `entrypoint.sh` only
 collects static files and starts gunicorn (or the given command). Running it: `DEPLOYMENT.md`.
-
-`db/init/`'s scripts only run automatically on a genuinely fresh Postgres data directory
-(the official image's behavior) — recreating `db` against an *existing* volume skips them, so a
-schema/extension change that needs to apply to a running system still needs a manual one-time
-step (each script's own comments say what).

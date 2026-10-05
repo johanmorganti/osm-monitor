@@ -13,12 +13,13 @@ from them are summarized in [`../../CLAUDE.md`](../../CLAUDE.md); how the system
 
 ## Analytics and storage
 
-- [Analytics backends](analytics-backends.md): the API asks, a backend answers; ClickHouse is the default, TimescaleDB deprecated; ClickHouse rollups.
+- [Analytics backends](analytics-backends.md): the API asks, a backend answers; ClickHouse and its rollups.
+- [TimescaleDB and Postgres removed](timescale-removal.md): ClickHouse holds everything; the app's state is a SQLite file (tested on the shared folder first).
 - [Design for full history](full-history.md): ~190M+ rows, 2005 to today; watermark on `created_at`.
 - [Old-dated rows in the replication stream are normal](old-dated-rows.md): comments resurface old changesets; why the 7-day refresh window is right.
 - [Location data computed at ingest](location-at-ingest.md): geohash and country in Python, identical for every backend.
 - [Geo storage: one geohash key](geo-geohash.md): prefix nesting for every zoom level, and six lessons from shipping it.
-- [TimescaleDB storage](timescale-storage.md) (deprecated backend): hypertable, compression, bloom filters, filter by equality.
+- [TimescaleDB storage](timescale-storage.md) (history, removed 2026-10-05): hypertable, compression, bloom filters, filter by equality.
 - [imagery_used as a JSON array](imagery-used-json.md)
 - [SequenceState](sequence-state.md): the poller's resume point.
 - [Changesets the feed leaves open](stale-open-changesets.md): re-fetched from the OSM API when still open 25 h after creation; writers replace an open copy with a closed one.
@@ -26,7 +27,7 @@ from them are summarized in [`../../CLAUDE.md`](../../CLAUDE.md); how the system
 
 ## Operations
 
-- [Statement timeout](statement-timeout.md): bounded by default; long jobs opt out explicitly.
+- [Statement timeout](statement-timeout.md) (history, Postgres removed 2026-10-05): bounded by default; long jobs opted out explicitly.
 
 ## Project
 

@@ -1,5 +1,7 @@
 # Dimension naming: DB column vs. API param vs. UI label
 
+> **2026-10-05:** TimescaleDB and Postgres were removed ([timescale-removal.md](timescale-removal.md)); what this says about them (CAggs, the hypertable, Postgres queries) is history, the rest still holds.
+
 Three separate names can exist for the same dimension, and they're allowed to differ — but each
 layer's name must be used *consistently everywhere at that layer*, not decided ad hoc per file.
 This came up concretely: the dashboard's chart title has said "Top 20 Languages" for a while, but

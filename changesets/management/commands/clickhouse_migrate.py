@@ -27,8 +27,7 @@ class Command(BaseCommand):
             self.stdout.write(f'applied {path.name}')
 
         # Least-privilege monitoring user for the Datadog ClickHouse check + DBM
-        # (system tables only), when Datadog is configured. Same pattern as
-        # db/init/01-datadog.sh for Postgres.
+        # (system tables only), when Datadog is configured.
         password = os.environ.get('DD_CLICKHOUSE_PASSWORD')
         if password:
             quoted = "'" + password.replace('\\', '\\\\').replace("'", "\\'") + "'"

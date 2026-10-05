@@ -1,5 +1,7 @@
 # Statement timeout: bounded by default, opt out explicitly for long jobs
 
+> **2026-10-05:** Postgres is gone, so this rule no longer applies; kept as history. See [timescale-removal.md](timescale-removal.md).
+
 The app role (`db/init/02-role-statement-timeout.sh`) defaults to `statement_timeout = '120s'` —
 inverted from the old default of unbounded-unless-told-otherwise, after an orphaned backend (its
 client killed) kept running an expensive query server-side with nothing left to cancel it. `web` keeps its own tighter 30s cap via connection

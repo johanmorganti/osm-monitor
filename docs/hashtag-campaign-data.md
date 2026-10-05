@@ -1,5 +1,7 @@
 # Hashtag / campaign data: what's actually there
 
+> **2026-10-05:** written against the Postgres/TimescaleDB copy of the changesets, since removed; the findings about the data still hold.
+
 Research note for the "Hashtags/campaign toplist" idea in `TODO.md`'s "Dashboard: new
 graph/section ideas" — is the dedicated `hashtags` column enough to build a "Top campaigns"
 toplist, or does real signal live elsewhere too? All numbers below are from `TABLESAMPLE SYSTEM`
