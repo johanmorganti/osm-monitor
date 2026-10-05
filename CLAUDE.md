@@ -96,7 +96,7 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
 | `changesets/ingest/reconcile.py` | Re-fetches from the OSM API changesets still open 25 h after creation (hourly from the poller; `reconcile_open_changesets`) |
 | `changesets/ingest/locate.py` | geohash + country for parsed changesets (Shapely/pyproj), used at ingest |
 | `changesets/ingest/writers/` | Ingestion storage writers (`base.py` contract, `clickhouse.py`), selected by `INGEST_BACKENDS` |
-| `changesets/geo.py` | Geohash helpers (precision per viewport, bbox cover, encode/decode); its grid/bbox SQL is only imported by old migrations |
+| `changesets/geo.py` | Geohash helpers (precision per viewport, bbox cover, encode/decode) and the bbox-size threshold for the map |
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |
 | `changesets/management/commands/import_from_dump.py` | Bulk planet-dump importer |
 | `changesets/templates/changesets/{dashboard,objects,editors}.html` | Page HTML shells only |
