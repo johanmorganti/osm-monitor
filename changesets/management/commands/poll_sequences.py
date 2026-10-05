@@ -8,7 +8,6 @@ from django.db import connection
 from changesets.models import SequenceState
 from changesets.ingest.reconcile import reconcile, stale_open_changesets
 from changesets.osm_fetcher import process_sequence
-from changesets.rollups import refresh_filter_values_incremental
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +56,6 @@ class Command(BaseCommand):
             help='Max backfill sequences to process before re-checking for new live sequences (default: 1000)'
         )
         parser.add_argument(
-            '--filter-values-interval', type=int, default=120,
-            help='Minimum seconds between incremental FilterValue refreshes (default: 120)'
-        )
-        parser.add_argument(
             '--reconcile-interval', type=int, default=3600,
             help='Minimum seconds between re-fetching, from the OSM API, the changesets of the last '
                  '3 days still open more than 25 h after creation (default: 3600; 0 disables)'
@@ -79,7 +74,6 @@ class Command(BaseCommand):
         backfill_days = options['backfill_days']
         sequences_per_day = options['sequences_per_day']
         backfill_batch_size = options['backfill_batch_size']
-        filter_values_interval = options['filter_values_interval']
         reconcile_interval = options['reconcile_interval']
 
         if options['reset']:
@@ -88,7 +82,6 @@ class Command(BaseCommand):
 
         logger.info("Starting sequence poller")
 
-        last_filter_values_refresh = 0.0
         last_reconcile = 0.0
 
         while True:
@@ -194,15 +187,6 @@ class Command(BaseCommand):
                     )
                     state.backfill_floor = None
                     state.save(update_fields=['backfill_floor', 'updated_at'])
-
-                if time.monotonic() - last_filter_values_refresh >= filter_values_interval:
-                    refresh_start = time.monotonic()
-                    refresh_filter_values_incremental()
-                    last_filter_values_refresh = time.monotonic()
-                    logger.info(
-                        "FilterValue refreshed",
-                        extra={'osm.filter_values_refresh_seconds': round(last_filter_values_refresh - refresh_start, 2)},
-                    )
 
                 # The feed sometimes never publishes a changeset's closing
                 # update (docs/decisions/stale-open-changesets.md). Stamped

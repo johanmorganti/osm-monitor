@@ -6,8 +6,8 @@ Static reference data shipped with the app (not user data, not something the pol
 
 World country polygons with ISO 3166-1 alpha-2 codes. The ingest parser
 (`changesets/ingest/locate.py`) resolves each changeset's `country_code` against
-this file directly; `load_country_boundaries` also loads it into the
-`country_boundaries` table, for SQL use and to seed the country autocomplete.
+this file directly. (Until 2026-10-05 `load_country_boundaries` also loaded it into a PostGIS
+`country_boundaries` table; nothing reads one any more.)
 
 - **Source**: [datasets/geo-countries](https://github.com/datasets/geo-countries)
   (Open Knowledge Foundation), itself Natural Earth's 1:10m admin-0

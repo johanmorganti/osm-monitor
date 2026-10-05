@@ -5,9 +5,11 @@ operation, dimension, filter (real top values plus NONE_BUCKET), filter pair,
 metric, map resolution and date range, and compares results by meaning rather
 than bytes: map cells as a set, ranking ties at the cut-off allowed to differ,
 raw records by id. Reports exact matches, near matches with their magnitude,
-and timings.
+and timings. Since TimescaleDB is gone (2026-10-05), it compares ClickHouse
+without its rollups (clickhouse_raw) against ClickHouse with them: the proof
+that a rollup answers exactly like the raw table.
 
-    python manage.py check_backend_parity --a timescale --b clickhouse --cases 200
+    python manage.py check_backend_parity --a clickhouse_raw --b clickhouse --cases 200
 """
 import json
 import random
@@ -16,7 +18,6 @@ from collections import Counter
 from datetime import date, timedelta
 
 from django.core.management.base import BaseCommand
-from django.db import connection
 
 from changesets.analytics import DIMENSIONS, EDITOR_VERSION, NONE_BUCKET, ChangesetQuery, Filters, get_backend
 from changesets.api.params import pick_interval
@@ -146,7 +147,7 @@ class Command(BaseCommand):
     help = __doc__
 
     def add_arguments(self, parser):
-        parser.add_argument('--a', default='timescale')
+        parser.add_argument('--a', default='clickhouse_raw')
         parser.add_argument('--b', default='clickhouse')
         parser.add_argument('--cases', type=int, default=200)
         parser.add_argument('--seed', type=int, default=1)
@@ -154,9 +155,8 @@ class Command(BaseCommand):
         parser.add_argument('--ops', help='comma-separated operations to test (default: all), e.g. geo')
 
     def handle(self, *args, **options):
-        connection.cursor().execute("SET statement_timeout = 0")
         a, b = get_backend(options['a']), get_backend(options['b'])
-        for backend in (a, b):  # no web-request time cap here (Postgres's is lifted above)
+        for backend in (a, b):  # no web-request time cap here
             if hasattr(backend, 'query_settings'):
                 backend.query_settings = {}
         rng = random.Random(options['seed'])

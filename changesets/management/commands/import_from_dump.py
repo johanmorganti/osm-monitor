@@ -5,7 +5,6 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import DatabaseError, connection, transaction
 
 from changesets.ingest.writers import get_writers
 from changesets.osm_fetcher import import_changeset_batch
@@ -174,27 +173,11 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--skip-cagg-refresh', action='store_true',
-            help='Skip the CAgg + FilterValue refresh pass at the end (e.g. when running several '
-                 'import passes back to back and only wanting to refresh once, after the last one).'
+            help="Skip each writer's post-import maintenance at the end (none for ClickHouse, whose "
+                 'rollups rebuild from the deduplicated table daily).'
         )
 
     def handle(self, *args, **options):
-        # The app role defaults to a bounded statement_timeout (see
-        # db/init/02-role-statement-timeout.sh) — a full-history dump import
-        # legitimately runs long batches, so opt out.
-        connection.cursor().execute("SET statement_timeout = 0")
-        # Keep this session's statements out of pg_stat_statements: each
-        # batch's INSERT/existence check carries thousands of parameters, so a
-        # full-history import grew its query-text file past 1GB — which every
-        # pg_stat_statements reader (e.g. Datadog DBM, every 60s) then re-reads
-        # while holding the extension's lock. Superuser-only setting; skipped
-        # if the role can't set it.
-        try:
-            with transaction.atomic():
-                connection.cursor().execute("SET pg_stat_statements.track = 'none'")
-        except DatabaseError:
-            logger.warning("Could not disable pg_stat_statements tracking for this import")
-
         dump_path = options['dump_path']
         batch_size = options['batch_size']
         skip = options['skip']
@@ -325,8 +308,8 @@ class Command(BaseCommand):
         )
 
         # Bulk writes land far outside the live window, so each writer gets its
-        # post-backfill maintenance over the imported range (Timescale: refresh
-        # every CAgg and FilterValue; see TimescaleWriter.after_backfill).
+        # post-backfill maintenance over the imported range (a no-op for
+        # ClickHouse, see ClickHouseWriter.after_backfill).
         # Skipped (already present) rows were already accounted for when first
         # imported, so nothing to do when nothing was created or updated.
         if options['skip_cagg_refresh']:

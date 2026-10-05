@@ -1,5 +1,1 @@
-from django.contrib import admin
-
-from .models import Changeset
-
-admin.site.register(Changeset)
+# No models are registered: the app's own tables are poller state only.

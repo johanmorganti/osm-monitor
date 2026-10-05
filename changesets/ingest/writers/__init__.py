@@ -1,5 +1,5 @@
 """Storage writers for ingestion, selected by settings.INGEST_BACKENDS (env
-INGEST_BACKENDS, comma-separated, default 'clickhouse,timescale'). Imported lazily, so an
+INGEST_BACKENDS, comma-separated, default 'clickhouse'). Imported lazily, so an
 unused backend's client library never has to be installed or configured."""
 from importlib import import_module
 
@@ -8,7 +8,6 @@ from django.conf import settings
 from .base import ChangesetWriter, WriteResult  # noqa: F401
 
 _WRITERS = {
-    'timescale': 'changesets.ingest.writers.timescale.TimescaleWriter',
     'clickhouse': 'changesets.ingest.writers.clickhouse.ClickHouseWriter',
 }
 _instances = {}

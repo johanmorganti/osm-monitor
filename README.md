@@ -158,7 +158,7 @@ All the aggregate endpoints share the same filters (`start_date`, `end_date`, `c
 
 ```
 changesets/
-  models.py                      # Changeset (hypertable), CAgg models, FilterValue, job state
+  models.py                      # Poller state (SequenceState, DiffState); TimescaleDB-era models until dropped
   views.py                       # HTML page shells (Overview, Objects, Editors, poller status)
   api/                           # Public JSON API: endpoints, parameter parsing, OpenAPI annotations
   analytics/                     # Analytics backend interface + implementations (timescale/, clickhouse/)
@@ -171,20 +171,17 @@ changesets/
   serializers.py                 # DRF serializer for Changeset
   urls.py                        # /api/... URL patterns
   osm_fetcher.py                 # Fetches & parses OSM replication XML, batched upsert logic
-  rollups.py                     # FilterValue autocomplete incremental refresh
-  cagg_maintenance.py            # Explicit continuous-aggregate refreshes over a date range
   geo.py                         # Geohash/grid SQL fragments shared by GeoView and its CAgg
   migrations/                    # Includes 0018_timescale_hypertable (the Timescale conversion)
-  data/                          # country_boundaries.geojson (loaded by load_country_boundaries)
+  data/                          # country_boundaries.geojson (read at ingest by ingest/locate.py)
   management/commands/
     poll_sequences.py            # Continuous poller (live + one-time backfill)
     poll_diffs.py                # Object changes from the replication diffs (live + daily backfill)
     reconcile_open_changesets.py # Re-fetch changesets still open 25 h after creation (the poller does it hourly)
     clickhouse_migrate.py        # Applies the ClickHouse schema (run by the migrate service)
     import_from_dump.py          # Bulk planet-dump importer
-    load_country_boundaries.py   # Loads country_boundaries from the committed GeoJSON
-    refresh_rollups.py           # Manual full-rebuild escape hatch (rarely needed)
-    backfill_*.py                # One-off backfills for schema changes over existing data
+    recompute_locations.py       # Recompute geohash/country in ClickHouse after a location-rule change
+    check_backend_parity.py      # Compare ClickHouse with and without its rollups
   templates/changesets/
     dashboard.html               # Overview page HTML shell only — no server-rendered data
     objects.html                 # Objects page HTML shell only

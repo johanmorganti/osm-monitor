@@ -6,9 +6,10 @@ changing anything in its area. How the system works: [`docs/ARCHITECTURE.md`](do
 (pages, endpoints, data flow). Running it: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Open work:
 [`TODO.md`](TODO.md) — check it before starting non-trivial work, and keep it current.
 
-Django app that ingests OSM changeset replication from planet.osm.org into ClickHouse (analytics,
-the default backend) and a deprecated TimescaleDB copy in Postgres (which also holds the app's own
-state), and serves a Chart.js dashboard plus a public JSON API.
+Django app that ingests OSM changeset replication and object diffs from planet.osm.org into
+ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. Postgres only holds the
+app's own state (poller positions, Django's tables); TimescaleDB is being removed
+([timescale-deprecation](docs/todo/timescale-deprecation.md)).
 
 ## Rules
 
@@ -33,19 +34,19 @@ state), and serves a Chart.js dashboard plus a public JSON API.
 - **Public-API behavior goes in `changesets/api/`, never in a backend**; how a backend gets the
   numbers stays inside it. Contract: `changesets/analytics/base.py`.
   → [analytics-backends](docs/decisions/analytics-backends.md)
-- **ClickHouse first; TimescaleDB is deprecated.** No new CAggs or Timescale-only features; a new
-  backend method may raise `NotImplementedError` on Timescale (the API answers 501). Postgres
-  stays (Django tables, `SequenceState`).
+- **ClickHouse is the only analytics store** (backends `clickhouse`, and `clickhouse_raw` without
+  its rollups, for comparisons). Nothing analytical goes to Postgres.
 - **ClickHouse rollups are refreshable materialized views, never incremental ones**
   (`changesets` receives new versions of existing changesets). Queries read a rollup up to its
   watermark and the raw table after it.
 - **A behavior-neutral change is proven neutral**: snapshot the fixed API calls before and after
-  (byte-identical) and diff the OpenAPI schema; `check_backend_parity` compares backends.
+  (byte-identical) and diff the OpenAPI schema; `check_backend_parity` compares ClickHouse with
+  and without its rollups.
 - **Design for full history** (~190M+ rows, 2005 to today): check new queries/jobs against the
   full row count; prefer incremental, watermarked designs, watermarked on `created_at`.
   → [full-history](docs/decisions/full-history.md)
 - **Old-dated rows in the replication stream are normal** (comments resurface old changesets).
-  Don't "fix" them, and don't widen the 7-day CAgg refresh window.
+  Don't "fix" them.
   → [old-dated-rows](docs/decisions/old-dated-rows.md)
 - **Object tables (`poll_diffs`): every row is keyed by its source file**, so replays replace;
   never read `object_versions` over more than a few days from the API (daily rollups instead).
@@ -55,13 +56,11 @@ state), and serves a Chart.js dashboard plus a public JSON API.
 - **Geo: one geohash key, coarser cells are prefixes.** Check what actually reaches a query (is
   the input spatially bounded?), and any resolution reachable from several request shapes must
   adapt to the request. → [geo-geohash](docs/decisions/geo-geohash.md)
-- **Timescale raw-table filters use equality/`IN`, never `__iexact`/`__icontains`** (bloom
-  filters on compressed chunks); a new filterable column needs a plain btree index.
-  → [timescale-storage](docs/decisions/timescale-storage.md)
 
 ### Operations
-- **Every new long-running management command or backfill runs `SET statement_timeout = 0` on its
-  own connection** (the role default is 120s, `web` 30s); re-issue it after any reconnect.
+- **A long-running command that queries Postgres runs `SET statement_timeout = 0` on its own
+  connection** (the role default is 120s, `web` 30s); re-issue it after any reconnect. Only the
+  pollers' state is in Postgres now.
   → [statement-timeout](docs/decisions/statement-timeout.md)
 - **Several sessions share this checkout.** Stage only your own files (never `git add -A`), and
   remember `deploy.sh` builds whatever is in the working tree, others' work in progress included.
@@ -89,9 +88,8 @@ state), and serves a Chart.js dashboard plus a public JSON API.
 | `changesets/api/` | Public JSON API, backend-agnostic: `views.py` (endpoints + OpenAPI annotations), `params.py` (parsing, defaults, `pick_interval`), `sizes.py` (size histogram buckets, percentile definition), `schema.py` |
 | `changesets/analytics/` | Analytics backend interface (`base.py`: `Filters`, `AnalyticsBackend`, `NONE_BUCKET`, `DIMENSIONS`) + `registry.py` (`ANALYTICS_BACKEND`) |
 | `changesets/analytics/clickhouse/` | ClickHouse backend (`backend.py`), client, schema (`schema/*.sql`, applied by `clickhouse_migrate`) |
-| `changesets/analytics/timescale/` | TimescaleDB backend (deprecated): CAgg routing (`caggs.py`), raw fallback + queries (`backend.py`), exact-value filter resolution (`canonical.py`) |
-| `changesets/models.py` | `SequenceState` + the deprecated Timescale `Changeset` (hypertable) and rollup models |
-| `changesets/serializers.py` | DRF serializer for `Changeset` |
+| `changesets/models.py` | `SequenceState`, `DiffState` (poller positions); the TimescaleDB-era models stay until their tables are dropped |
+| `changesets/serializers.py` | DRF serializer for raw changeset records (`/api/changesets/`) |
 | `changesets/urls.py` | API URL patterns (`/api/…`) |
 | `osm_changeset_api/urls.py` | Root URL conf (mounts API + pages) |
 | `changesets/osm_fetcher.py` | Fetches & parses OSM replication XML |
@@ -100,9 +98,8 @@ state), and serves a Chart.js dashboard plus a public JSON API.
 | `changesets/management/commands/poll_diffs.py` | Diff poller (minutely live + daily backfill), `diff-poller` service |
 | `changesets/ingest/reconcile.py` | Re-fetches from the OSM API changesets still open 25 h after creation (hourly from the poller; `reconcile_open_changesets`) |
 | `changesets/ingest/locate.py` | geohash + country for parsed changesets (Shapely/pyproj), used at ingest |
-| `changesets/ingest/writers/` | Ingestion storage writers (`base.py` contract, `clickhouse.py`, `timescale.py`), selected by `INGEST_BACKENDS` |
-| `changesets/rollups.py` | Legacy Postgres rollups + `FilterValue` refresh (Timescale side) |
-| `changesets/geo.py` | Geohash helpers (precision per viewport, bbox cover, encode/decode) + grid/bbox SQL for the Timescale geo queries |
+| `changesets/ingest/writers/` | Ingestion storage writers (`base.py` contract, `clickhouse.py`), selected by `INGEST_BACKENDS` |
+| `changesets/geo.py` | Geohash helpers (precision per viewport, bbox cover, encode/decode); its grid/bbox SQL is only imported by old migrations |
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |
 | `changesets/management/commands/import_from_dump.py` | Bulk planet-dump importer |
 | `changesets/templates/changesets/{dashboard,objects,editors}.html` | Page HTML shells only |

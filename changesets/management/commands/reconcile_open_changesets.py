@@ -1,5 +1,4 @@
 from django.core.management.base import BaseCommand
-from django.db import connection
 
 from changesets.ingest.reconcile import reconcile, stale_open_changesets
 
@@ -17,9 +16,6 @@ class Command(BaseCommand):
         parser.add_argument('--dry-run', action='store_true', help='Only count them')
 
     def handle(self, *args, **options):
-        # The Timescale writer's existence checks and deletes can run past the
-        # role's default statement timeout over a large batch.
-        connection.cursor().execute("SET statement_timeout = 0")
         ids = stale_open_changesets(options['days'])
         self.stdout.write(f'{len(ids)} changesets still open more than 25 h after creation')
         if options['dry_run'] or not ids:

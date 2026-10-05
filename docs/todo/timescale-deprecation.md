@@ -17,21 +17,25 @@ only once nothing reads it any more.
 
 1. **Done** — ClickHouse in the base `docker-compose.yml`, defaults switched in `settings.py`,
    Timescale demoted to second writer.
-2. **Stop serving from Timescale's maintenance-heavy parts**: nothing reads the CAggs unless
-   `ANALYTICS_BACKEND=timescale` or the override asks for it, but their refresh policies still run.
-   Decide whether the fallback is still wanted; if not, pause the CAgg policies (and compression)
-   to free the host's I/O.
-3. **Stop writing**: drop `timescale` from the `INGEST_BACKENDS` default. From then on the
-   Timescale copy goes stale, so the backend, the override value and the parity checker's
-   Timescale side should go in the same change (`changesets/analytics/timescale/`,
-   `changesets/ingest/writers/timescale.py`, the `timescale` entries in both registries).
+2. **Done (2026-10-05)** — CAgg policies no longer matter: nothing reads them.
+3. **Done (2026-10-05)** — stopped writing (`INGEST_BACKENDS=clickhouse`) and removed the read
+   side: the Timescale backend and writer, `rollups.py`, `cagg_maintenance.py`, the CAgg /
+   FilterValue / backfill commands, `load_country_boundaries`, the poller's FilterValue refresh.
+   `check_backend_parity` now compares `clickhouse_raw` with `clickhouse`; `recompute_locations`
+   reads and fixes ClickHouse; the raw API's serializer no longer uses the model (API output
+   byte-identical; the OpenAPI schema lost only the Postgres column bounds). Checked before:
+   ClickHouse and the Timescale daily CAgg both count 189,925,365 changesets, every year equal.
 4. **Drop the schema** in a migration: the CAggs, the `changesets_changeset` hypertable and its
    trigger, `FilterValue` (ClickHouse's `filter_values` replaces it), the old rollup tables
    (`DailyVolume`/`DailyBreakdown`, 415 MB, unread since the CAggs; `changesets/rollups.py`,
    `refresh_rollups`, `RollupState`), the unused `changesets_changeset_id_idx` (758 MB), and the
    Timescale-only management commands (`refresh_caggs`, `backfill_*` CAgg/FilterValue commands,
    `recompute_locations`).
-5. **Swap the image**: `timescale/timescaledb-ha` → plain `postgres` once no migration needs the
+5. **Replace Postgres with SQLite** (decided 2026-10-05) for what's left: the poller positions
+   and Django's tables, a few MB. Test concurrent writes from three containers on the
+   host-shared folder first (Colima); fallback: a Docker volume inside the VM. This replaces the
+   image swap below.
+   Was: **Swap the image**: `timescale/timescaledb-ha` → plain `postgres` once no migration needs the
    `timescaledb`/`postgis` extensions any more (old migrations that create them need squashing or a
    guard first). PostGIS is already unused at ingest — country lookup is
    `changesets/ingest/locate.py` against `changesets/data/country_boundaries.geojson` — but

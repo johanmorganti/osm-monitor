@@ -33,10 +33,10 @@ had no real usage.
 ## Data flow
 
 ```
-planet.osm.org (minutely replication)  ──┐                      ┌──> ClickHouse `changesets` ──> daily_rollup, filter_values
-                                          ├──> parse + locate ───┤        (primary, serves the API)    (refreshed daily)
-OSM full changesets dump (bulk import) ──┘   (osm_fetcher,       └──> Postgres changesets_changeset ──> cagg_*, FilterValue
-                                               ingest/locate.py)        (TimescaleDB, deprecated copy)
+planet.osm.org (minutely replication)  ──┐
+                                          ├──> parse + locate ──> ClickHouse `changesets` ──> daily_rollup, filter_values,
+OSM full changesets dump (bulk import) ──┘   (osm_fetcher,          (serves the API)            map rollups (refreshed daily)
+                                               ingest/locate.py)
 
 planet.osm.org (minutely + daily osmChange diffs) ──> poll_diffs (ingest/osmchange.py, ingest/objects.py)
     ──> ClickHouse object_changes, object_change_features (all time), object_versions (92 days)
@@ -60,10 +60,10 @@ Two independent processes ingest changesets and safely converge:
 Both paths funnel through the same batch logic in `osm_fetcher.py` (`import_changeset_batch`):
 parse once, compute geohash + country in Python (`changesets/ingest/locate.py`), then hand the
 records to every writer in `INGEST_BACKENDS` (`changesets/ingest/writers/`). Each writer is an
-idempotent upsert by `changeset_id` (a changeset is replaced only when its `changes_count` grew):
-ClickHouse just inserts and lets `ReplacingMergeTree` keep the latest version (queries read with
-`FINAL`); the Timescale writer checks which ids already exist and inserts only the new or grown
-ones. So the two paths — and a retried batch — overlap harmlessly instead of double-counting.
+idempotent upsert by `changeset_id` (a changeset is replaced when its `changes_count` grew or it
+closed): ClickHouse just inserts and lets `ReplacingMergeTree` keep the latest version (queries
+read with `FINAL`). So the two paths — and a retried batch — overlap harmlessly instead of
+double-counting.
 
 The feed sometimes never publishes a changeset's closing update, so the poller also re-fetches,
 hourly, the changesets still stored as open 25 h after creation from the OSM API
@@ -83,9 +83,10 @@ to `changesets` for the day and the filters) for `group_by`/`dimension=action|ob
 shown in the Objects page's "What was changed" section. Design, measurements and the checks against
 `changes_count`: [`decisions/object-changes.md`](decisions/object-changes.md).
 
-The rest of this document describes the **TimescaleDB backend, which is deprecated** (see
-`TODO.md`'s "Phase out TimescaleDB"): it still runs and still receives every changeset, but the API
-reads ClickHouse by default. For the ClickHouse side, see
+**The TimescaleDB sections below describe a removed design.** Since 2026-10-05 nothing writes
+to or reads from TimescaleDB; its tables are being dropped
+([`todo/timescale-deprecation.md`](todo/timescale-deprecation.md)), and these sections go with
+them. For how analytics work now, see
 [`decisions/analytics-backends.md`](decisions/analytics-backends.md) and the docstring of `changesets/analytics/clickhouse/backend.py`.
 
 ## Why a hypertable

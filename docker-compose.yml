@@ -141,11 +141,10 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
-    # load_country_boundaries --if-empty: ingestion resolves country_code
-    # against country_boundaries, so a fresh database needs it loaded before
-    # any changeset is ingested — a no-op once loaded. clickhouse_migrate
-    # applies the ClickHouse schema (idempotent).
-    command: sh -c "python manage.py migrate --no-input && python manage.py load_country_boundaries --if-empty && python manage.py clickhouse_migrate"
+    # clickhouse_migrate applies the ClickHouse schema (idempotent). Country
+    # lookup at ingest reads changesets/data/country_boundaries.geojson
+    # directly (changesets/ingest/locate.py), so no table needs loading.
+    command: sh -c "python manage.py migrate --no-input && python manage.py clickhouse_migrate"
 
   web:
     build: .

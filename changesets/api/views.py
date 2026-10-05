@@ -13,7 +13,7 @@ from rest_framework.views import APIView
 
 from ..analytics import DIMENSIONS, EDITOR_VERSION, HASHTAG, OBJECT_DIMENSIONS, ChangesetQuery, backend_for
 from ..geo import GEOHASH_PREFIX_LENGTH, geohash_cell_size_degrees, geohash_precision_for_bbox
-from ..models import FilterValue, SequenceState
+from ..models import SequenceState
 from ..serializers import ChangesetSerializer
 from .params import resolve_filters, pick_interval, parse_bbox
 from .schema import FILTER_PARAMS
@@ -653,7 +653,7 @@ class AutocompleteView(APIView):
     def get(self, request):
         field = request.query_params.get('field', '')
         q = request.query_params.get('q', '')
-        if field not in dict(FilterValue.FIELD_CHOICES):
-            valid = ', '.join(dict(FilterValue.FIELD_CHOICES))
+        if field not in DIMENSIONS:
+            valid = ', '.join(DIMENSIONS)
             return Response({'error': f'field must be one of: {valid}'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(backend_for(request).autocomplete(field, q))
