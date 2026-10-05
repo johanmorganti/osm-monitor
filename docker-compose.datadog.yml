@@ -61,6 +61,13 @@ services:
       DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL: "true"
       # The agent's own logs are noise next to the app's.
       DD_CONTAINER_EXCLUDE_LOGS: "name:datadog-agent"
+      # Live Processes: every process of the Docker VM (all containers' and the
+      # VM's own), with pid: host below. Under Colima that's the Linux VM, not
+      # macOS: the Mac's own processes would need an agent installed natively.
+      DD_PROCESS_CONFIG_PROCESS_COLLECTION_ENABLED: "true"
+    # The host's PID namespace, so process collection sees every process, not
+    # only the agent's own container.
+    pid: host
     # Headroom for log collection from several busy containers (e.g. parallel
     # import_from_dump workers): it sat at ~460MB under 512m.
     mem_limit: 1g
@@ -71,6 +78,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc/:/host/proc/:ro
       - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+      # User names for Live Processes instead of bare uids.
+      - /etc/passwd:/etc/passwd:ro
       # Tail container log files directly (cheaper than streaming them over
       # the docker socket); positions persist so a restart doesn't resend.
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

@@ -136,6 +136,9 @@ and `DD_CLICKHOUSE_PASSWORD`.
   the pollers in `ddtrace-run`; `osm_changeset_api/logging_json.py` emits structured JSON logs with
   `dd.trace_id`/`dd.span_id` injected (`DD_LOGS_INJECTION=true`), so a log line and the trace it
   happened during are correlated in Datadog.
+- **Live Processes**: the agent shares the host's PID namespace (`pid: host`) and collects every
+  process of the Docker VM, all containers' and the VM's own. Under Colima that's the Linux VM,
+  not macOS: the Mac's own processes would need an agent installed natively.
 - **Database Monitoring**: ClickHouse, through the `datadog` user `clickhouse_migrate` creates from
   `DD_CLICKHOUSE_PASSWORD` (read access to `system.*`, plus the app database so it can `EXPLAIN`
   the queries it captures).
