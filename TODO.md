@@ -15,4 +15,5 @@ history.
 - [Object changes: longer ranges, window](docs/todo/object-changes.md) — built, backfilled and checked (every closed changeset's counts equal `changes_count`); open: edits over ranges longer than a week, the 92-day window.
 - [Widest changesets: find a list worth showing](docs/todo/widest-changesets.md) — paused: the area-ranked table was removed (all continent-sized, mostly ordinary edits); a threshold list was too slow on full history and empty for reasonable contributors; next idea is a ranking by area per object.
 - [Decide what the README should be](docs/todo/readme-shape.md) — it overlaps with ARCHITECTURE, DEPLOYMENT and CLAUDE.md; decide its audience and what it keeps.
+- [MCP server](docs/todo/mcp-server.md) — let AI assistants query the data through the same backend contract as the API; where it runs and who can access it are open.
 - [Dashboard: new graph/section ideas](docs/todo/dashboard-new-graphs.md) — hashtag filter, Objects page speed over multi-year ranges, StreetComplete quest breakdown, discussion activity, new-vs-returning contributors. Geo map, per-country breakdown, Objects page and hashtag toplist are done.
