@@ -28,9 +28,10 @@ services:
     ulimits:
       nofile: {soft: 262144, hard: 262144}
     # ClickHouse sizes its own memory budget from the container limit (90% by
-    # default). 6g since 2026-10-03 (was 4g), taken from Postgres: the object
-    # tables (object_versions) add large merges and queries.
-    mem_limit: 6g
+    # default). 5g in an 8 GB VM (2026-10-05): its largest query in two days
+    # took 2.9 GB, typical ones ~30 MB, and the rest of the VM's memory serves
+    # as page cache for its data files.
+    mem_limit: 5g
     ports:
       - "127.0.0.1:8123:8123"   # HTTP interface, local only (benchmarks, manual queries)
     # Datadog ClickHouse check + Database Monitoring, used only when the

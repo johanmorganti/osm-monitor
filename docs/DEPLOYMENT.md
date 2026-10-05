@@ -27,7 +27,7 @@ Docker runs inside a VM (Colima, Docker Desktop), that directory must be shared 
 otherwise the bind mount silently resolves to an empty VM-local directory. With Colima:
 
 ```bash
-colima start --cpu 4 --memory 13 --disk 80 --vm-type vz --mount-type virtiofs \
+colima start --cpu 4 --memory 8 --disk 80 --vm-type vz --mount-type virtiofs \
   --mount "$HOME/osm-monitor-data:w" --mount "$PWD:w"
 ```
 
@@ -46,10 +46,15 @@ sudo sh -c 'sysctl -w kern.maxfiles=524288 kern.maxfilesperproc=262144 && printf
 colima stop && colima start
 ```
 
-The services' `mem_limit`s in `docker-compose.yml` are sized for ~13GB available to Docker:
-ClickHouse 6 GB (it sizes its own memory budget from it), the diff poller 1 GB, `web` and the
-changeset poller 512 MB each, the optional Datadog agent 1 GB; adjust them together for a
-different machine.
+The VM has 8 GB (since 2026-10-05, was 13 GB with Postgres) on a 16 GB Mac. The services'
+`mem_limit`s in `docker-compose.yml` add up to about that: ClickHouse 5 GB (it sizes its own
+memory budget from it), the diff poller 1 GB, `web` and the changeset poller 512 MB each, the
+optional Datadog agent 1 GB. They're ceilings: in normal use the containers take ~2 GB, and the
+rest of the VM's memory is page cache for ClickHouse's data files, which is what makes repeated
+queries fast. Measured before the change: 1.8 GB used, 8.8 GB of cache, ClickHouse's largest query
+in two days 2.9 GB. If long-range pages get slower, 10 GB is the middle ground; adjust the limits
+together for a different machine. Changing the VM's memory needs `colima stop` then
+`colima start --memory <GB>` (the other settings are kept).
 
 **Object changes (`diff-poller`).** On its first start it follows the minutely diffs from the
 latest daily diff on, then backfills 92 days of daily diffs behind that, one per round (~3 min
