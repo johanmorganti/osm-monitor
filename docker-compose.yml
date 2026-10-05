@@ -124,8 +124,7 @@ services:
 
   # One-shot: runs migrations once before web/poller start, instead of each
   # of them running `migrate` themselves on every container start (the old
-  # entrypoint.sh behavior) — that raced when both started together, see
-  # TODO.md's "Migration race" entry.
+  # entrypoint.sh behavior) — that raced when both started together.
   migrate:
     build: .
     env_file: .env

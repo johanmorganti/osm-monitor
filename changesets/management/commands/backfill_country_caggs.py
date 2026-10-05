@@ -30,7 +30,7 @@ class Command(BaseCommand):
         "(COUNTRY_CAGG_NAMES above). Idempotent — safe to re-run or interrupt and resume "
         "(refresh_continuous_aggregate over an already-current range is a cheap no-op). "
         "Auto-resuming as of 2026-09-22: this backfill crashed Postgres mid-run repeatedly (see "
-        "docs/todo/continuous-aggregates-migration.md) — even with max_parallel_workers_per_"
+        "docs/todo/timescale-deprecation.md) — even with max_parallel_workers_per_"
         "gather=0 now a role default and small/paced batches, sustained back-to-back CALLs for "
         "roughly 20-45 minutes still crashed it, regardless of which specific CAgg "
         "was in flight or how the work was paced. This command walks the range one batch at a "

@@ -43,7 +43,7 @@ def refresh_caggs_over_range(start, end, cagg_names=ALL_CAGG_NAMES, batch_days=3
     every name in cagg_names, walking [start, end) in batch_days-sized
     chunks — never one call over the whole range: an earlier single-huge-
     range attempt on cagg_volume_hourly appeared to stall (see
-    docs/todo/continuous-aggregates-migration.md's history), and the
+    docs/todo/timescale-deprecation.md's history), and the
     geohash/country backfill session confirmed CALL refresh_continuous_
     aggregate over a large/dense range can trigger the same parallel-worker
     /dev/shm exhaustion crash `docker-compose.yml`'s `shm_size` comment

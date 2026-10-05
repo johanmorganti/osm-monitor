@@ -172,14 +172,14 @@ LOGGING = {
 }
 
 # Analytics backend answering the public API (see changesets/analytics/).
-# 'timescale' still works but is deprecated (see TODO.md).
+# 'timescale' still works but is deprecated (see docs/todo/timescale-deprecation.md).
 ANALYTICS_BACKEND = os.environ.get('ANALYTICS_BACKEND', 'clickhouse')
 # Internal per-request backend override (X-Analytics-Backend + X-Analytics-Token
 # headers), for benchmarks and parity checks. Unset = disabled.
 ANALYTICS_OVERRIDE_TOKEN = os.environ.get('ANALYTICS_OVERRIDE_TOKEN', '')
 
 # Storage writers ingestion feeds, primary first (see changesets/ingest/writers/).
-# Timescale keeps receiving a copy until its read path is retired (see TODO.md).
+# Timescale keeps receiving a copy until its read path is retired (see docs/todo/timescale-deprecation.md).
 INGEST_BACKENDS = [b.strip() for b in os.environ.get('INGEST_BACKENDS', 'clickhouse,timescale').split(',') if b.strip()]
 
 # ClickHouse connection (the `clickhouse` service in docker-compose.yml).

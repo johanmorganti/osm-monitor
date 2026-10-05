@@ -125,8 +125,8 @@ refresh, Django only maps onto them for querying) and `changesets/analytics/time
 A query filtered by *two or more* of those dimensions at once (e.g. a toplist filtered by
 `imagery`, grouped by `editor`) has no matching CAgg — each one only tracks its own single
 dimension — and falls back to querying `Changeset` directly (`changesets/analytics/timescale/backend.py`'s
-`filtered_changesets`). This is a real, currently-unsolved performance cliff for that specific
-query shape; see `docs/todo/continuous-aggregates-migration.md`.
+`filtered_changesets`). This is a real, unsolved performance cliff for that specific
+query shape on the TimescaleDB backend, which is being phased out; see `docs/todo/timescale-deprecation.md`.
 
 CAggs refresh themselves via TimescaleDB's own background job scheduler
 (`add_continuous_aggregate_policy`, registered per-CAgg in each migration) — no application code
@@ -136,7 +136,7 @@ while the changeset is still open (bounded by OSM's 24h max open time) — see
 [`decisions/old-dated-rows.md`](decisions/old-dated-rows.md) before assuming this window is too
 narrow or too wide. A deliberate bulk/backward import lands outside that window and needs an
 explicit `CALL refresh_continuous_aggregate(<view>, <lo>, <hi>)` — not yet automated for
-`import_from_dump.py`, see `docs/todo/continuous-aggregates-migration.md`.
+`import_from_dump.py`, see `docs/todo/timescale-deprecation.md`.
 
 **`FilterValue`** (distinct known contributor/editor/imagery values, globally deduplicated — no
 date dimension) backs the dashboard's autocomplete inputs. Populated incrementally by
@@ -152,7 +152,7 @@ a full-table scan on every keystroke.
 in `changesets/rollups.py` predate the CAgg design above and nothing reads them anymore —
 `refresh_rollups()` remains callable only as a manual escape hatch (`manage.py refresh_rollups`).
 Dropping them outright is a pending follow-up migration — see
-`docs/todo/continuous-aggregates-migration.md`.
+`docs/todo/timescale-deprecation.md`.
 
 ## API design
 
@@ -209,12 +209,24 @@ and `DD_POSTGRES_PASSWORD`.
 
 ## Deployment
 
-`docker-compose.yml` defines three services: `db` (TimescaleDB), `web` (gunicorn, single worker —
-see `TODO.md` for why that's a known limitation), `poller` (the continuous ingester);
+`docker-compose.yml` defines six services:
+
+- `db`: Postgres with TimescaleDB and PostGIS (app state, `SequenceState`/`DiffState`, the
+  deprecated Timescale copy of the changesets).
+- `clickhouse`: the analytics store the API reads (changesets, object tables, rollups).
+- `migrate`: one-shot, runs before the others start: Django migrations, `load_country_boundaries
+  --if-empty`, `clickhouse_migrate` (the ClickHouse schema and refreshable rollups). A separate
+  service so two containers never run migrations concurrently.
+- `web`: gunicorn, 2 `gthread` workers × 8 threads (`entrypoint.sh` has the measurement behind
+  that number), behind a 30 s Postgres statement timeout and ClickHouse's 30 s query cap.
+- `poller`: `poll_sequences`, the changeset feed (plus FilterValue refreshes and the hourly
+  re-fetch of changesets left open, `ingest/reconcile.py`).
+- `diff-poller`: `poll_diffs`, the minutely/daily osmChange diffs into the object tables.
+
 `docker-compose.datadog.yml` optionally adds `datadog-agent` (see Observability). `deploy.sh`
-stamps the build with the current git commit (`GIT_VERSION`, used as Datadog's `DD_VERSION` tag
-when enabled), then `docker compose build && up -d`. Migrations and static files are handled by `entrypoint.sh` on
-every container start.
+checks `.env`, stamps the build with the current git commit (`GIT_VERSION`, Datadog's
+`DD_VERSION` tag when enabled), then runs `docker compose build && up -d`; `entrypoint.sh` only
+collects static files and starts gunicorn (or the given command). Running it: `DEPLOYMENT.md`.
 
 `db/init/`'s scripts only run automatically on a genuinely fresh Postgres data directory
 (the official image's behavior) — recreating `db` against an *existing* volume skips them, so a

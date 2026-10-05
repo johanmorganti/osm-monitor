@@ -41,7 +41,7 @@ class RollupState(models.Model):
     watermark (see changesets.rollups) — the highest Changeset.id already
     merged into the now-unused DailyVolume/DailyBreakdown rollup tables;
     kept only for the manual refresh_rollups escape hatch, no longer
-    advanced automatically (`docs/todo/continuous-aggregates-migration.md`).
+    advanced automatically (`docs/todo/timescale-deprecation.md`).
 
     `last_created_at` is refresh_filter_values_incremental()'s watermark —
     deliberately a *different* column on a *different* field (`created_at`,
@@ -344,7 +344,7 @@ class CaggGeoHashedDaily(models.Model):
 # the other three, and every CAgg adds recurring refresh cost — then built
 # anyway once the contributor-grouped
 # toplist was confirmed to be the remaining slow path (see
-# docs/todo/continuous-aggregates-migration.md). The 3 country pairs
+# docs/todo/timescale-deprecation.md). The 3 country pairs
 # (migration 0048) shipped alongside country replacing language as the
 # dashboard's 5th dimension — no country x language pair, since language
 # has no dashboard caller left to cross it with.

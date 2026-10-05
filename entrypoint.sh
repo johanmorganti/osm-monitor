@@ -15,7 +15,7 @@ fi
 # per-service-start (the old behavior) raced when web and poller started
 # together: a non-idempotent migration (e.g. one registering a TimescaleDB
 # background job) could execute concurrently from both before either
-# committed it as applied, producing duplicate side effects (see TODO.md).
+# committed it as applied, producing duplicate side effects.
 
 if [ "$#" -eq 0 ]; then
     # gthread, not plain sync workers: this workload is almost entirely

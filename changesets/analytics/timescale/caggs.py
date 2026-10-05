@@ -63,7 +63,7 @@ CAGG_VOLUME_MODELS = {'hour': CaggVolumeHourly, 'day': CaggVolumeDaily}
 # confirmed to be the remaining slow path (344K distinct values, so every
 # contributor CAgg adds real refresh cost); country pairs (0048) when country
 # replaced language on the dashboard, hence no country x language pair. Daily
-# only. See docs/todo/continuous-aggregates-migration.md.
+# only. See docs/todo/timescale-deprecation.md.
 PAIR_CAGGS = {
     frozenset({'editor', 'imagery'}): CaggEditorImageryDaily,
     frozenset({'editor', 'language'}): CaggEditorLocaleDaily,

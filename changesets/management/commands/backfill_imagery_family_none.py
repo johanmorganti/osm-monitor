@@ -6,8 +6,8 @@ from changesets.models import Changeset, FilterValue
 # Known non-value strings some editing tools write as the literal
 # `imagery_used` tag when no aerial imagery was used (e.g. `imagery_used=None`).
 # osm_fetcher.py's derivation used to parse these into a non-empty *string*
-# instead of real NULL — see TODO.md's former "imagery_family stores the
-# literal string 'None'" entry. This command fixes rows already imported
+# instead of real NULL (a former TODO.md entry, "imagery_family stores the
+# literal string 'None'", now in git history). This command fixes rows already imported
 # before that derivation was corrected.
 NON_VALUES = ('none', 'unknown', 'n/a')
 
@@ -34,8 +34,8 @@ class Command(BaseCommand):
         self.stdout.write(f'Found {total} changesets with a non-value imagery_family...')
 
         # Matching rows live mostly in uncompressed chunks, but at least one
-        # already-compressed chunk (see TODO.md's "Compression backlog" entry
-        # — only one chunk is compressed so far) also has matches. Postgres/
+        # already-compressed chunk (see docs/decisions/timescale-storage.md
+        # for the compression setup) also has matches. Postgres/
         # TimescaleDB won't let a DML UPDATE decompress more than
         # max_tuples_decompressed_per_dml_transaction (default 100k) tuples
         # in one transaction; raising it here is safe because we already

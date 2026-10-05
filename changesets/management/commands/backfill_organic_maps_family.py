@@ -13,7 +13,8 @@ from changesets.models import CaggEditorDaily, FilterValue
 # happened and every Organic Maps changeset was filed under the truncated
 # `Organic` (whatever `split(' ')[0]` of `created_by` produced). Fixed
 # 2026-09-18; this backfills rows imported before that fix. See
-# docs/todo/editor-family-organic-maps-fix.md for the verification that
+# docs/todo/editor-family-organic-maps-fix.md in git history (removed in
+# commit 859fbea, read it at 859fbea^) for the verification that
 # every row under family `Organic` is a genuine Organic Maps string (no
 # false positives — a blanket remap is safe) and the ~209,579-row scope.
 #
@@ -35,7 +36,7 @@ class Command(BaseCommand):
         "(the code fix landed 2026-09-18; this catches up already-imported data), "
         "then refreshes cagg_editor_daily/cagg_editor_hourly over the affected range. "
         "Idempotent — safe to re-run or interrupt and resume. "
-        "See docs/todo/editor-family-organic-maps-fix.md."
+        "Verification and scope: docs/todo/editor-family-organic-maps-fix.md at commit 859fbea^ (git history)."
     )
 
     def add_arguments(self, parser):

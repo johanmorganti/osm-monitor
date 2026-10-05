@@ -9,14 +9,13 @@ history.
 ## Known issues (deferred)
 
 - [Phase out TimescaleDB](docs/todo/timescale-deprecation.md) — ClickHouse is the default backend and primary writer; Timescale is deprecated, still written to as a fallback. Steps to stop writing, drop the schema and move to plain Postgres (which stays for app state).
-- [Cross-dimension queries + CAgg cleanup](docs/todo/continuous-aggregates-migration.md) — all 9 dimension pairs (contributor/editor/imagery/language/country) now have their own CAggs; `GeoView` with any filter (different shape) still falls back to a raw scan and can time out; old rollup tables/index still need a drop migration.
 - [Existence check spans old chunks](docs/todo/existence-check-wide-range.md) — a batch mixing today's changesets with an old one (comment-driven) makes the Timescale writer's existence check scan every chunk in between.
-- [Filter dropdown pre-population not working](docs/todo/dashboard-filter-dropdown-prepopulation.md) — not yet root-caused.
 - [Poller SequenceState checkpoint granularity](docs/todo/sequencestate-write-amplification.md) — checkpoints every sequence; every-N would cut write count but changes crash-recovery granularity, needs its own decision.
-- Favicon — dashboard has none; needs an actual design.
+- [Favicon](docs/todo/favicon.md) — the site has none; needs a design, then the icon files and a `<link rel="icon">` in the page templates.
 
 ## Planned work
 
 - [Object changes: longer ranges, window](docs/todo/object-changes.md) — built, backfilled and checked (every closed changeset's counts equal `changes_count`); open: edits over ranges longer than a week, the 92-day window.
 - [Widest changesets: find a list worth showing](docs/todo/widest-changesets.md) — paused: the area-ranked table was removed (all continent-sized, mostly ordinary edits); a threshold list was too slow on full history and empty for reasonable contributors; next idea is a ranking by area per object.
+- [Decide what the README should be](docs/todo/readme-shape.md) — it overlaps with ARCHITECTURE, DEPLOYMENT and CLAUDE.md; decide its audience and what it keeps.
 - [Dashboard: new graph/section ideas](docs/todo/dashboard-new-graphs.md) — hashtag filter, Objects page speed over multi-year ranges, StreetComplete quest breakdown, discussion activity, new-vs-returning contributors. Geo map, per-country breakdown, Objects page and hashtag toplist are done.

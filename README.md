@@ -159,13 +159,15 @@ All the aggregate endpoints share the same filters (`start_date`, `end_date`, `c
 ```
 changesets/
   models.py                      # Changeset (hypertable), CAgg models, FilterValue, job state
-  views.py                       # HTML page shells (Overview, Editors, poller status)
+  views.py                       # HTML page shells (Overview, Objects, Editors, poller status)
   api/                           # Public JSON API: endpoints, parameter parsing, OpenAPI annotations
   analytics/                     # Analytics backend interface + implementations (timescale/, clickhouse/)
+  analytics/clickhouse/schema/   # ClickHouse tables and refreshable rollups (applied by clickhouse_migrate)
   ingest/locate.py               # geohash + country for each changeset, computed at ingest
   ingest/writers/                # Storage writers ingestion feeds (timescale, clickhouse)
   ingest/osmchange.py            # Streaming parser for the replication diffs (osmChange)
   ingest/objects.py              # Writes parsed diffs to the ClickHouse object tables
+  ingest/reconcile.py            # Re-fetches changesets the feed left open, from the OSM API
   serializers.py                 # DRF serializer for Changeset
   urls.py                        # /api/... URL patterns
   osm_fetcher.py                 # Fetches & parses OSM replication XML, batched upsert logic
@@ -177,22 +179,26 @@ changesets/
   management/commands/
     poll_sequences.py            # Continuous poller (live + one-time backfill)
     poll_diffs.py                # Object changes from the replication diffs (live + daily backfill)
+    reconcile_open_changesets.py # Re-fetch changesets still open 25 h after creation (the poller does it hourly)
+    clickhouse_migrate.py        # Applies the ClickHouse schema (run by the migrate service)
     import_from_dump.py          # Bulk planet-dump importer
     load_country_boundaries.py   # Loads country_boundaries from the committed GeoJSON
     refresh_rollups.py           # Manual full-rebuild escape hatch (rarely needed)
     backfill_*.py                # One-off backfills for schema changes over existing data
   templates/changesets/
     dashboard.html               # Overview page HTML shell only — no server-rendered data
+    objects.html                 # Objects page HTML shell only
     editors.html                 # Editors page HTML shell only
     changesets.html              # Poller status page (/changeset_import/)
 static/js/
   common.js                      # Shared chart/map/autocomplete helpers
-  dashboard.js, editors.js       # Per-page widget wiring; fetch from the API above
+  dashboard.js, objects.js, editors.js  # Per-page widget wiring; fetch from the API above
 osm_changeset_api/
   urls.py, settings.py, logging_json.py
 db/init/                         # One-time Postgres setup for a fresh data directory
 docs/
-  ARCHITECTURE.md                # Deep dive: data flow, why TimescaleDB, observability
+  ARCHITECTURE.md                # How it works: pages and endpoints, data flow, observability
+  decisions/                     # Architecture decisions and their reasoning, one per file
   DEPLOYMENT.md                  # Running it: Docker Compose, optional Datadog, full-history import
   todo/                          # Detail files for TODO.md's index (one per open item)
 ```

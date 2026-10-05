@@ -27,8 +27,10 @@ only once nothing reads it any more.
    `changesets/ingest/writers/timescale.py`, the `timescale` entries in both registries).
 4. **Drop the schema** in a migration: the CAggs, the `changesets_changeset` hypertable and its
    trigger, `FilterValue` (ClickHouse's `filter_values` replaces it), the old rollup tables
-   (`changesets/rollups.py`, `refresh_rollups`), and the Timescale-only management commands
-   (`refresh_caggs`, `backfill_*` CAgg/FilterValue commands, `recompute_locations`).
+   (`DailyVolume`/`DailyBreakdown`, 415 MB, unread since the CAggs; `changesets/rollups.py`,
+   `refresh_rollups`, `RollupState`), the unused `changesets_changeset_id_idx` (758 MB), and the
+   Timescale-only management commands (`refresh_caggs`, `backfill_*` CAgg/FilterValue commands,
+   `recompute_locations`).
 5. **Swap the image**: `timescale/timescaledb-ha` → plain `postgres` once no migration needs the
    `timescaledb`/`postgis` extensions any more (old migrations that create them need squashing or a
    guard first). PostGIS is already unused at ingest — country lookup is
@@ -36,6 +38,13 @@ only once nothing reads it any more.
    `country_boundaries` and its migrations still exist.
 6. Clean up docs: `docs/decisions/timescale-storage.md` and
    `docs/ARCHITECTURE.md` become history (git), not live guidance.
+
+## History
+
+The CAgg work this retires (pair CAggs, refresh crashes and stalls, the old rollups' cost: ~15% of
+DB time for output nothing read, the filtered-query cliff) was tracked in
+`docs/todo/continuous-aggregates-migration.md`, removed 2026-10-05 as moot once TimescaleDB goes;
+it's in git history (last version: commit 053badf). Code comments that cite its measurements point here.
 
 ## Things that still touch the Postgres `Changeset` model
 

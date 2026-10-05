@@ -226,8 +226,8 @@ def _parse_changeset_element(changeset, log_extra):
                         # non-empty *string* here — the `family or None`
                         # fallback below only catches an empty string, so
                         # these leaked through as a fake imagery provider
-                        # (see TODO.md's former "imagery_family stores the
-                        # literal string 'None'" entry, and
+                        # (a former TODO.md entry, "imagery_family stores the
+                        # literal string 'None'", now in git history, and
                         # backfill_imagery_family_none.py for the one-off
                         # fix to already-imported rows).
                         if family.strip().lower() in ('none', 'unknown', 'n/a', ''):

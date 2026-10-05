@@ -12,7 +12,7 @@ refresh_rollups_incremental()'s `WHERE id > watermark` scan. That scan can't
 use chunk exclusion (`id` isn't the hypertable's partitioning column), so it
 probed the `id` index on all 141 chunks every single call — confirmed via
 pg_stat_statements as ~15% of total DB time in a 20-minute
-sample window, for output nothing reads. See `docs/todo/continuous-aggregates-migration.md`
+sample window, for output nothing reads. See `docs/todo/timescale-deprecation.md`
 for the measurement and the follow-up steps (dropping the tables/columns
 themselves, a bigger migration, deliberately not done in this pass).
 
@@ -39,7 +39,7 @@ invoked by the poller** — see poll_sequences.py. Retained only as a
 human-triggered escape hatch (via the refresh_rollups management command)
 until the follow-up migration mentioned above removes them for good;
 don't add a new automatic caller of these three without re-reading
-`docs/todo/continuous-aggregates-migration.md` first.
+`docs/todo/timescale-deprecation.md` first.
 """
 
 from datetime import datetime, timedelta
@@ -102,7 +102,7 @@ ON CONFLICT (field, value) DO NOTHING;
 
 # Same FilterValue upserts as _INCREMENTAL_SQL above (plus language), standalone —
 # this is the only one of the two still called automatically (see module
-# docstring / `docs/todo/continuous-aggregates-migration.md`). ON CONFLICT DO NOTHING means
+# docstring / `docs/todo/timescale-deprecation.md`). ON CONFLICT DO NOTHING means
 # existence only, no counting, so — unlike DailyVolume/DailyBreakdown's
 # ON CONFLICT DO UPDATE merge — a changeset that gets deleted and
 # recreated with a new id can never double-count here; there is nothing
@@ -233,7 +233,7 @@ def refresh_filter_values_incremental():
     to just the recent chunk(s) a live-polling batch could possibly touch,
     unlike the old `id > watermark` scan this replaces (confirmed cause of
     ~15% of total DB time for output nothing read — see
-    `docs/todo/continuous-aggregates-migration.md`).
+    `docs/todo/timescale-deprecation.md`).
 
     `created_at >= watermark` (inclusive), not `>`: ties at the exact
     watermark instant could otherwise be skipped if they land in a later
