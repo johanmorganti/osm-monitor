@@ -87,9 +87,6 @@ class Command(BaseCommand):
         logger.info("Starting diff poller")
         while True:
             try:
-                # Long writes (a daily diff takes minutes); re-issued every
-                # round because the error path below reconnects.
-                connection.cursor().execute("SET statement_timeout = 0")
                 state = DiffState.objects.first() or self._init_state(replication, options['backfill_days'])
                 did_work = self._live(replication, state, options['batch_files'])
                 did_work = self._backfill_one_day(replication, state) or did_work

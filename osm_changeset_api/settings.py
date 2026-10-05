@@ -14,7 +14,6 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 import os
-import dj_database_url
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -84,22 +83,20 @@ WSGI_APPLICATION = 'osm_changeset_api.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 #
-# Postgres/TimescaleDB always — no SQLite fallback. The schema relies on
-# Postgres/Timescale-specific SQL throughout (rollups.py's raw upserts,
-# the expression indexes in Changeset.Meta, the hypertable conversion in
-# migration 0018), so a SQLite path would need its own parallel
-# implementation of most of that rather than being a lighter alternative.
+# SQLite: only the app's own state lives here (the pollers' positions,
+# Django's tables), a few rows; every changeset and object is in ClickHouse.
+# One file shared by web, poller and diff-poller (SQLITE_PATH, on the host
+# data directory in docker-compose.yml), in WAL mode (changesets/apps.py) so
+# readers never block the pollers' writes. Measured 2026-10-05: 3 containers x
+# 3,000 interleaved writes on the Colima-shared folder, no error, integrity ok.
 DATABASES = {
-    'default': dj_database_url.parse(os.environ.get('DATABASE_URL'), conn_max_age=600),
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': os.environ.get('SQLITE_PATH', str(BASE_DIR / 'db.sqlite3')),
+        # Seconds a write waits for another writer's lock before failing.
+        'OPTIONS': {'timeout': 30},
+    },
 }
-
-# Web-only request-time cap (see docker-compose.yml's DB_STATEMENT_TIMEOUT_MS
-# comment on the web service) — unset for poller/management commands, which
-# need to run long queries (rollup rebuilds, bulk imports) without being cut
-# off.
-_stmt_timeout_ms = os.getenv('DB_STATEMENT_TIMEOUT_MS')
-if _stmt_timeout_ms:
-    DATABASES['default'].setdefault('OPTIONS', {})['options'] = f'-c statement_timeout={_stmt_timeout_ms}'
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators

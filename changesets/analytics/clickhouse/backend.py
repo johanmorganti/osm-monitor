@@ -82,7 +82,7 @@ HASHTAG_JOIN = 'ARRAY JOIN arrayDistinct(arrayMap(x -> lower(x), hashtags)) AS h
 AREA_KM2 = ('40589732.5 * radians(max_lon - min_lon)'
             ' * (sin(radians(max_lat)) - sin(radians(min_lat)))')
 
-# Same cap as the web's Postgres statement_timeout (DB_STATEMENT_TIMEOUT_MS).
+# Per-query time cap for API requests (under gunicorn's 40 s worker timeout).
 QUERY_SETTINGS = {'max_execution_time': 30}
 
 RAW_FIELDS = (

@@ -86,16 +86,6 @@ class Command(BaseCommand):
 
         while True:
             try:
-                # The app role now defaults to a bounded statement_timeout
-                # (db/init/02-role-statement-timeout.sh) so an abandoned
-                # ad-hoc query can't run forever — but this poller
-                # legitimately runs long queries (backfill batches, rollup
-                # refreshes) and must opt out. Issued every iteration, not
-                # once at startup: the except block below calls
-                # connection.close() on error, and the fresh reconnect after
-                # that would otherwise pick the role default back up.
-                connection.cursor().execute("SET statement_timeout = 0")
-
                 latest = fetch_latest_sequence()
 
                 state = SequenceState.objects.first()
