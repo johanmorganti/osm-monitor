@@ -548,15 +548,19 @@ class ClickHouseBackend:
                     FROM {self._table} WHERE {q.where} GROUP BY cell ORDER BY cell""", q.params)
         rollup, raw = hybrid
         raw.add('geohash IS NOT NULL').add(in_cover('geohash'))
+        # The prefix's alias must not be `cell`: ClickHouse would apply the
+        # WHERE's cover to substring(cell, …) instead of the column, and the
+        # rollup's (cell, day) key would skip nothing (Paris, 6 days: 117.9M
+        # rows read instead of 17.3M).
         return self._rows(
-            f"""SELECT cell, sum(n), sum(o) FROM (
-                    SELECT substring(cell, 1, {prefix_len}) AS cell, sum(changesets) AS n, sum(objects) AS o
+            f"""SELECT prefix, sum(n), sum(o) FROM (
+                    SELECT substring(cell, 1, {prefix_len}) AS prefix, sum(changesets) AS n, sum(objects) AS o
                     FROM {table} WHERE day >= {{r_start:Date}} AND day < {{r_end:Date}} AND ({in_cover('cell')})
-                    GROUP BY cell
+                    GROUP BY prefix
                     UNION ALL
                     SELECT substring(geohash, 1, {prefix_len}), count(), sum(changes_count)
                     FROM {self._table} WHERE {raw.where} GROUP BY 1)
-                GROUP BY cell ORDER BY cell""",
+                GROUP BY prefix ORDER BY prefix""",
             {**raw.params, **rollup, **cover_params})
 
     # -- object analysis -----------------------------------------------------
