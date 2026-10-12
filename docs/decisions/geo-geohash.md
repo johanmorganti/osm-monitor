@@ -117,3 +117,13 @@ around one axis of "is this still valid" (here: geographic coverage) silently as
 (resolution) couldn't independently go stale — true for a fixed cell size, false the moment cell
 size became adaptive. Check every axis a cached response actually depends on, not just the one the
 cache key was originally built around.
+
+**2026-10-12: an alias undid the rollup's key.** The fine map's hybrid query read
+`substring(cell, 1, N) AS cell` from `geo_cells_daily`. ClickHouse resolves aliases in `WHERE`, so
+the geohash cover filtered `substring(cell, …)` rather than the column, and the `(cell, day)` key
+skipped nothing: every zoomed-in map read the whole 117.9M-row table (Paris, 6 days, condition cache
+off: 1.96 s; with the alias renamed `prefix`, 17.3M rows in 0.66 s). Results were identical, and
+ClickHouse's query condition cache hid it on repeated views, so only `system.query_log`'s
+`read_rows` showed it. The toplist hit the same trap with `name` (see its comment in `backend.py`).
+Never alias an expression with the name of a column the same query filters on; check `read_rows`,
+not only the duration, when a query should be using a key.

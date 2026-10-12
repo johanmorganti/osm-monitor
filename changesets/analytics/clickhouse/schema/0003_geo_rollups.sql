@@ -22,8 +22,13 @@ CREATE TABLE IF NOT EXISTS geo_cells_daily
 ENGINE = MergeTree
 ORDER BY (cell, day);
 
--- ~3.5 min; the GROUP BY spills to disk past 1.5 GB to stay under the
--- server's memory cap.
+-- ~3 min. Nearly one group per changeset (full-precision geohash x day), so
+-- memory is the constraint: the GROUP BY spills to disk past 1.5 GB, and 2
+-- threads (1 for the insert) keep the whole query under the server's 4.5 GiB
+-- cap. On the default 4 threads its peak grew from 1.5 to 3.6 GiB between
+-- 2026-10-06 and 10-10, and it ran out of memory on 10-11. Measured 10-12
+-- with 2 threads: 1.70-2.03 GiB over 3 runs, same duration (182-188 s).
+-- (A lower spill threshold with smaller insert blocks ran out of memory.)
 CREATE MATERIALIZED VIEW IF NOT EXISTS geo_cells_daily_refresh
 REFRESH EVERY 1 DAY OFFSET 5 HOUR
 TO geo_cells_daily
@@ -35,7 +40,20 @@ AS SELECT
 FROM changesets FINAL
 WHERE geohash IS NOT NULL AND created_at < toDateTime(today() - 1)
 GROUP BY cell, day
-SETTINGS max_bytes_before_external_group_by = 1500000000;
+SETTINGS max_bytes_before_external_group_by = 1500000000, max_threads = 2, max_insert_threads = 1;
+
+-- CREATE ... IF NOT EXISTS leaves an existing view as it was: this brings one
+-- created before 2026-10-12 to the query above (same query, kept identical).
+ALTER TABLE geo_cells_daily_refresh MODIFY QUERY
+SELECT
+    geohash AS cell,
+    toDate(created_at) AS day,
+    count() AS changesets,
+    sum(changes_count) AS objects
+FROM changesets FINAL
+WHERE geohash IS NOT NULL AND created_at < toDateTime(today() - 1)
+GROUP BY cell, day
+SETTINGS max_bytes_before_external_group_by = 1500000000, max_threads = 2, max_insert_threads = 1;
 
 -- One row per (day, 3-character cell), derived from geo_cells_daily right
 -- after each of its refreshes.
