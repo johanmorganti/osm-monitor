@@ -13,7 +13,7 @@ mkdir -p <SQLITE_DIR> <CLICKHOUSE_DATA_DIR>   # host directories named in .env
 ./deploy.sh            # preflight checks, build, start clickhouse, migrate, web, poller, diff-poller
 ```
 
-The dashboard is on `http://localhost:5006/`, the API docs on `http://localhost:5006/api/docs/`.
+The dashboard is on `http://localhost:5006/`, the API / MCP docs on `http://localhost:5006/api/docs/`, the MCP server on `http://localhost:5006/mcp`.
 
 `deploy.sh` checks `.env` and the Docker daemon, stamps the build with the current git commit
 (`GIT_VERSION`), then runs `docker compose build && docker compose up -d`. On fresh data

@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}API / MCP · OSM Changeset Monitor{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ swagger_ui_css }}">
+<style>
+    /* Swagger UI inside the site's layout: Tailwind's preflight resets what
+       Swagger UI's stylesheet assumes, and its own title block duplicates
+       this page's header. */
+    .swagger-ui .information-container { display: none; }
+    .swagger-ui .wrapper { padding: 0; max-width: none; }
+    .swagger-ui svg { display: inline; }
+    .swagger-ui .opblock-tag { font-size: 1.125rem; }
+    .swagger-ui select { border: 1px solid #d1d5db; }
+    .swagger-ui input[type=text] { border: 1px solid #d1d5db; }
+    .swagger-ui table { border-collapse: separate; }
+    /* No authentication: DRF's default session auth would show a lock on every operation. */
+    .swagger-ui .scheme-container, .swagger-ui .authorization__btn { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold mb-2">API / MCP</h1>
+    <p class="text-gray-600 mb-8 max-w-3xl">
+        Everything on this site comes from a public JSON API, and the same data is available to AI
+        assistants through an MCP server. Both are free to use, need no key, and return the same
+        numbers as the dashboard.
+    </p>
+
+    <div class="grid grid-cols-1 gap-8 md:grid-cols-2 mb-8">
+        <section class="bg-white rounded-lg shadow-lg p-6 min-w-0">
+            <h2 class="text-xl font-semibold mb-2">REST API</h2>
+            <p class="text-gray-600 mb-4">
+                Plain HTTP GET with query parameters, JSON responses. Dates are UTC days
+                (<code>YYYY-MM-DD</code>, end inclusive); without them, endpoints cover the last 7 days.
+            </p>
+            <dl class="text-sm space-y-2 mb-4">
+                <div><dt class="font-medium text-gray-700">Base URL</dt>
+                    <dd><code class="bg-gray-100 rounded px-1" data-url-path="/api/">/api/</code></dd></div>
+                <div><dt class="font-medium text-gray-700">OpenAPI schema</dt>
+                    <dd><a class="text-blue-600 hover:underline" href="{% url 'api-schema' %}">/api/schema/</a> (YAML; <a class="text-blue-600 hover:underline" href="{% url 'api-schema' %}?format=json">JSON</a>)</dd></div>
+            </dl>
+            <p class="text-sm font-medium text-gray-700 mb-1">Example: top editors of the last 7 days</p>
+            <pre class="bg-gray-900 text-gray-100 text-sm rounded-md p-3 whitespace-pre-wrap break-all"><code>curl '<span data-url-path="/api/changesets/toplist/">/api/changesets/toplist/</span>?dimension=editor'</code></pre>
+            <p class="text-sm text-gray-600 mt-4">
+                <a class="text-blue-600 hover:underline" href="#rest-reference">Full reference below</a>, with a
+                "Try it out" button on every endpoint.
+            </p>
+        </section>
+
+        <section class="bg-white rounded-lg shadow-lg p-6 min-w-0">
+            <h2 class="text-xl font-semibold mb-2">MCP server</h2>
+            <p class="text-gray-600 mb-4">
+                A <a class="text-blue-600 hover:underline" href="https://modelcontextprotocol.io/" target="_blank" rel="noopener">Model Context Protocol</a>
+                server, so an assistant such as Claude can answer questions like <em>"which editors
+                created the most buildings in France last month?"</em> from this data.
+            </p>
+            <dl class="text-sm space-y-2 mb-4">
+                <div><dt class="font-medium text-gray-700">URL</dt>
+                    <dd class="flex items-center gap-2">
+                        <code class="bg-gray-100 rounded px-1 break-all" data-url-path="/mcp" id="mcp-url">/mcp</code>
+                        <button type="button" class="copy-btn text-xs px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-100" data-copy-from="mcp-url">Copy</button>
+                    </dd></div>
+                <div><dt class="font-medium text-gray-700">Transport</dt><dd>Streamable HTTP (stateless, JSON responses)</dd></div>
+                <div><dt class="font-medium text-gray-700">Authentication</dt><dd>None</dd></div>
+            </dl>
+            <p class="text-sm text-gray-600">
+                Each tool is one REST endpoint, with the same parameters, limits and answers.
+                <a class="text-blue-600 hover:underline" href="#mcp-tools">The tools are listed below.</a>
+            </p>
+        </section>
+    </div>
+
+    <section class="bg-white rounded-lg shadow-lg p-6 mb-8" id="mcp-connect">
+        <h2 class="text-xl font-semibold mb-4">Connect an assistant</h2>
+        <div class="grid grid-cols-1 gap-6 lg:grid-cols-3 text-sm">
+            <div class="min-w-0">
+                <h3 class="font-semibold mb-1">Claude (web, desktop, mobile)</h3>
+                <p class="text-gray-600">
+                    Settings → Connectors → <em>Add custom connector</em>, name it "OSM Monitor" and paste
+                    the URL above. Then enable it in a conversation from the tools menu.
+                </p>
+            </div>
+            <div class="min-w-0">
+                <h3 class="font-semibold mb-1">Claude Code</h3>
+                <pre class="bg-gray-900 text-gray-100 rounded-md p-3 whitespace-pre-wrap break-all"><code>claude mcp add --transport http osm-monitor <span data-url-path="/mcp">/mcp</span></code></pre>
+            </div>
+            <div class="min-w-0">
+                <h3 class="font-semibold mb-1">Other MCP clients</h3>
+                <p class="text-gray-600 mb-1">Most take a JSON entry like this one:</p>
+                <pre class="bg-gray-900 text-gray-100 rounded-md p-3 overflow-x-auto"><code>{
+  "mcpServers": {
+    "osm-monitor": {
+      "type": "http",
+      "url": "<span data-url-path="/mcp">/mcp</span>"
+    }
+  }
+}</code></pre>
+            </div>
+        </div>
+        <p class="text-sm text-gray-600 mt-4">
+            Questions to start with: <em>"How many changesets were made last week, and with which editors?"</em>,
+            <em>"Which hashtags changed the most objects this month?"</em>,
+            <em>"What are the most edited objects in Germany this week?"</em>
+        </p>
+    </section>
+
+    <section class="bg-white rounded-lg shadow-lg p-6 mb-8" id="mcp-tools">
+        <h2 class="text-xl font-semibold mb-1">MCP tools</h2>
+        <p class="text-sm text-gray-600 mb-4">Read-only; the parameters and descriptions come from the REST API's reference.</p>
+        <div class="divide-y divide-gray-200">
+            {% for tool in mcp_tools %}
+            <details class="py-3 group">
+                <summary class="cursor-pointer flex flex-wrap items-baseline gap-x-3">
+                    <code class="font-semibold text-blue-700">{{ tool.name }}</code>
+                    <span class="text-gray-700">{{ tool.title }}</span>
+                </summary>
+                <div class="mt-3 pl-4 text-sm">
+                    <p class="text-gray-600 whitespace-pre-line mb-3 [overflow-wrap:anywhere]">{{ tool.description }}</p>
+                    {% if tool.inputSchema.properties %}
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-left">
+                            <thead class="text-gray-500 border-b border-gray-200">
+                                <tr><th class="py-1 pr-4 font-medium">Argument</th><th class="py-1 pr-4 font-medium">Type</th><th class="py-1 font-medium">Description</th></tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100 align-top">
+                                {% for name, prop in tool.inputSchema.properties.items %}
+                                <tr>
+                                    <td class="py-1 pr-4 whitespace-nowrap"><code>{{ name }}</code>{% if name in tool.inputSchema.required %} <span class="text-red-600 text-xs">required</span>{% endif %}</td>
+                                    <td class="py-1 pr-4 whitespace-nowrap text-gray-500">{{ prop.type }}{% if prop.format %} ({{ prop.format }}){% endif %}</td>
+                                    <td class="py-1 text-gray-700 [overflow-wrap:anywhere]">{{ prop.description }}{% if prop.enum %}<div class="text-gray-500 mt-0.5">One of: {% for v in prop.enum %}<code>{{ v }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                </div>
+            </details>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="bg-white rounded-lg shadow-lg p-6" id="rest-reference">
+        <h2 class="text-xl font-semibold mb-4">REST API reference</h2>
+        <div id="swagger-ui"></div>
+    </section>
+</div>
+
+<script src="{{ swagger_ui_bundle }}"></script>
+<script src="{{ swagger_ui_standalone }}"></script>
+<script>
+{% include template_name_js %}
+</script>
+<script src="{% static 'js/api_docs.js' %}"></script>
+{% endblock %}

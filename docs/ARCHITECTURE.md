@@ -18,7 +18,8 @@ stands; it doesn't track day-to-day changes.
 - `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`; each cell carries its geohash as `cell`), `/api/changesets/geo/cell/` → `GeoCellView` (the changesets of one cell, newest first, paginated — the Overview map's click-to-list panel)
 - `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`)
 - `/api/objects/most-edited/` → `MostEditedObjectsView` (objects with the most edits over the last 7 days, from `object_edits`; the Objects page's "Most Edited Objects last week")
-- `/api/docs/` → Swagger UI (drf-spectacular), `/api/schema/` the raw OpenAPI schema — the authoritative API reference
+- `/api/docs/` → `ApiDocsView` (the API / MCP page: how to use the REST API and the MCP server, the MCP tools, and the Swagger UI reference from drf-spectacular inside the site's layout), `/api/schema/` the raw OpenAPI schema — the authoritative API reference
+- `/mcp` → `mcp_endpoint` (MCP server, Streamable HTTP: one tool per endpoint above, each calling it in-process; see [`decisions/mcp-server.md`](decisions/mcp-server.md))
 
 The aggregate endpoints default to the last 7 days when no dates are given. Static files are
 served by Django itself in `DEBUG` mode (`django.conf.urls.static`).

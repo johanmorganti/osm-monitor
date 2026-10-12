@@ -23,6 +23,8 @@ working on the code start from [`CLAUDE.md`](CLAUDE.md). For known issues and de
   the dashboard. Fully documented and explorable at `/api/docs/` (Swagger UI, auto-generated from
   the code via drf-spectacular — that page is always the source of truth for exact
   params/responses, not this README).
+- **MCP server** at `/mcp`: the same endpoints as tools for AI assistants (Claude and other MCP
+  clients), documented on the same API / MCP page.
 - **Object changes**: a second poller reads the replication diffs, which list every object
   version uploaded, and stores counts per changeset by node/way/relation, create/modify/delete
   and feature (kept for all time), plus every object version for the last 92 days (see "How data

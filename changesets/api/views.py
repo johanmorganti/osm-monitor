@@ -112,9 +112,9 @@ class TimeseriesView(APIView):
             '`objects_since` gives the first day covered (earlier days count nothing).'
         ),
         parameters=FILTER_PARAMS + [
-            OpenApiParameter('group_by', OpenApiTypes.STR, description='Split into per-name series: contributor, editor, imagery, language, country, or hashtag (lower-cased; a changeset counts under each of its hashtags). With metric=objects also action (create/modify/delete), object_type (node/way/relation) or feature (the object\'s main tag key: building, highway, …; untagged; unknown for deletes). Omit for plain volume.'),
-            OpenApiParameter('interval', OpenApiTypes.STR, description='Force the bucket width: hour or day. Omit to auto-pick based on range width (see description).'),
-            OpenApiParameter('metric', OpenApiTypes.STR, description='count (changesets, default) or objects (objects changed). With group_by, also what the top 20 are ranked by.'),
+            OpenApiParameter('group_by', OpenApiTypes.STR, enum=[*DIMENSIONS, HASHTAG, *OBJECT_DIMENSIONS], description='Split into per-name series: contributor, editor, imagery, language, country, or hashtag (lower-cased; a changeset counts under each of its hashtags). With metric=objects also action (create/modify/delete), object_type (node/way/relation) or feature (the object\'s main tag key: building, highway, …; untagged; unknown for deletes). Omit for plain volume.'),
+            OpenApiParameter('interval', OpenApiTypes.STR, enum=['hour', 'day'], description='Force the bucket width: hour or day. Omit to auto-pick based on range width (see description).'),
+            OpenApiParameter('metric', OpenApiTypes.STR, enum=['count', 'objects'], description='count (changesets, default) or objects (objects changed). With group_by, also what the top 20 are ranked by.'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
         examples=[OpenApiExample(
@@ -216,8 +216,8 @@ class ToplistView(APIView):
             'the response\'s `objects_since` gives the first day those diffs cover).'
         ),
         parameters=FILTER_PARAMS + [
-            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country, editor_version (requires an editor filter), hashtag (lower-cased; a changeset counts under each of its hashtags); with metric=objects also action (create/modify/delete), object_type (node/way/relation), feature (the object\'s main tag key; untagged; unknown for deletes).'),
-            OpenApiParameter('metric', OpenApiTypes.STR, description='count (changesets) or objects (objects changed). Defaults to count.'),
+            OpenApiParameter('dimension', OpenApiTypes.STR, required=True, enum=[*DIMENSIONS, EDITOR_VERSION, HASHTAG, *OBJECT_DIMENSIONS], description='One of: contributor, editor, imagery, language, country, editor_version (requires an editor filter), hashtag (lower-cased; a changeset counts under each of its hashtags); with metric=objects also action (create/modify/delete), object_type (node/way/relation), feature (the object\'s main tag key; untagged; unknown for deletes).'),
+            OpenApiParameter('metric', OpenApiTypes.STR, enum=['count', 'objects'], description='count (changesets) or objects (objects changed). Defaults to count.'),
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of results (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
@@ -300,7 +300,7 @@ class GeoView(APIView):
             'docstring) are excluded from `cells`.'
         ),
         parameters=FILTER_PARAMS + [
-            OpenApiParameter('resolution', OpenApiTypes.STR, description='coarse (default, global) or fine (requires bbox below).'),
+            OpenApiParameter('resolution', OpenApiTypes.STR, enum=['coarse', 'fine'], description='coarse (default, global) or fine (requires bbox below).'),
             OpenApiParameter('bbox', OpenApiTypes.STR, description='Viewport as "min_lon,min_lat,max_lon,max_lat". Required when resolution=fine.'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
@@ -398,7 +398,7 @@ class SizeBreakdownView(APIView):
             'every day of the range, in order. Defaults to the last 7 days if no dates are given.'
         ),
         parameters=FILTER_PARAMS + [
-            OpenApiParameter('by', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country, day.'),
+            OpenApiParameter('by', OpenApiTypes.STR, required=True, enum=list(BY), description='One of: contributor, editor, imagery, language, country, day.'),
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of names for a dimension (default {DEFAULT_LIMIT}, max {MAX_LIMIT}); ignored for day.'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
@@ -453,7 +453,7 @@ class LargestView(APIView):
             'are given.'
         ),
         parameters=FILTER_PARAMS + [
-            OpenApiParameter('by', OpenApiTypes.STR, description='objects (default) or area.'),
+            OpenApiParameter('by', OpenApiTypes.STR, enum=['objects', 'area'], description='objects (default) or area.'),
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of changesets (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
@@ -644,7 +644,7 @@ class AutocompleteView(APIView):
         summary='Autocomplete filter values',
         description='Up to 10 distinct known values for a filter field, matching a partial query — backs the dashboard\'s filter inputs.',
         parameters=[
-            OpenApiParameter('field', OpenApiTypes.STR, required=True, description='One of: contributor, editor, imagery, language, country.'),
+            OpenApiParameter('field', OpenApiTypes.STR, required=True, enum=list(DIMENSIONS), description='One of: contributor, editor, imagery, language, country.'),
             OpenApiParameter('q', OpenApiTypes.STR, description='Partial value to match (case-insensitive, substring).'),
         ],
         responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},

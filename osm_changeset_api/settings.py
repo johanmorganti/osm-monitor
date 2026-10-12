@@ -211,4 +211,6 @@ SPECTACULAR_SETTINGS = {
     ),
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+    # Swagger UI on the API / MCP page (changesets/templates/changesets/api_docs.html).
+    'SWAGGER_UI_SETTINGS': {'deepLinking': True, 'defaultModelsExpandDepth': -1, 'displayRequestDuration': True},
 }

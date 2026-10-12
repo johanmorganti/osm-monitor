@@ -23,6 +23,9 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
   → [api-endpoint-shapes](docs/decisions/api-endpoint-shapes.md)
 - **Every endpoint/param change updates its `@extend_schema` annotation** in
   `changesets/api/views.py`, so `/api/docs/` stays accurate. Don't rely on the docstring.
+- **MCP tools are the REST endpoints**: a tool calls its endpoint's view and takes its description
+  from the OpenAPI schema, so it never gets its own query or parameter handling. A new endpoint
+  becomes a tool with one line in `TOOL_ENDPOINTS`. → [mcp-server](docs/decisions/mcp-server.md)
 - **Dimension names: DB column, API param and UI label may differ, but each layer is consistent
   everywhere.** Before adding or changing a label, grep the templates and JS for every existing
   string for that dimension. A public API param is never renamed or removed casually (breaking
@@ -81,8 +84,9 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
 
 | Path | Role |
 |---|---|
-| `changesets/views.py` | HTML page shells only (Overview, Objects, Editors, poller status) |
+| `changesets/views.py` | HTML page shells only (Overview, Objects, Editors, API / MCP, poller status) |
 | `changesets/api/` | Public JSON API, backend-agnostic: `views.py` (endpoints + OpenAPI annotations), `params.py` (parsing, defaults, `pick_interval`), `sizes.py` (size histogram buckets, percentile definition), `schema.py` |
+| `changesets/mcp/` | MCP server at `/mcp`: `server.py` (JSON-RPC over Streamable HTTP, instructions), `tools.py` (one tool per API endpoint, from the OpenAPI schema) |
 | `changesets/analytics/` | Analytics backend interface (`base.py`: `Filters`, `AnalyticsBackend`, `NONE_BUCKET`, `DIMENSIONS`) + `registry.py` (`ANALYTICS_BACKEND`) |
 | `changesets/analytics/clickhouse/` | ClickHouse backend (`backend.py`), client, schema (`schema/*.sql`, applied by `clickhouse_migrate`) |
 | `changesets/models.py` | `SequenceState`, `DiffState`: the pollers' positions, in SQLite (`SQLITE_PATH`, WAL mode set in `apps.py`) |
@@ -99,9 +103,9 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
 | `changesets/geo.py` | Geohash helpers (precision per viewport, bbox cover, encode/decode) and the bbox-size threshold for the map |
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |
 | `changesets/management/commands/import_from_dump.py` | Bulk planet-dump importer |
-| `changesets/templates/changesets/{dashboard,objects,editors}.html` | Page HTML shells only |
+| `changesets/templates/changesets/{dashboard,objects,editors,api_docs}.html` | Page HTML shells only |
 | `static/js/common.js` | Shared chart factories, `apiUrl`/`fetchJson`/`loadWidget` (lazy), geo map, autocomplete |
-| `static/js/{dashboard,objects,editors}.js` | Page-specific widget wiring |
+| `static/js/{dashboard,objects,editors,api_docs}.js` | Page-specific widget wiring |
 | `static/output.css` | Compiled Tailwind CSS (poller status page only; the other pages use the Tailwind CDN) |
 | `docs/decisions/` | Architecture decisions, one per file (index: `README.md`) |
 | `docs/ARCHITECTURE.md` | Pages and endpoints, data flow, observability |

@@ -1,6 +1,10 @@
 """HTML page shells. No database access: each page fetches its data
 client-side from the JSON API (changesets/api/views.py)."""
 from django.views.generic import TemplateView
+from drf_spectacular.utils import extend_schema
+from drf_spectacular.views import SpectacularSwaggerView
+
+from .mcp.tools import public_tools
 
 
 class DashboardView(TemplateView):
@@ -32,3 +36,17 @@ class APILandingPageView(TemplateView):
     """Poller status page: the poller's live catch-up batch progress
     (/api/batch-progress/, polled client-side)."""
     template_name = 'changesets/changesets.html'
+
+
+class ApiDocsView(SpectacularSwaggerView):
+    """API / MCP page: how to use the REST API and the MCP server (/mcp), the
+    MCP tools (built from the OpenAPI schema, no database access), and the
+    generated REST reference (Swagger UI) inside the site's own layout."""
+    template_name = 'changesets/api_docs.html'
+    title = 'API / MCP'
+
+    @extend_schema(exclude=True)
+    def get(self, request, *args, **kwargs):
+        response = super().get(request, *args, **kwargs)
+        response.data['mcp_tools'] = public_tools()
+        return response
