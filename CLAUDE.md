@@ -103,8 +103,8 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
 | `changesets/geo.py` | Geohash helpers (precision per viewport, bbox cover, encode/decode) and the bbox-size threshold for the map |
 | `changesets/management/commands/poll_sequences.py` | Long-running poller |
 | `changesets/management/commands/import_from_dump.py` | Bulk planet-dump importer |
-| `changesets/templates/changesets/{dashboard,objects,editors,api_docs}.html` | Page HTML shells only |
-| `static/js/common.js` | Shared chart factories, `apiUrl`/`fetchJson`/`loadWidget` (lazy), geo map, autocomplete |
+| `changesets/templates/changesets/{dashboard,objects,editors,api_docs}.html` | Page HTML shells only (`_drilldown_panel.html`: the drill-down panel both Overview and Objects include) |
+| `static/js/common.js` | Shared chart factories (clickable points: `pointClickOptions`), `apiUrl`/`fetchJson`/`loadWidget` (lazy), geo map, drill-down panel (`openDrilldown`), autocomplete |
 | `static/js/{dashboard,objects,editors,api_docs}.js` | Page-specific widget wiring |
 | `static/output.css` | Compiled Tailwind CSS (poller status page only; the other pages use the Tailwind CDN) |
 | `docs/decisions/` | Architecture decisions, one per file (index: `README.md`) |

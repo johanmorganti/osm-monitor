@@ -122,7 +122,8 @@
             </div>
         </div>
         <div class="lg:col-span-5 bg-white rounded-lg shadow-lg p-6">
-            <h3 class="text-lg font-semibold mb-4">Changesets Over Time</h3>
+            <h3 class="text-lg font-semibold mb-1">Changesets Over Time</h3>
+            <p class="text-xs text-gray-400 mb-3">Click a point to see who and which changesets are behind it</p>
             <div class="relative" style="height: 400px">
                 <div id="changesetChart-spinner" class="absolute inset-0 flex items-center justify-center">
                     <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
@@ -147,7 +148,7 @@
                 </div>
             </div>
             <div>
-                <h3 class="text-lg font-semibold mb-1">Over Time</h3>
+                <h3 class="text-lg font-semibold mb-1">Over Time <span class="text-xs font-normal text-gray-400">· click a bar for details</span></h3>
                 <div class="relative" style="height: 400px; margin-top: 2.25rem">
                     <div id="topContributorsTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
                         <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
@@ -170,7 +171,7 @@
                 </div>
                 <canvas id="topEditorsChart" hidden></canvas>
             </div>
-            <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time</h4>
+            <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time <span class="text-xs font-normal text-gray-400">· click a bar for details</span></h4>
             <div class="relative" style="min-height: 200px">
                 <div id="topEditorsTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
                     <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
@@ -189,7 +190,7 @@
                 </div>
                 <canvas id="topImageriesChart" hidden></canvas>
             </div>
-            <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time</h4>
+            <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time <span class="text-xs font-normal text-gray-400">· click a bar for details</span></h4>
             <div class="relative" style="min-height: 200px">
                 <div id="topImageriesTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
                     <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
@@ -208,7 +209,7 @@
                 </div>
                 <canvas id="topCountriesChart" hidden></canvas>
             </div>
-            <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time</h4>
+            <h4 class="text-sm font-medium text-gray-500 mt-6 mb-2">Over Time <span class="text-xs font-normal text-gray-400">· click a bar for details</span></h4>
             <div class="relative" style="min-height: 200px">
                 <div id="topCountriesTimeChart-spinner" class="absolute inset-0 flex items-center justify-center">
                     <div class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
@@ -223,6 +224,8 @@
         <a id="objectsPageLink" href="{% url 'objects' %}" class="text-blue-600 hover:underline">Objects page</a>.
     </p>
 </div>
+
+{% include "changesets/_drilldown_panel.html" %}
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"

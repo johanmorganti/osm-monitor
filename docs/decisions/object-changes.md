@@ -123,7 +123,9 @@ table itself is 1.4 s of that). A series' top names are ranked first and pushed 
 query, so only their changesets are read (was 7.3 s for 101 days with a second full pass).
 
 The Objects page uses it: a click on a point of any objects-over-time chart opens a panel scoped
-to that point's hour or day and series (largest changesets with OSM/OSMCha links, contributors, editors,
+to that point's hour or day and series (the panel is shared with the Overview page, where it
+counts changesets: `openDrilldown` in `static/js/common.js`, markup in
+`changesets/_drilldown_panel.html`) (largest changesets with OSM/OSMCha links, contributors, editors,
 features or actions); "Top Contributors Over Time" has All / Created / Modified / Deleted.
 
 ## Edits to existing objects: object_edits and the most edited objects (2026-10-03)

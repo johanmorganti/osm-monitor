@@ -1,0 +1,13 @@
+{# Drill-down panel (Overview and Objects pages): filled by openDrilldown in #}
+{# static/js/common.js when a point of a time-series chart is clicked: who #}
+{# and which changesets are behind that hour or day. #}
+<aside id="drilldownPanel" class="fixed top-0 right-0 bottom-0 w-full sm:w-[30rem] bg-white shadow-2xl z-[1200] flex-col" style="display: none" aria-labelledby="drilldownPanel-title">
+    <div class="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-200">
+        <div class="min-w-0">
+            <h4 id="drilldownPanel-title" class="text-sm font-semibold text-gray-800"></h4>
+            <p id="drilldownPanel-subtitle" class="text-xs text-gray-500"></p>
+        </div>
+        <button type="button" id="drilldownPanel-close" class="text-gray-400 hover:text-gray-700 text-xl leading-none px-1" aria-label="Close">&times;</button>
+    </div>
+    <div id="drilldownPanel-body" class="flex-1 overflow-y-auto px-4 py-3 space-y-5 text-sm"></div>
+</aside>

@@ -4,8 +4,36 @@
 // this file only wires this page's specific DOM ids to specific API calls.
 // See CLAUDE.md's "Template/JS separation" architecture note.
 
+// Drill-down panel (openDrilldown, common.js): what's behind a point of a
+// changesets-over-time chart, counted in changesets.
+const CHANGESET_SECTIONS = ['changesets', 'contributor', 'editor', 'country', 'hashtag'];
+const SCOPE_LABELS = {
+    contributor: name => `Changesets by ${name}`,
+    editor: name => `Changesets with ${name}`,
+    imagery: name => `Changesets on ${name} imagery`,
+    country: name => `Changesets in ${name}`,
+};
+
 function renderVolumeChart(volume) {
-    lineChart('changesetChart', volume.dates, volume.series[0].counts, 'Changesets');
+    const counts = volume.series[0].counts;
+    lineChart('changesetChart', volume.dates, counts, 'Changesets', i => openDrilldown({
+        bucket: volume.dates[i], interval: volume.interval, value: counts[i], what: 'Changesets',
+        scope: {}, metric: 'count', sections: CHANGESET_SECTIONS,
+    }));
+}
+
+// A per-name stacked bar chart whose segments open the drill-down for that
+// name (the folded "Other" segment isn't one name, so it doesn't).
+function namedStackedBar(canvasId, data, dimension) {
+    stackedBar(canvasId, data.dates, data.series, (i, name) => {
+        const series = data.series.find(s => s.name === name);
+        if (!series) return;
+        openDrilldown({
+            bucket: data.dates[i], interval: data.interval, value: series.counts[i],
+            what: SCOPE_LABELS[dimension](name), scope: { [dimension]: name },
+            metric: 'count', sections: CHANGESET_SECTIONS,
+        });
+    });
 }
 
 // ── Load ─────────────────────────────────────────────────────────────────────
@@ -33,7 +61,7 @@ loadWidget('topEditorsChart', apiUrl('/api/changesets/toplist/', { dimension: 'e
 });
 loadWidget('topEditorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'editor' }), editorsTime => {
     showChart('topEditorsTimeChart');
-    stackedBar('topEditorsTimeChart', editorsTime.dates, editorsTime.series);
+    namedStackedBar('topEditorsTimeChart', editorsTime, 'editor');
 });
 
 loadWidget('topImageriesChart', apiUrl('/api/changesets/toplist/', { dimension: 'imagery', metric: 'count' }), topImageries => {
@@ -43,7 +71,7 @@ loadWidget('topImageriesChart', apiUrl('/api/changesets/toplist/', { dimension: 
 });
 loadWidget('topImageriesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'imagery' }), imageriesTime => {
     showChart('topImageriesTimeChart');
-    stackedBar('topImageriesTimeChart', imageriesTime.dates, imageriesTime.series);
+    namedStackedBar('topImageriesTimeChart', imageriesTime, 'imagery');
 });
 
 loadWidget('topCountriesChart', apiUrl('/api/changesets/toplist/', { dimension: 'country', metric: 'count' }), topCountries => {
@@ -53,7 +81,7 @@ loadWidget('topCountriesChart', apiUrl('/api/changesets/toplist/', { dimension: 
 });
 loadWidget('topCountriesTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'country' }), countriesTime => {
     showChart('topCountriesTimeChart');
-    stackedBar('topCountriesTimeChart', countriesTime.dates, countriesTime.series);
+    namedStackedBar('topCountriesTimeChart', countriesTime, 'country');
 });
 
 loadWidget('topContributorsChart', apiUrl('/api/changesets/toplist/', { dimension: 'contributor', metric: 'count' }), topContributors => {
@@ -63,7 +91,7 @@ loadWidget('topContributorsChart', apiUrl('/api/changesets/toplist/', { dimensio
 });
 loadWidget('topContributorsTimeChart', apiUrl('/api/changesets/timeseries/', { group_by: 'contributor' }), contributorsTime => {
     showChart('topContributorsTimeChart');
-    stackedBar('topContributorsTimeChart', contributorsTime.dates, contributorsTime.series);
+    namedStackedBar('topContributorsTimeChart', contributorsTime, 'contributor');
 });
 
 // Summary has no chart/spinner of its own — it fills the KPI numbers (which

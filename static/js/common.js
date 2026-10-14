@@ -80,7 +80,9 @@ function foldToTopSeries(series) {
     return [...kept, other];
 }
 
-function stackedBar(canvasId, dates, rawSeries) {
+// `onPointClick(index, name)`: see pointClickOptions; `name` is the clicked
+// segment's series ('Other' for the folded tail).
+function stackedBar(canvasId, dates, rawSeries, onPointClick) {
     const ctx = document.getElementById(canvasId);
     if (!ctx || !rawSeries.length) return;
     const series = foldToTopSeries(rawSeries);
@@ -104,6 +106,7 @@ function stackedBar(canvasId, dates, rawSeries) {
             // every name's color, so a second legend on this smaller chart
             // was purely redundant, at the cost of most of its height.
             plugins: { legend: { display: false } },
+            ...pointClickOptions(onPointClick && ((i, s) => onPointClick(i, series[s].name))),
             scales: {
                 x: dateAxis(dates, true),
                 y: { stacked: true, beginAtZero: true, border: { color: AXIS_BASELINE } },
@@ -190,15 +193,18 @@ function horizontalBar(canvasId, labels, data, label, filterField) {
 
 // Click handling for the time-series charts: `onPointClick(index,
 // datasetIndex)` gets the column nearest the click horizontally (the one the
-// tooltip shows) and, within it, the line closest vertically. By x first, so
-// a click anywhere under a spike opens the spike, not a neighbor whose point
-// happens to be nearer in two dimensions. The cursor says it's clickable.
-// Returns the Chart.js options to spread in.
+// tooltip shows) and, within it, the stacked bar segment under the cursor or
+// else the line (or segment) closest vertically. By x first, so a click
+// anywhere under a spike opens the spike, not a neighbor whose point happens
+// to be nearer in two dimensions. The cursor says it's clickable. Returns
+// the Chart.js options to spread in.
 function pointClickOptions(onPointClick) {
     if (!onPointClick) return {};
     const nearest = (event, chart) => {
         const column = chart.getElementsAtEventForMode(event, 'nearest', { intersect: false, axis: 'x' }, true);
-        return column.sort((a, b) => Math.abs(a.element.y - event.y) - Math.abs(b.element.y - event.y))[0];
+        const under = column.find(({ element: e }) => e.base !== undefined
+            && event.y >= Math.min(e.y, e.base) && event.y <= Math.max(e.y, e.base));
+        return under || column.sort((a, b) => Math.abs(a.element.y - event.y) - Math.abs(b.element.y - event.y))[0];
     };
     return {
         onClick: (event, _elements, chart) => {
@@ -696,6 +702,219 @@ function geoCellPanel(onClose) {
         loadPage();
     };
 }
+
+// ── Drill-down panel ─────────────────────────────────────────────────────────
+// Who and which changesets are behind one point of a time-series chart (the
+// Overview and Objects pages; markup in changesets/_drilldown_panel.html):
+// the same filters as the page, narrowed to that point's time bucket (the
+// chart's interval from the point's start: a day, which the rollups serve,
+// or an hour as two timestamps) and to its series (`scope`: a dimension
+// filter, or action / object_type / feature). Each section is one API call,
+// fetched in parallel.
+const drilldown = (() => {
+    const panel = document.getElementById('drilldownPanel');
+    if (!panel) return null;
+    const body = document.getElementById('drilldownPanel-body');
+    let abort = null;
+
+    function close() {
+        if (abort) abort.abort();
+        abort = null;
+        panel.style.display = 'none';
+    }
+    document.getElementById('drilldownPanel-close').addEventListener('click', close);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && abort) close(); });
+
+    // A point's label ("2026-10-09 11:00" or "2026-10-09", UTC) and the
+    // chart's interval ('hour' | 'day') give the bucket's time range.
+    function bucketParams(bucket, interval) {
+        const day = bucket.slice(0, 10);
+        if (interval !== 'hour') return { start_date: day, end_date: day };
+        const start = new Date(`${bucket.replace(' ', 'T')}:00Z`);
+        const end = new Date(start.getTime() + 3600 * 1000);
+        const iso = d => d.toISOString().replace('.000Z', 'Z');
+        return { start_date: iso(start), end_date: iso(end) };
+    }
+    function bucketLabel(bucket, interval) {
+        const day = bucket.slice(0, 10);
+        const date = `${shortDate(day)}, ${day.slice(0, 4)}`;
+        if (interval !== 'hour') return `${date} (UTC day)`;
+        const hour = parseInt(bucket.slice(11, 13), 10);
+        const pad = h => `${String(h % 24).padStart(2, '0')}:00`;
+        return `${date}, ${pad(hour)}–${pad(hour + 1)} UTC`;
+    }
+
+    function section(title) {
+        const wrap = document.createElement('section');
+        const h = document.createElement('h5');
+        h.className = 'text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2';
+        h.textContent = title;
+        const content = document.createElement('div');
+        content.className = 'text-xs text-gray-400';
+        content.textContent = 'Loading…';
+        wrap.append(h, content);
+        body.appendChild(wrap);
+        return content;
+    }
+
+    // Ranked names with a bar showing each one's share of the clicked total.
+    // Built with DOM nodes, not innerHTML: names are user input.
+    function rankedList(content, results, total, filterField) {
+        content.textContent = '';
+        content.className = '';
+        if (!results.length) {
+            content.className = 'text-xs text-gray-400';
+            content.textContent = 'Nothing in this bucket';
+            return;
+        }
+        const list = document.createElement('ol');
+        list.className = 'space-y-1';
+        results.forEach(r => {
+            const li = document.createElement('li');
+            const line = document.createElement('div');
+            line.className = 'flex items-baseline justify-between gap-2';
+            let name;
+            if (filterField) {
+                name = document.createElement('button');
+                name.type = 'button';
+                name.className = 'text-left text-blue-600 hover:underline truncate';
+                name.title = `Filter the page by this ${filterField}`;
+                name.addEventListener('click', () => applyFilter(filterField, r.name));
+            } else {
+                name = document.createElement('span');
+                name.className = 'text-gray-800 truncate';
+            }
+            name.textContent = r.name;
+            const value = document.createElement('span');
+            value.className = 'tabular-nums text-gray-600 whitespace-nowrap';
+            const share = total ? r.value / total : 0;
+            value.textContent = `${r.value.toLocaleString('en-US')}${total ? ` · ${(share * 100).toFixed(share < 0.1 ? 1 : 0)}%` : ''}`;
+            line.append(name, value);
+            const bar = document.createElement('div');
+            bar.className = 'h-1 rounded bg-gray-100';
+            const fill = document.createElement('div');
+            fill.className = 'h-1 rounded';
+            fill.style.background = RANKING_COLOR;
+            fill.style.width = `${Math.min(share, 1) * 100}%`;
+            bar.appendChild(fill);
+            li.append(line, bar);
+            list.appendChild(li);
+        });
+        content.appendChild(list);
+    }
+
+    function changesetList(content, results, filtered) {
+        content.textContent = '';
+        content.className = '';
+        if (!results.length) {
+            content.className = 'text-xs text-gray-400';
+            content.textContent = 'No changesets in this bucket';
+            return;
+        }
+        const list = document.createElement('ol');
+        list.className = 'divide-y divide-gray-100';
+        results.forEach(r => {
+            const li = document.createElement('li');
+            li.className = 'py-2';
+            const top = document.createElement('div');
+            top.className = 'flex items-baseline justify-between gap-2';
+            const links = document.createElement('span');
+            const osm = document.createElement('a');
+            osm.href = `https://www.openstreetmap.org/changeset/${r.changeset_id}`;
+            osm.target = '_blank';
+            osm.rel = 'noopener';
+            osm.className = 'font-medium text-blue-600 hover:underline';
+            osm.textContent = r.changeset_id;
+            const osmcha = document.createElement('a');
+            osmcha.href = `https://osmcha.org/changesets/${r.changeset_id}`;
+            osmcha.target = '_blank';
+            osmcha.rel = 'noopener';
+            osmcha.className = 'ml-2 text-xs text-gray-400 hover:text-blue-600 hover:underline';
+            osmcha.textContent = 'OSMCha';
+            links.append(osm, osmcha);
+            const when = document.createElement('span');
+            when.className = 'text-xs text-gray-400 whitespace-nowrap';
+            when.textContent = r.created_at.slice(0, 16).replace('T', ' ');
+            top.append(links, when);
+            const meta = document.createElement('div');
+            meta.className = 'text-xs text-gray-600';
+            const objects = filtered
+                ? `${r.objects.toLocaleString('en-US')} of ${r.changes_count.toLocaleString('en-US')} objects`
+                : `${r.changes_count.toLocaleString('en-US')} objects`;
+            meta.textContent = [r.user, r.editor, r.country, objects].filter(Boolean).join(' · ');
+            li.append(top, meta);
+            if (r.comment) {
+                const comment = document.createElement('div');
+                comment.className = 'text-xs text-gray-400 truncate';
+                comment.textContent = r.comment;
+                comment.title = r.comment;
+                li.append(comment);
+            }
+            list.appendChild(li);
+        });
+        content.appendChild(list);
+    }
+
+    function fill(content, url, signal, render) {
+        fetchJson(url, { signal })
+            .then(render)
+            .catch(err => {
+                if (err.name === 'AbortError') return;
+                console.error(`Failed to load ${url}`, err);
+                content.className = 'text-xs text-red-600';
+                content.textContent = 'Failed to load';
+            });
+    }
+
+    // Rankings: [title, toplist dimension, limit, page filter a click sets].
+    const RANKINGS = {
+        contributor: ['Contributors', 'contributor', 10, 'contributor'],
+        editor: ['Editors', 'editor', 5, 'editor'],
+        country: ['Countries', 'country', 5, 'country'],
+        hashtag: ['Hashtags', 'hashtag', 5, null],
+        feature: ['Features', 'feature', 8, null],
+        action: ['Created, modified, deleted', 'action', 3, null],
+    };
+    const OBJECT_FILTERS = ['action', 'object_type', 'feature'];
+
+    // ctx: { bucket, interval, value, what, metric ('count' | 'objects'),
+    //        scope (the series: e.g. { editor: 'JOSM' } or { action: 'modify' }),
+    //        sections (e.g. ['changesets', 'contributor', 'editor', 'feature']) }.
+    // A ranking whose dimension the scope already fixes is left out.
+    return function open(ctx) {
+        if (abort) abort.abort();
+        abort = new AbortController();
+        const { signal } = abort;
+        const scope = { ...bucketParams(ctx.bucket, ctx.interval), ...ctx.scope };
+        const filtered = OBJECT_FILTERS.some(name => ctx.scope[name]);
+
+        document.getElementById('drilldownPanel-title').textContent =
+            `${ctx.what} · ${ctx.value.toLocaleString('en-US')}`;
+        document.getElementById('drilldownPanel-subtitle').textContent =
+            `${bucketLabel(ctx.bucket, ctx.interval)} · with the page's filters`;
+        body.textContent = '';
+        panel.style.display = 'flex';
+
+        ctx.sections.forEach(name => {
+            if (name === 'changesets') {
+                const content = section('Largest changesets');
+                fill(content, apiUrl('/api/changesets/largest/', { by: 'objects', limit: 10, ...scope }), signal,
+                     data => changesetList(content, data.results, filtered));
+                return;
+            }
+            const [title, dimension, limit, filterField] = RANKINGS[name];
+            if (ctx.scope[dimension]) return;
+            const content = section(title);
+            fill(content, apiUrl('/api/changesets/toplist/', { metric: ctx.metric, ...scope, dimension, limit }), signal,
+                 data => rankedList(content, data.results, ctx.value, filterField));
+        });
+    };
+})();
+
+function openDrilldown(ctx) {
+    if (drilldown) drilldown(ctx);
+}
+
 
 // Bins are log-scale, so a bare color swatch would be uninterpretable —
 // label each with the real value (relative to this view's own max, same

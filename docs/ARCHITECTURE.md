@@ -7,7 +7,7 @@ stands; it doesn't track day-to-day changes.
 
 ## Pages and endpoints
 
-- `/` → `DashboardView` (Overview: map, changeset activity, rankings)
+- `/` → `DashboardView` (Overview: map, changeset activity, rankings; a click on a changesets-over-time point or bar opens the drill-down panel, counted in changesets)
 - `/objects/` → `ObjectsView` (objects changed, changeset sizes, largest changesets, rankings by objects incl. hashtags, top contributors over time; a click on an objects-over-time point opens a drill-down panel for that hour or day)
 - `/editors/` → `EditorsView` (one column per top-10 editor family for the selected range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph)
 - `/changeset_import/` → `APILandingPageView` (poller status page — live catch-up batch progress)
