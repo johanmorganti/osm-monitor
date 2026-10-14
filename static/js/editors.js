@@ -22,6 +22,13 @@ const TOP_FAMILIES = ['iD', 'StreetComplete', 'JOSM', 'Rapid', 'Vespucci', 'Go M
 // ever appeared in the range, enough to compute the Others column's
 // toplist (everything not in TOP_FAMILIES) with no per-name requests.
 const RANKING_LIMIT = 1000;
+// What every per-family chart counts: changesets (default) or objects
+// changed, from the page URL's `metric` (the switch above the columns), passed
+// explicitly to each ranking and series. The families stay the same fixed
+// list either way, so switching compares like with like.
+const METRIC = new URLSearchParams(window.location.search).get('metric') === 'objects' ? 'objects' : 'count';
+const METRIC_LABEL = METRIC === 'objects' ? 'Objects changed' : 'Changesets';
+
 // Others' own toplist card is still capped for legibility, same "Top 20"
 // convention used everywhere else in this app — this does not affect the
 // Others graph/stats, which are exact total-minus-named computations, not
@@ -112,11 +119,11 @@ const othersIdx = TOP_FAMILIES.length;
 const once = fn => { let promise; return () => promise || (promise = fn()); };
 const familyCards = [];
 TOP_FAMILIES.forEach((name, i) => {
-    container.insertAdjacentHTML('beforeend', familyCardHtml(i, name, 'Top versions by changeset count'));
+    container.insertAdjacentHTML('beforeend', familyCardHtml(i, name, METRIC === 'objects' ? 'Top versions by objects changed' : 'Top versions by changeset count'));
     familyCards.push(container.lastElementChild);
-    loadWidget(`family-${i}-versions`, apiUrl('/api/changesets/toplist/', { dimension: 'editor_version', editor: name, metric: 'count' }), versions => {
+    loadWidget(`family-${i}-versions`, apiUrl('/api/changesets/toplist/', { dimension: 'editor_version', editor: name, metric: METRIC }), versions => {
         showChart(`family-${i}-versions`);
-        horizontalBar(`family-${i}-versions`, versions.results.map(r => r.name), versions.results.map(r => r.value), 'Changesets');
+        horizontalBar(`family-${i}-versions`, versions.results.map(r => r.name), versions.results.map(r => r.value), METRIC_LABEL);
     });
 });
 
@@ -134,7 +141,7 @@ const loadTopSummaries = TOP_FAMILIES.map((name, i) => once(() =>
 ));
 
 const loadTopSeries = TOP_FAMILIES.map((name, i) => once(() =>
-    fetchJson(apiUrl('/api/changesets/timeseries/', { editor: name }))
+    fetchJson(apiUrl('/api/changesets/timeseries/', { editor: name, metric: METRIC }))
         .then(volume => {
             document.getElementById(`family-${i}-graph-spinner`).style.display = 'none';
             showChart(`family-${i}-graph`);
@@ -155,21 +162,22 @@ familyCards.forEach((card, i) => whenNearViewport(card).then(() => {
 }));
 
 // Others: a single trailing card for every family not in TOP_FAMILIES.
-container.insertAdjacentHTML('beforeend', familyCardHtml(othersIdx, 'Other editor families', 'Every editor family not shown above'));
+container.insertAdjacentHTML('beforeend', familyCardHtml(othersIdx, 'Other editor families',
+    `Every editor family not shown above, by ${METRIC === 'objects' ? 'objects changed' : 'changeset count'}`));
 const othersCardVisible = whenNearViewport(container.lastElementChild);
 
 // Others' toplist: one high-limit unfiltered toplist call, named families
 // filtered out client-side — cheaper than N "not this one" requests, and
 // this app's toplist endpoint has no exclude-list filter to begin with.
 othersCardVisible
-    .then(() => fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: 'count', limit: RANKING_LIMIT })))
+    .then(() => fetchJson(apiUrl('/api/changesets/toplist/', { dimension: 'editor', metric: METRIC, limit: RANKING_LIMIT })))
     .then(ranking => {
         const named = new Set(TOP_FAMILIES.map(n => n.toLowerCase()));
         const rest = ranking.results.filter(r => !named.has(r.name.toLowerCase()));
         document.getElementById(`family-${othersIdx}-versions-spinner`).style.display = 'none';
         showChart(`family-${othersIdx}-versions`);
         const othersDisplay = rest.slice(0, OTHERS_DISPLAY_LIMIT);
-        horizontalBar(`family-${othersIdx}-versions`, othersDisplay.map(r => r.name), othersDisplay.map(r => r.value), 'Changesets');
+        horizontalBar(`family-${othersIdx}-versions`, othersDisplay.map(r => r.name), othersDisplay.map(r => r.value), METRIC_LABEL);
     })
     .catch(err => {
         console.error('Failed to load Others toplist', err);
@@ -185,7 +193,7 @@ const pageSummaryPromise = fetchJson(apiUrl('/api/changesets/summary/'));
 
 othersCardVisible
     .then(() => Promise.all([
-        fetchJson(apiUrl('/api/changesets/timeseries/')), pageSummaryPromise,
+        fetchJson(apiUrl('/api/changesets/timeseries/', { metric: METRIC })), pageSummaryPromise,
         ...loadTopSeries.map(load => load()), ...loadTopSummaries.map(load => load()),
     ]))
     .then(([total, totalSummary, ...rest]) => {
@@ -214,6 +222,17 @@ othersCardVisible
         document.getElementById(`family-${othersIdx}-graph-spinner`).innerHTML =
             '<span class="text-sm text-red-600">Failed to load</span>';
     });
+
+// The Changesets / Objects changed switch: same "URL is the single source of
+// truth" navigation as the filters (applyFilter, common.js).
+document.querySelectorAll('#metricSwitch button').forEach(button => {
+    const on = button.dataset.metric === METRIC;
+    button.classList.toggle('bg-blue-50', on);
+    button.classList.toggle('border-blue-400', on);
+    button.classList.toggle('text-blue-700', on);
+    button.setAttribute('aria-pressed', on);
+    button.addEventListener('click', () => { if (!on) applyFilter('metric', button.dataset.metric); });
+});
 
 // Page-level KPIs (Total Changesets / Total Objects Changed / Avg Objects
 // per Changeset, unfiltered — same 3-number pattern as the main

@@ -9,7 +9,7 @@ stands; it doesn't track day-to-day changes.
 
 - `/` → `DashboardView` (Overview: map, changeset activity, rankings; a click on a changesets-over-time point or bar opens the drill-down panel, counted in changesets)
 - `/objects/` → `ObjectsView` (objects changed, changeset sizes, largest changesets, rankings by objects incl. hashtags, top contributors over time; a click on an objects-over-time point opens a drill-down panel for that hour or day)
-- `/editors/` → `EditorsView` (one column per top-10 editor family for the selected range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph)
+- `/editors/` → `EditorsView` (one column per top-10 editor family for the selected range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph; a Changesets / Objects changed switch, `metric` in the page URL, sets what those count)
 - `/changeset_import/` → `APILandingPageView` (poller status page — live catch-up batch progress)
 - `/api/changesets/` → `ChangesetQueryView` (raw changeset records, filterable; defaults to the last 24 hours, no unfiltered "everything" mode)
 - `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped, `metric=count|objects`; with `metric=objects` also `group_by=action|object_type|feature` and the `action`/`object_type`/`feature` filters, from the object tables)

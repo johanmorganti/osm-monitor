@@ -177,7 +177,9 @@ function horizontalBar(canvasId, labels, data, label, filterField) {
                 },
             },
             scales: {
-                x: { beginAtZero: true, grid: { color: GRID_HAIRLINE } },
+                // Compact ticks (500, 1K, 100M): rankings by objects reach hundreds of
+                // millions, which written out in full run into each other.
+                x: { beginAtZero: true, grid: { color: GRID_HAIRLINE }, ticks: { callback: v => compactNumber.format(v) } },
                 y: { ticks: { autoSkip: false }, grid: { display: false }, border: { color: AXIS_BASELINE } },
             },
             onClick: !filterField ? undefined : (evt, elements, chart) => {

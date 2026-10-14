@@ -39,7 +39,9 @@
                 </button>
             </div>
         </div>
-        <form method="get" id="filter-form" class="hidden"></form>
+        <form method="get" id="filter-form" class="hidden">
+            {% if request.GET.metric %}<input type="hidden" name="metric" value="{{ request.GET.metric }}">{% endif %}
+        </form>
     </div>
 
     <!-- KPIs -->
@@ -69,7 +71,14 @@
          Editors focus" dashboard's per-family sections. TOP_FAMILIES is a
          fixed, hardcoded list (see editors.js) — no ranking API call gates
          these cards, so they're generated and start loading immediately. -->
-    <h2 class="text-2xl font-semibold mb-4">Editor families</h2>
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h2 class="text-2xl font-semibold">Editor families</h2>
+        <div id="metricSwitch" class="flex items-center gap-1" role="group" aria-label="What the charts count">
+            <span class="text-sm text-gray-500 mr-1">Count:</span>
+            <button type="button" data-metric="count" class="px-3 py-1.5 text-sm rounded-md border border-gray-300 hover:bg-gray-100">Changesets</button>
+            <button type="button" data-metric="objects" class="px-3 py-1.5 text-sm rounded-md border border-gray-300 hover:bg-gray-100">Objects changed</button>
+        </div>
+    </div>
     <div id="editorFamilyColumns" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8 mb-12"></div>
 </div>
 
