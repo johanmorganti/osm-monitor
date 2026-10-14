@@ -21,7 +21,7 @@ stands; it doesn't track day-to-day changes.
 - `/api/docs/` → `ApiDocsView` (the API / MCP page: how to use the REST API and the MCP server, the MCP tools, and the Swagger UI reference from drf-spectacular inside the site's layout), `/api/schema/` the raw OpenAPI schema — the authoritative API reference
 - `/mcp` → `mcp_endpoint` (MCP server, Streamable HTTP: one tool per endpoint above, each calling it in-process; see [`decisions/mcp-server.md`](decisions/mcp-server.md))
 
-The aggregate endpoints default to the last 7 days when no dates are given; `hour` narrows a one-day range to one UTC hour (one point of an hourly series). Static files are
+The aggregate endpoints default to the last 7 days when no dates are given; `start_date`/`end_date` also take UTC timestamps (the end then excluded) for any time window, e.g. one point of an hourly series. Static files are
 served by Django itself in `DEBUG` mode (`django.conf.urls.static`).
 
 Ingestion: `manage.py poll_sequences` (continuous poller; first run takes `--start <seq>` or the

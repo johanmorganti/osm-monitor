@@ -10,11 +10,14 @@ DIMENSION_FILTER_PARAMS = [
 ]
 
 DATE_PARAMS = [
-    OpenApiParameter('start_date', OpenApiTypes.DATE, description='Range start (YYYY-MM-DD). Defaults to 7 days before end_date.'),
-    OpenApiParameter('end_date', OpenApiTypes.DATE, description='Range end (YYYY-MM-DD), inclusive. Defaults to today.'),
-    OpenApiParameter('hour', OpenApiTypes.INT, description=(
-        'Narrow a one-day range (start_date = end_date) to one hour, 0-23 UTC: e.g. the hour of an '
-        'hourly timeseries point ("2026-10-09 11:00" -> start_date=end_date=2026-10-09, hour=11).')),
+    OpenApiParameter('start_date', OpenApiTypes.STR, description=(
+        'Range start: a day (YYYY-MM-DD) or an ISO 8601 timestamp (UTC unless an offset is given), '
+        'e.g. 2026-10-09T11:00:00Z. Defaults to 7 days before end_date.')),
+    OpenApiParameter('end_date', OpenApiTypes.STR, description=(
+        'Range end: a day (YYYY-MM-DD), included, or a timestamp, excluded: '
+        'start_date=2026-10-09T11:00:00Z&end_date=2026-10-09T12:00:00Z is one hour, e.g. one point '
+        'of an hourly timeseries. Defaults to today. Ranges that are not whole UTC days read raw '
+        'data, so they suit short windows.')),
 ]
 
 FILTER_PARAMS = DATE_PARAMS + DIMENSION_FILTER_PARAMS

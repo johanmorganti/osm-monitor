@@ -1,5 +1,5 @@
 """Request parsing and the API-level rules shared by every analytics backend."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.utils import timezone
 from rest_framework.exceptions import APIException
@@ -19,29 +19,29 @@ class BadParameter(APIException):
 
 
 def resolve_filters(request, objects=False):
-    """start_date/end_date, hour and the five dimension filters, shared by
-    timeseries/summary/toplist/geo: same params, same "defaults to the last 7
-    days" behavior everywhere. `objects`: also the object filters (action,
-    object_type, feature), for the endpoints that count objects from the
-    diffs. Raises BadParameter on an invalid hour or object filter."""
+    """The range (start_date/end_date) and the five dimension filters, shared
+    by timeseries/summary/toplist/geo: same params, same "defaults to the last
+    7 days" behavior everywhere. Each bound is a day (YYYY-MM-DD; the end day
+    included) or a timestamp (an exact instant; as the end, excluded), so a
+    range can be any time window, e.g. one hourly point. `objects`: also the
+    object filters (action, object_type, feature), for the endpoints that
+    count objects from the diffs. Raises BadParameter on an invalid timestamp
+    or object filter."""
     params = request.query_params
     start_date = params.get('start_date')
     end_date = params.get('end_date')
-    explicit = bool(start_date and end_date)
-    if not explicit:
+    start_time = end_time = None
+    if not start_date or not end_date:
         today = timezone.now().date()
         end_date = today.strftime('%Y-%m-%d')
         start_date = (today - timedelta(days=7)).strftime('%Y-%m-%d')
-
-    hour = params.get('hour')
-    if hour not in (None, ''):
-        if not (explicit and start_date == end_date):
-            raise BadParameter('hour requires start_date and end_date set to the same day')
-        if not hour.isdigit() or not 0 <= int(hour) <= 23:
-            raise BadParameter('hour must be an integer from 0 to 23')
-        hour = int(hour)
-    else:
-        hour = None
+    elif len(start_date) > 10 or len(end_date) > 10:
+        start_time = parse_bound(start_date, 'start_date', end=False)
+        end_time = parse_bound(end_date, 'end_date', end=True)
+        if end_time <= start_time:
+            raise BadParameter('end_date must be after start_date')
+        start_date = start_time.date().isoformat()
+        end_date = (end_time - timedelta(microseconds=1)).date().isoformat()
 
     object_filters = {}
     if objects:
@@ -59,9 +59,27 @@ def resolve_filters(request, objects=False):
         imagery=params.get('imagery', ''),
         language=params.get('language', ''),
         country=params.get('country', ''),
-        hour=hour,
+        start_time=start_time,
+        end_time=end_time,
         **object_filters,
     )
+
+
+def parse_bound(raw, name, end):
+    """One bound of a range, as a naive UTC datetime.
+    A day (YYYY-MM-DD) is its midnight, or the next one for the end (the day
+    is included); a timestamp is ISO 8601, with Z or an offset (converted to
+    UTC) or without (taken as UTC)."""
+    try:
+        if len(raw) == 10:
+            day = datetime.strptime(raw, '%Y-%m-%d')
+            return day + timedelta(days=1) if end else day
+        value = datetime.fromisoformat(raw)
+    except ValueError:
+        raise BadParameter(f'{name} must be YYYY-MM-DD or an ISO 8601 timestamp, e.g. 2026-10-09T11:00:00Z')
+    if value.tzinfo is not None:
+        value = value.astimezone(dt_timezone.utc).replace(tzinfo=None)
+    return value
 
 
 def pick_interval(start_date, end_date, interval_param):

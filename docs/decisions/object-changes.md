@@ -93,24 +93,27 @@ with the count tables, kept forever). Recomputing a stored day gave identical ro
 15,542). Days missing before the existing ones (coverage extended backward) are filled oldest
 first; one day per refresh keeps each insert a single block, so a day is fully in or not at all.
 
-## Object filters, the hour, and the Objects page drill-down (2026-10-14)
+## Object filters, time windows, and the Objects page drill-down (2026-10-14)
 
 To answer "who and which changesets are behind this spike?", `action`, `object_type` and
 `feature` are also **filters** on `timeseries`, `toplist` (`metric=objects`) and `largest`
 (`by=objects`): only the matching objects count, so `toplist?dimension=contributor&action=modify`
 ranks who modified the most, and `largest?by=objects&action=modify` ranks changesets by their
-modified objects (`objects`, next to the whole `changes_count`). `hour` (0-23, a one-day range)
-narrows any aggregate endpoint to one UTC hour, i.e. one point of an hourly timeseries. Both are
-parameters on the existing endpoint shapes, echoed in `filters` only when set, so responses
-without them are unchanged (24 fixed calls byte-identical before/after).
+modified objects (`objects`, next to the whole `changes_count`). `start_date`/`end_date` also
+take timestamps, for a time window instead of whole days: a day keeps its meaning (the end day
+included), a timestamp is an instant (the end excluded), and a chart point is its bucket's start
+plus the response's `interval`. No new parameter: an earlier draft had `hour`, then `start`/`end`,
+both dropped before release for this. A window that isn't whole days reads raw data. Both are parameters on the existing endpoint shapes, echoed in
+`filters` only when set, so responses without them are unchanged (24 fixed calls byte-identical
+before/after).
 
 `_object_rows` serves them all: labels are an object dimension, a changeset dimension or a total;
 the rollup answers object filters (its rows carry type, action and feature) whenever it answered
 the unfiltered question, plus editor/imagery/language/country labels without dimension filters.
-Contributors and hours are raw only (the join). Checked: rollup and raw identical on 158 of 162
+Contributors and windows that aren't whole days are raw only (the join). Checked: rollup and raw identical on 158 of 162
 cases (the other 4: a 1-2 object difference in the `(none)` country bucket, which the existing
 API shows too, see the TODO); an action-filtered total equals that action's `group_by=action`
-series; 24 hourly answers add up to the day's.
+series; 24 one-hour windows add up to the day's.
 
 Measured: any panel query for one hour, 70-105 ms (the 2026-10-09 11:00 spike: 755,402 modified
 objects, 723,105 by one contributor in 73 JOSM changesets updating Taichung addresses to the new
@@ -120,7 +123,7 @@ table itself is 1.4 s of that). A series' top names are ranked first and pushed 
 query, so only their changesets are read (was 7.3 s for 101 days with a second full pass).
 
 The Objects page uses it: a click on a point of any objects-over-time chart opens a panel scoped
-to that hour or day and series (largest changesets with OSM/OSMCha links, contributors, editors,
+to that point's hour or day and series (largest changesets with OSM/OSMCha links, contributors, editors,
 features or actions); "Top Contributors Over Time" has All / Created / Modified / Deleted.
 
 ## Edits to existing objects: object_edits and the most edited objects (2026-10-03)

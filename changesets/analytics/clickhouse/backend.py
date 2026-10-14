@@ -176,9 +176,9 @@ class ClickHouseBackend:
 
     def _hybrid(self, f, table='daily_rollup'):
         """(rollup params, raw _Query) splitting f's range at the rollup
-        table's watermark, or None when the rollup can't be used (an hour is
-        never a whole rollup day)."""
-        if f.hour is not None:
+        table's watermark, or None when the rollup can't be used (a window
+        that isn't whole days)."""
+        if not f.whole_days:
             return None
         watermark = self.use_rollups and self._watermark(table)
         if not watermark:
@@ -432,7 +432,7 @@ class ClickHouseBackend:
             match = label, condition, {}
         else:
             match = None
-        match = interval != 'hour' and f.hour is None and match
+        match = interval != 'hour' and f.whole_days and match
         watermark = match and self.use_rollups and self._watermark('object_daily_rollup')
         # The rollup starts where coverage started when it was last refreshed;
         # while the backfill still extends coverage backward, earlier days are

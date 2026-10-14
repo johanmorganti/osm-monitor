@@ -41,7 +41,7 @@ loadWidget('objectsChart', apiUrl('/api/changesets/timeseries/', { metric: 'obje
     showChart('objectsChart');
     const counts = volume.series[0].counts;
     lineChart('objectsChart', volume.dates, counts, 'Objects changed', i => openDrilldown({
-        bucket: volume.dates[i], value: counts[i], what: 'Objects changed', objectFilter: {},
+        bucket: volume.dates[i], interval: volume.interval, value: counts[i], what: 'Objects changed', objectFilter: {},
     }));
 });
 
@@ -95,7 +95,7 @@ loadWidget('objectsByActionChart', apiUrl('/api/changesets/timeseries/', { metri
     showChart('objectsByActionChart');
     const series = fixedOrderSeries(data, ACTION_ORDER, ACTION_LABELS);
     multiLineChart('objectsByActionChart', data.dates, series, false, (i, s) => openDrilldown({
-        bucket: data.dates[i], value: series[s].values[i], what: `${series[s].name} objects`,
+        bucket: data.dates[i], interval: data.interval, value: series[s].values[i], what: `${series[s].name} objects`,
         objectFilter: { action: ACTION_ORDER[s] },
     }));
 });
@@ -104,7 +104,7 @@ loadWidget('objectsByTypeChart', apiUrl('/api/changesets/timeseries/', { metric:
     showChart('objectsByTypeChart');
     const series = fixedOrderSeries(data, TYPE_ORDER, TYPE_LABELS);
     multiLineChart('objectsByTypeChart', data.dates, series, false, (i, s) => openDrilldown({
-        bucket: data.dates[i], value: series[s].values[i], what: series[s].name,
+        bucket: data.dates[i], interval: data.interval, value: series[s].values[i], what: series[s].name,
         objectFilter: { object_type: TYPE_ORDER[s] },
     }));
 });
@@ -123,7 +123,7 @@ loadWidget('featuresOverTimeChart', apiUrl('/api/changesets/timeseries/', { metr
     const series = data.series.filter(s => !NOT_FEATURES.includes(s.name)).slice(0, TOP_FEATURE_SERIES);
     showChart('featuresOverTimeChart');
     multiLineChart('featuresOverTimeChart', data.dates, series.map(s => ({ name: s.name, values: s.counts })), false, (i, s) => openDrilldown({
-        bucket: data.dates[i], value: series[s].counts[i], what: `${series[s].name} objects`,
+        bucket: data.dates[i], interval: data.interval, value: series[s].counts[i], what: `${series[s].name} objects`,
         objectFilter: { feature: series[s].name },
     }));
 });
@@ -252,7 +252,7 @@ const contributorsChart = {
         }
         showChart('contributorsOverTimeChart');
         multiLineChart('contributorsOverTimeChart', data.dates, series, false, (i, s) => openDrilldown({
-            bucket: data.dates[i], value: series[s].values[i], what,
+            bucket: data.dates[i], interval: data.interval, value: series[s].values[i], what,
             objectFilter: action ? { action } : {}, extraFilter: { contributor: series[s].name },
         }));
     },
@@ -286,9 +286,11 @@ contributorsChart.buttons.forEach(button => button.addEventListener('click', () 
 
 // ── Drill-down panel ─────────────────────────────────────────────────────────
 // Who and which changesets are behind one point of an objects-over-time
-// chart: the same filters as the page, narrowed to that point's hour or day
-// (hour=) and to its series (action / object_type / feature, or a
-// contributor). Each section is one API call, fetched in parallel.
+// chart: the same filters as the page, narrowed to that point's time bucket
+// (the chart's interval from the point's start: a day, which the rollups
+// serve, or an hour as two timestamps) and to its series
+// (action / object_type / feature, or a contributor). Each section is one
+// API call, fetched in parallel.
 const drilldown = (() => {
     const panel = document.getElementById('drilldownPanel');
     const body = document.getElementById('drilldownPanel-body');
@@ -302,19 +304,23 @@ const drilldown = (() => {
     document.getElementById('drilldownPanel-close').addEventListener('click', close);
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && abort) close(); });
 
-    // "2026-10-09 11:00" (hourly point) or "2026-10-09" (daily point).
-    function bucketParams(bucket) {
-        const [day, time] = bucket.split(' ');
-        const params = { start_date: day, end_date: day };
-        if (time) params.hour = parseInt(time, 10);
-        return params;
+    // A point's label ("2026-10-09 11:00" or "2026-10-09", UTC) and the
+    // chart's interval ('hour' | 'day') give the bucket's time range.
+    function bucketParams(bucket, interval) {
+        const day = bucket.slice(0, 10);
+        if (interval !== 'hour') return { start_date: day, end_date: day };
+        const start = new Date(`${bucket.replace(' ', 'T')}:00Z`);
+        const end = new Date(start.getTime() + 3600 * 1000);
+        const iso = d => d.toISOString().replace('.000Z', 'Z');
+        return { start_date: iso(start), end_date: iso(end) };
     }
-    function bucketLabel(bucket) {
-        const [day, time] = bucket.split(' ');
+    function bucketLabel(bucket, interval) {
+        const day = bucket.slice(0, 10);
         const date = `${shortDate(day)}, ${day.slice(0, 4)}`;
-        if (!time) return `${date} (UTC day)`;
-        const next = String((parseInt(time, 10) + 1) % 24).padStart(2, '0');
-        return `${date}, ${time}–${next}:00 UTC`;
+        if (interval !== 'hour') return `${date} (UTC day)`;
+        const hour = parseInt(bucket.slice(11, 13), 10);
+        const pad = h => `${String(h % 24).padStart(2, '0')}:00`;
+        return `${date}, ${pad(hour)}–${pad(hour + 1)} UTC`;
     }
 
     function section(title) {
@@ -439,12 +445,12 @@ const drilldown = (() => {
             });
     }
 
-    // ctx: { bucket, value, what, objectFilter: {action|object_type|feature}, extraFilter: {contributor}? }
+    // ctx: { bucket, interval, value, what, objectFilter: {action|object_type|feature}, extraFilter: {contributor}? }
     return function open(ctx) {
         if (abort) abort.abort();
         abort = new AbortController();
         const { signal } = abort;
-        const scope = { ...bucketParams(ctx.bucket), ...ctx.objectFilter, ...(ctx.extraFilter || {}) };
+        const scope = { ...bucketParams(ctx.bucket, ctx.interval), ...ctx.objectFilter, ...(ctx.extraFilter || {}) };
         const filtered = Object.keys(ctx.objectFilter).length > 0;
         const objects = { metric: 'objects', ...scope };
 
@@ -452,7 +458,7 @@ const drilldown = (() => {
         document.getElementById('drilldownPanel-title').textContent =
             `${ctx.what}${who ? ` by ${who}` : ''} · ${ctx.value.toLocaleString('en-US')}`;
         document.getElementById('drilldownPanel-subtitle').textContent =
-            `${bucketLabel(ctx.bucket)} · with the page's filters`;
+            `${bucketLabel(ctx.bucket, ctx.interval)} · with the page's filters`;
         body.textContent = '';
         panel.style.display = 'flex';
 

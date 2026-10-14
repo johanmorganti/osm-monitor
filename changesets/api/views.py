@@ -2,7 +2,7 @@
 parameters, asks the configured analytics backend (changesets/analytics/) and
 shapes the response. How a question is answered (continuous aggregates, raw
 scans, another database) is entirely the backend's business."""
-from datetime import datetime, timedelta
+from datetime import timedelta, timezone as dt_timezone
 
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, OpenApiTypes
@@ -15,7 +15,7 @@ from ..analytics import DIMENSIONS, EDITOR_VERSION, HASHTAG, OBJECT_DIMENSIONS, 
 from ..geo import GEOHASH_PREFIX_LENGTH, geohash_cell_size_degrees, geohash_precision_for_bbox
 from ..models import SequenceState
 from ..serializers import ChangesetSerializer
-from .params import resolve_filters, pick_interval, parse_bbox
+from .params import resolve_filters, pick_interval, parse_bbox, parse_bound
 from .schema import DIMENSION_FILTER_PARAMS, FILTER_PARAMS, OBJECT_FILTER_PARAMS
 from .sizes import distribution
 
@@ -47,8 +47,8 @@ class ChangesetQueryView(APIView):
             '/summary/, or /toplist/ for aggregate questions over a large range).'
         ),
         parameters=[
-            OpenApiParameter('start_date', OpenApiTypes.DATE, description='Only changesets created on/after this date (YYYY-MM-DD). Defaults to 24 hours before now.'),
-            OpenApiParameter('end_date', OpenApiTypes.DATE, description='Only changesets created on/before this date (YYYY-MM-DD), inclusive of the whole day. Defaults to now.'),
+            OpenApiParameter('start_date', OpenApiTypes.STR, description='Only changesets created on/after this day (YYYY-MM-DD) or timestamp (ISO 8601, UTC unless an offset is given). Defaults to 24 hours before now.'),
+            OpenApiParameter('end_date', OpenApiTypes.STR, description='Only changesets created on/before this day (YYYY-MM-DD, the whole day included) or before this timestamp (excluded). Defaults to now.'),
             OpenApiParameter('user', OpenApiTypes.STR, description='Exact OSM username.'),
             OpenApiParameter('editor', OpenApiTypes.STR, description='Exact editor family (e.g. "StreetComplete", "iD").'),
             OpenApiParameter('hashtag', OpenApiTypes.STR, description='Hashtag the changeset must include (from its #hashtags tag).'),
@@ -68,8 +68,9 @@ class ChangesetQueryView(APIView):
         # Explicit dates are whole-day boundaries; a missing one defaults off
         # the current instant, so "no dates" is a real rolling 24h window.
         now = timezone.now()
-        end_dt = (datetime.strptime(end_date, '%Y-%m-%d').date() + timedelta(days=1)) if end_date else now
-        start_dt = start_date if start_date else (now - timedelta(hours=24))
+        utc = lambda value: value.replace(tzinfo=dt_timezone.utc)
+        end_dt = utc(parse_bound(end_date, 'end_date', end=True)) if end_date else now
+        start_dt = utc(parse_bound(start_date, 'start_date', end=False)) if start_date else (now - timedelta(hours=24))
 
         bbox = None
         if params.get('bbox'):

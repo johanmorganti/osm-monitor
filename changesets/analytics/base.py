@@ -54,8 +54,11 @@ class Filters:
     """Date range (whole days, inclusive, YYYY-MM-DD) plus the optional
     case-insensitive dimension filters shared by summary/timeseries/toplist/geo.
 
-    `hour` (0-23, a one-day range only) narrows the range to that hour, UTC:
-    no daily rollup answers it, so backends read raw data. The object filters
+    `start_time`/`end_time` (UTC, naive, end exclusive) are set when the API
+    was given timestamps rather than days (e.g. one hourly point); start_date
+    and end_date are then the days the window touches. A window that isn't
+    whole days is never a rollup's, so backends read raw data for it. The
+    object filters
     (action, object_type, feature) only apply to objects counts: when any is
     set, objects come from the diffs and only the matching ones count."""
     start_date: str
@@ -65,7 +68,8 @@ class Filters:
     imagery: str = ''
     language: str = ''
     country: str = ''
-    hour: Optional[int] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
     action: str = ''
     object_type: str = ''
     feature: str = ''
@@ -76,16 +80,18 @@ class Filters:
 
     @property
     def start_at(self) -> datetime:
-        """First instant of the range (UTC, naive), the hour's when set."""
-        start = datetime.strptime(self.start_date, '%Y-%m-%d')
-        return start + timedelta(hours=self.hour) if self.hour is not None else start
+        """First instant of the range (UTC, naive)."""
+        return self.start_time or datetime.strptime(self.start_date, '%Y-%m-%d')
 
     @property
     def end_at(self) -> datetime:
         """First instant after the range (UTC, naive)."""
-        if self.hour is not None:
-            return self.start_at + timedelta(hours=1)
-        return datetime.combine(self.end_exclusive, datetime.min.time())
+        return self.end_time or datetime.combine(self.end_exclusive, datetime.min.time())
+
+    @property
+    def whole_days(self) -> bool:
+        """Whether the range starts and ends at midnight (what daily rollups hold)."""
+        return self.start_at.time() == datetime.min.time() and self.end_at.time() == datetime.min.time()
 
     def object_filters(self):
         """(object dimension, value) for every object filter set."""
@@ -105,11 +111,13 @@ class Filters:
 
     def as_dict(self) -> dict:
         """The `filters` object echoed back in API responses (key order matters
-        for byte-identical responses). hour and the object filters only when
-        set, so responses without them are unchanged."""
-        echo = {'start_date': self.start_date, 'end_date': self.end_date, **dict(self.dimension_values())}
-        if self.hour is not None:
-            echo['hour'] = self.hour
+        for byte-identical responses). A time window is echoed as the
+        timestamps it was given as; the object filters only when set, so
+        responses without them are unchanged."""
+        start, end = self.start_date, self.end_date
+        if self.start_time is not None:
+            start, end = self.start_time.isoformat() + 'Z', self.end_time.isoformat() + 'Z'
+        echo = {'start_date': start, 'end_date': end, **dict(self.dimension_values())}
         echo.update(self.object_filters())
         return echo
 
