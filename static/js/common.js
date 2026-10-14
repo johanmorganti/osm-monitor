@@ -188,10 +188,34 @@ function horizontalBar(canvasId, labels, data, label, filterField) {
     });
 }
 
+// Click handling for the time-series charts: `onPointClick(index,
+// datasetIndex)` gets the column nearest the click horizontally (the one the
+// tooltip shows) and, within it, the line closest vertically. By x first, so
+// a click anywhere under a spike opens the spike, not a neighbor whose point
+// happens to be nearer in two dimensions. The cursor says it's clickable.
+// Returns the Chart.js options to spread in.
+function pointClickOptions(onPointClick) {
+    if (!onPointClick) return {};
+    const nearest = (event, chart) => {
+        const column = chart.getElementsAtEventForMode(event, 'nearest', { intersect: false, axis: 'x' }, true);
+        return column.sort((a, b) => Math.abs(a.element.y - event.y) - Math.abs(b.element.y - event.y))[0];
+    };
+    return {
+        onClick: (event, _elements, chart) => {
+            const point = nearest(event, chart);
+            if (point) onPointClick(point.index, point.datasetIndex);
+        },
+        onHover: (event, _elements, chart) => {
+            chart.canvas.style.cursor = nearest(event, chart) ? 'pointer' : 'default';
+        },
+    };
+}
+
 // Single-series line chart — extracted from dashboard.js's renderVolumeChart
 // so any page can draw a plain volume-over-time trend for an arbitrary
 // canvas id/label, not just the main dashboard's hardcoded #changesetChart.
-function lineChart(canvasId, dates, counts, label) {
+// `onPointClick`: see pointClickOptions.
+function lineChart(canvasId, dates, counts, label, onPointClick) {
     const ctx = document.getElementById(canvasId);
     if (!ctx || !dates.length) return;
     new Chart(ctx.getContext('2d'), {
@@ -225,6 +249,7 @@ function lineChart(canvasId, dates, counts, label) {
             // unresponsive. index/intersect:false triggers on proximity to
             // a data point's x position instead, anywhere in that column.
             interaction: { mode: 'index', intersect: false },
+            ...pointClickOptions(onPointClick),
             scales: {
                 x: dateAxis(dates),
                 y: { beginAtZero: true, grid: { color: GRID_HAIRLINE } },
@@ -273,9 +298,14 @@ function groupedBar(canvasId, labels, series, valueFormat) {
 // changeset size) — lineChart's multi-series sibling, with a legend.
 // `logScale` when the lines differ by orders of magnitude (p50 ~5 vs p90
 // ~130), so the smaller one isn't flattened against the baseline.
-function multiLineChart(canvasId, dates, series, logScale) {
+// `onPointClick`: see pointClickOptions. Redrawing the same canvas replaces
+// the chart already there.
+function multiLineChart(canvasId, dates, series, logScale, onPointClick) {
     const ctx = document.getElementById(canvasId);
-    if (!ctx || !dates.length) return;
+    if (!ctx) return;
+    const existing = Chart.getChart(ctx);
+    if (existing) existing.destroy();
+    if (!dates.length) return;
     new Chart(ctx.getContext('2d'), {
         type: 'line',
         data: {
@@ -296,6 +326,7 @@ function multiLineChart(canvasId, dates, series, logScale) {
             maintainAspectRatio: false,
             plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 12, boxHeight: 2 } } },
             interaction: { mode: 'index', intersect: false },
+            ...pointClickOptions(onPointClick),
             scales: {
                 x: dateAxis(dates),
                 y: logScale

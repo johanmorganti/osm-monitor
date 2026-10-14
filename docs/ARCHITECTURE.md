@@ -8,20 +8,20 @@ stands; it doesn't track day-to-day changes.
 ## Pages and endpoints
 
 - `/` → `DashboardView` (Overview: map, changeset activity, rankings)
-- `/objects/` → `ObjectsView` (objects changed, changeset sizes, largest changesets, rankings by objects incl. hashtags)
+- `/objects/` → `ObjectsView` (objects changed, changeset sizes, largest changesets, rankings by objects incl. hashtags, top contributors over time; a click on an objects-over-time point opens a drill-down panel for that hour or day)
 - `/editors/` → `EditorsView` (one column per top-10 editor family for the selected range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph)
 - `/changeset_import/` → `APILandingPageView` (poller status page — live catch-up batch progress)
 - `/api/changesets/` → `ChangesetQueryView` (raw changeset records, filterable; defaults to the last 24 hours, no unfiltered "everything" mode)
-- `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped, `metric=count|objects`; with `metric=objects` also `group_by=action|object_type|feature`, from the object tables)
+- `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped, `metric=count|objects`; with `metric=objects` also `group_by=action|object_type|feature` and the `action`/`object_type`/`feature` filters, from the object tables)
 - `/api/changesets/summary/` → `SummaryView` (total_changesets/total_objects/avg_objects)
-- `/api/changesets/toplist/` → `ToplistView` (top N by dimension × metric; with `metric=objects` also `dimension=action|object_type|feature`)
+- `/api/changesets/toplist/` → `ToplistView` (top N by dimension × metric; with `metric=objects` also `dimension=action|object_type|feature` and the object filters)
 - `/api/changesets/geo/` → `GeoView` (changeset density per grid cell; `resolution=coarse|fine`, the latter viewport-scoped via `bbox`; each cell carries its geohash as `cell`), `/api/changesets/geo/cell/` → `GeoCellView` (the changesets of one cell, newest first, paginated — the Overview map's click-to-list panel)
-- `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`)
+- `/api/changesets/distribution/` → `DistributionView` (changeset-size histogram, exact percentiles, largest 1%'s share of objects), `/api/changesets/distribution/breakdown/` → `SizeBreakdownView` (size quartiles `by=` a dimension or `day`), `/api/changesets/largest/` → `LargestView` (largest changesets `by=objects|area`; `by=objects` takes the object filters)
 - `/api/objects/most-edited/` → `MostEditedObjectsView` (objects with the most edits over the last 7 days, from `object_edits`; the Objects page's "Most Edited Objects last week")
 - `/api/docs/` → `ApiDocsView` (the API / MCP page: how to use the REST API and the MCP server, the MCP tools, and the Swagger UI reference from drf-spectacular inside the site's layout), `/api/schema/` the raw OpenAPI schema — the authoritative API reference
 - `/mcp` → `mcp_endpoint` (MCP server, Streamable HTTP: one tool per endpoint above, each calling it in-process; see [`decisions/mcp-server.md`](decisions/mcp-server.md))
 
-The aggregate endpoints default to the last 7 days when no dates are given. Static files are
+The aggregate endpoints default to the last 7 days when no dates are given; `hour` narrows a one-day range to one UTC hour (one point of an hourly series). Static files are
 served by Django itself in `DEBUG` mode (`django.conf.urls.static`).
 
 Ingestion: `manage.py poll_sequences` (continuous poller; first run takes `--start <seq>` or the

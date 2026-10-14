@@ -39,7 +39,10 @@ loadWidget('sizeHistogramChart', apiUrl('/api/changesets/distribution/'), dist =
 
 loadWidget('objectsChart', apiUrl('/api/changesets/timeseries/', { metric: 'objects' }), volume => {
     showChart('objectsChart');
-    lineChart('objectsChart', volume.dates, volume.series[0].counts, 'Objects changed');
+    const counts = volume.series[0].counts;
+    lineChart('objectsChart', volume.dates, counts, 'Objects changed', i => openDrilldown({
+        bucket: volume.dates[i], value: counts[i], what: 'Objects changed', objectFilter: {},
+    }));
 });
 
 loadWidget('sizeOverTimeChart', apiUrl('/api/changesets/distribution/breakdown/', { by: 'day' }), sizes => {
@@ -90,12 +93,20 @@ function fixedOrderSeries(data, order, labels) {
 loadWidget('objectsByActionChart', apiUrl('/api/changesets/timeseries/', { metric: 'objects', group_by: 'action' }), data => {
     showObjectsSince(data);
     showChart('objectsByActionChart');
-    multiLineChart('objectsByActionChart', data.dates, fixedOrderSeries(data, ACTION_ORDER, ACTION_LABELS));
+    const series = fixedOrderSeries(data, ACTION_ORDER, ACTION_LABELS);
+    multiLineChart('objectsByActionChart', data.dates, series, false, (i, s) => openDrilldown({
+        bucket: data.dates[i], value: series[s].values[i], what: `${series[s].name} objects`,
+        objectFilter: { action: ACTION_ORDER[s] },
+    }));
 });
 
 loadWidget('objectsByTypeChart', apiUrl('/api/changesets/timeseries/', { metric: 'objects', group_by: 'object_type' }), data => {
     showChart('objectsByTypeChart');
-    multiLineChart('objectsByTypeChart', data.dates, fixedOrderSeries(data, TYPE_ORDER, TYPE_LABELS));
+    const series = fixedOrderSeries(data, TYPE_ORDER, TYPE_LABELS);
+    multiLineChart('objectsByTypeChart', data.dates, series, false, (i, s) => openDrilldown({
+        bucket: data.dates[i], value: series[s].values[i], what: series[s].name,
+        objectFilter: { object_type: TYPE_ORDER[s] },
+    }));
 });
 
 loadWidget('topFeaturesChart', apiUrl('/api/changesets/toplist/', { dimension: 'feature', metric: 'objects', limit: 30 }), top => {
@@ -111,7 +122,10 @@ loadWidget('topFeaturesChart', apiUrl('/api/changesets/toplist/', { dimension: '
 loadWidget('featuresOverTimeChart', apiUrl('/api/changesets/timeseries/', { metric: 'objects', group_by: 'feature' }), data => {
     const series = data.series.filter(s => !NOT_FEATURES.includes(s.name)).slice(0, TOP_FEATURE_SERIES);
     showChart('featuresOverTimeChart');
-    multiLineChart('featuresOverTimeChart', data.dates, series.map(s => ({ name: s.name, values: s.counts })));
+    multiLineChart('featuresOverTimeChart', data.dates, series.map(s => ({ name: s.name, values: s.counts })), false, (i, s) => openDrilldown({
+        bucket: data.dates[i], value: series[s].counts[i], what: `${series[s].name} objects`,
+        objectFilter: { feature: series[s].name },
+    }));
 });
 
 // Most edited objects over the last 7 days (a fixed window: the date range
@@ -212,6 +226,258 @@ loadWidget('topHashtagsByObjectsChart', apiUrl('/api/changesets/toplist/', { dim
     showChart('topHashtagsByObjectsChart');
     horizontalBar('topHashtagsByObjectsChart', top.results.map(r => `#${r.name}`), top.results.map(r => r.value), 'Objects changed');
 });
+
+// ── Top contributors over time ───────────────────────────────────────────────
+// group_by=contributor, metric=objects; the buttons narrow it to created,
+// modified or deleted objects (action=, from the diffs). Clicking a point
+// opens the drill-down for that contributor and bucket.
+const contributorsChart = {
+    action: '',
+    buttons: document.querySelectorAll('#contributorsOverTime-actions button'),
+    url() {
+        const extra = { group_by: 'contributor', metric: 'objects' };
+        if (this.action) extra.action = this.action;
+        return apiUrl('/api/changesets/timeseries/', extra);
+    },
+    render(data) {
+        const action = this.action;
+        const what = action ? `${ACTION_LABELS[action]} objects` : 'Objects changed';
+        const series = data.series.slice(0, MAX_SERIES).map(s => ({ name: s.name, values: s.counts }));
+        const note = document.getElementById('contributorsOverTimeNote');
+        note.textContent = series.length
+            ? `The ${series.length} contributors with the most ${action ? `${ACTION_LABELS[action].toLowerCase()} objects` : 'objects changed'}. Click a point to see that contributor's changesets`
+            : 'No objects in this range';
+        if (action && data.objects_since && data.objects_since > data.filters.start_date) {
+            note.textContent += ` (counted from ${data.objects_since}, the first day of the replication diffs)`;
+        }
+        showChart('contributorsOverTimeChart');
+        multiLineChart('contributorsOverTimeChart', data.dates, series, false, (i, s) => openDrilldown({
+            bucket: data.dates[i], value: series[s].values[i], what,
+            objectFilter: action ? { action } : {}, extraFilter: { contributor: series[s].name },
+        }));
+    },
+    select(action) {
+        this.action = action;
+        this.buttons.forEach(b => {
+            const on = b.dataset.action === action;
+            b.classList.toggle('bg-blue-50', on);
+            b.classList.toggle('border-blue-400', on);
+            b.classList.toggle('text-blue-700', on);
+            b.setAttribute('aria-pressed', on);
+        });
+    },
+};
+contributorsChart.select('');
+loadWidget('contributorsOverTimeChart', contributorsChart.url(), data => contributorsChart.render(data));
+contributorsChart.buttons.forEach(button => button.addEventListener('click', () => {
+    if (button.dataset.action === contributorsChart.action) return;
+    contributorsChart.select(button.dataset.action);
+    const canvas = document.getElementById('contributorsOverTimeChart');
+    canvas.style.opacity = 0.4;
+    const requested = contributorsChart.action;
+    fetchJson(contributorsChart.url())
+        .then(data => { if (requested === contributorsChart.action) contributorsChart.render(data); })
+        .catch(err => {
+            console.error('Failed to load contributors over time', err);
+            document.getElementById('contributorsOverTimeNote').textContent = 'Failed to load';
+        })
+        .finally(() => { canvas.style.opacity = 1; });
+}));
+
+// ── Drill-down panel ─────────────────────────────────────────────────────────
+// Who and which changesets are behind one point of an objects-over-time
+// chart: the same filters as the page, narrowed to that point's hour or day
+// (hour=) and to its series (action / object_type / feature, or a
+// contributor). Each section is one API call, fetched in parallel.
+const drilldown = (() => {
+    const panel = document.getElementById('drilldownPanel');
+    const body = document.getElementById('drilldownPanel-body');
+    let abort = null;
+
+    function close() {
+        if (abort) abort.abort();
+        abort = null;
+        panel.style.display = 'none';
+    }
+    document.getElementById('drilldownPanel-close').addEventListener('click', close);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && abort) close(); });
+
+    // "2026-10-09 11:00" (hourly point) or "2026-10-09" (daily point).
+    function bucketParams(bucket) {
+        const [day, time] = bucket.split(' ');
+        const params = { start_date: day, end_date: day };
+        if (time) params.hour = parseInt(time, 10);
+        return params;
+    }
+    function bucketLabel(bucket) {
+        const [day, time] = bucket.split(' ');
+        const date = `${shortDate(day)}, ${day.slice(0, 4)}`;
+        if (!time) return `${date} (UTC day)`;
+        const next = String((parseInt(time, 10) + 1) % 24).padStart(2, '0');
+        return `${date}, ${time}–${next}:00 UTC`;
+    }
+
+    function section(title) {
+        const wrap = document.createElement('section');
+        const h = document.createElement('h5');
+        h.className = 'text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2';
+        h.textContent = title;
+        const content = document.createElement('div');
+        content.className = 'text-xs text-gray-400';
+        content.textContent = 'Loading…';
+        wrap.append(h, content);
+        body.appendChild(wrap);
+        return content;
+    }
+
+    // Ranked names with a bar showing each one's share of the clicked total.
+    // Built with DOM nodes, not innerHTML: names are user input.
+    function rankedList(content, results, total, filterField) {
+        content.textContent = '';
+        content.className = '';
+        if (!results.length) {
+            content.className = 'text-xs text-gray-400';
+            content.textContent = 'Nothing in this bucket';
+            return;
+        }
+        const list = document.createElement('ol');
+        list.className = 'space-y-1';
+        results.forEach(r => {
+            const li = document.createElement('li');
+            const line = document.createElement('div');
+            line.className = 'flex items-baseline justify-between gap-2';
+            let name;
+            if (filterField) {
+                name = document.createElement('button');
+                name.type = 'button';
+                name.className = 'text-left text-blue-600 hover:underline truncate';
+                name.title = `Filter the page by this ${filterField}`;
+                name.addEventListener('click', () => applyFilter(filterField, r.name));
+            } else {
+                name = document.createElement('span');
+                name.className = 'text-gray-800 truncate';
+            }
+            name.textContent = r.name;
+            const value = document.createElement('span');
+            value.className = 'tabular-nums text-gray-600 whitespace-nowrap';
+            const share = total ? r.value / total : 0;
+            value.textContent = `${r.value.toLocaleString('en-US')}${total ? ` · ${(share * 100).toFixed(share < 0.1 ? 1 : 0)}%` : ''}`;
+            line.append(name, value);
+            const bar = document.createElement('div');
+            bar.className = 'h-1 rounded bg-gray-100';
+            const fill = document.createElement('div');
+            fill.className = 'h-1 rounded';
+            fill.style.background = RANKING_COLOR;
+            fill.style.width = `${Math.min(share, 1) * 100}%`;
+            bar.appendChild(fill);
+            li.append(line, bar);
+            list.appendChild(li);
+        });
+        content.appendChild(list);
+    }
+
+    function changesetList(content, results, filtered) {
+        content.textContent = '';
+        content.className = '';
+        if (!results.length) {
+            content.className = 'text-xs text-gray-400';
+            content.textContent = 'No changesets in this bucket';
+            return;
+        }
+        const list = document.createElement('ol');
+        list.className = 'divide-y divide-gray-100';
+        results.forEach(r => {
+            const li = document.createElement('li');
+            li.className = 'py-2';
+            const top = document.createElement('div');
+            top.className = 'flex items-baseline justify-between gap-2';
+            const links = document.createElement('span');
+            const osm = document.createElement('a');
+            osm.href = `https://www.openstreetmap.org/changeset/${r.changeset_id}`;
+            osm.target = '_blank';
+            osm.rel = 'noopener';
+            osm.className = 'font-medium text-blue-600 hover:underline';
+            osm.textContent = r.changeset_id;
+            const osmcha = document.createElement('a');
+            osmcha.href = `https://osmcha.org/changesets/${r.changeset_id}`;
+            osmcha.target = '_blank';
+            osmcha.rel = 'noopener';
+            osmcha.className = 'ml-2 text-xs text-gray-400 hover:text-blue-600 hover:underline';
+            osmcha.textContent = 'OSMCha';
+            links.append(osm, osmcha);
+            const when = document.createElement('span');
+            when.className = 'text-xs text-gray-400 whitespace-nowrap';
+            when.textContent = r.created_at.slice(0, 16).replace('T', ' ');
+            top.append(links, when);
+            const meta = document.createElement('div');
+            meta.className = 'text-xs text-gray-600';
+            const objects = filtered
+                ? `${r.objects.toLocaleString('en-US')} of ${r.changes_count.toLocaleString('en-US')} objects`
+                : `${r.changes_count.toLocaleString('en-US')} objects`;
+            meta.textContent = [r.user, r.editor, r.country, objects].filter(Boolean).join(' · ');
+            li.append(top, meta);
+            if (r.comment) {
+                const comment = document.createElement('div');
+                comment.className = 'text-xs text-gray-400 truncate';
+                comment.textContent = r.comment;
+                comment.title = r.comment;
+                li.append(comment);
+            }
+            list.appendChild(li);
+        });
+        content.appendChild(list);
+    }
+
+    function fill(content, url, signal, render) {
+        fetchJson(url, { signal })
+            .then(render)
+            .catch(err => {
+                if (err.name === 'AbortError') return;
+                console.error(`Failed to load ${url}`, err);
+                content.className = 'text-xs text-red-600';
+                content.textContent = 'Failed to load';
+            });
+    }
+
+    // ctx: { bucket, value, what, objectFilter: {action|object_type|feature}, extraFilter: {contributor}? }
+    return function open(ctx) {
+        if (abort) abort.abort();
+        abort = new AbortController();
+        const { signal } = abort;
+        const scope = { ...bucketParams(ctx.bucket), ...ctx.objectFilter, ...(ctx.extraFilter || {}) };
+        const filtered = Object.keys(ctx.objectFilter).length > 0;
+        const objects = { metric: 'objects', ...scope };
+
+        const who = ctx.extraFilter && ctx.extraFilter.contributor;
+        document.getElementById('drilldownPanel-title').textContent =
+            `${ctx.what}${who ? ` by ${who}` : ''} · ${ctx.value.toLocaleString('en-US')}`;
+        document.getElementById('drilldownPanel-subtitle').textContent =
+            `${bucketLabel(ctx.bucket)} · with the page's filters`;
+        body.textContent = '';
+        panel.style.display = 'flex';
+
+        // Changesets first: they're what answers "what happened here".
+        const changesets = section('Largest changesets');
+        if (!who) {
+            const contributors = section('Contributors');
+            fill(contributors, apiUrl('/api/changesets/toplist/', { ...objects, dimension: 'contributor', limit: 10 }), signal,
+                 data => rankedList(contributors, data.results, ctx.value, 'contributor'));
+        }
+        const editors = section('Editors');
+        fill(editors, apiUrl('/api/changesets/toplist/', { ...objects, dimension: 'editor', limit: 5 }), signal,
+             data => rankedList(editors, data.results, ctx.value, 'editor'));
+        const byAction = Boolean(ctx.objectFilter.feature);
+        const what = section(byAction ? 'Created, modified, deleted' : 'Features');
+        fill(what, apiUrl('/api/changesets/toplist/', { ...objects, dimension: byAction ? 'action' : 'feature', limit: 8 }), signal,
+             data => rankedList(what, data.results, ctx.value));
+        fill(changesets, apiUrl('/api/changesets/largest/', { by: 'objects', limit: 10, ...scope }), signal,
+             data => changesetList(changesets, data.results, filtered));
+    };
+})();
+
+function openDrilldown(ctx) {
+    drilldown(ctx);
+}
 
 wireSuggestions('contributor', 'contributor-suggestions', 'contributor');
 wireSuggestions('editor',      'editor-suggestions',      'editor');

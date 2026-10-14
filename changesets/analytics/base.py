@@ -32,9 +32,11 @@ HASHTAG = 'hashtag'
 
 # Timeseries group_by / toplist dimensions over the objects themselves (the
 # replication diffs, see docs/decisions/object-changes.md), metric 'objects'
-# only, no filter: what was done (create/modify/delete), to what
-# (node/way/relation), and the feature (osmchange.feature_of).
+# only: what was done (create/modify/delete), to what (node/way/relation),
+# and the feature (osmchange.feature_of). Also filters, which narrow an
+# objects count to the matching objects (Filters.object_filters).
 OBJECT_DIMENSIONS = ('action', 'object_type', 'feature')
+OBJECT_VALUES = {'action': ('create', 'modify', 'delete'), 'object_type': ('node', 'way', 'relation')}
 
 def format_bucket(bucket, interval):
     """Render a bucket as the API's date label. `bucket` is a datetime for
@@ -50,7 +52,12 @@ def format_bucket(bucket, interval):
 @dataclass(frozen=True)
 class Filters:
     """Date range (whole days, inclusive, YYYY-MM-DD) plus the optional
-    case-insensitive dimension filters shared by summary/timeseries/toplist/geo."""
+    case-insensitive dimension filters shared by summary/timeseries/toplist/geo.
+
+    `hour` (0-23, a one-day range only) narrows the range to that hour, UTC:
+    no daily rollup answers it, so backends read raw data. The object filters
+    (action, object_type, feature) only apply to objects counts: when any is
+    set, objects come from the diffs and only the matching ones count."""
     start_date: str
     end_date: str
     contributor: str = ''
@@ -58,10 +65,31 @@ class Filters:
     imagery: str = ''
     language: str = ''
     country: str = ''
+    hour: Optional[int] = None
+    action: str = ''
+    object_type: str = ''
+    feature: str = ''
 
     @property
     def end_exclusive(self) -> date:
         return datetime.strptime(self.end_date, '%Y-%m-%d').date() + timedelta(days=1)
+
+    @property
+    def start_at(self) -> datetime:
+        """First instant of the range (UTC, naive), the hour's when set."""
+        start = datetime.strptime(self.start_date, '%Y-%m-%d')
+        return start + timedelta(hours=self.hour) if self.hour is not None else start
+
+    @property
+    def end_at(self) -> datetime:
+        """First instant after the range (UTC, naive)."""
+        if self.hour is not None:
+            return self.start_at + timedelta(hours=1)
+        return datetime.combine(self.end_exclusive, datetime.min.time())
+
+    def object_filters(self):
+        """(object dimension, value) for every object filter set."""
+        return [(name, getattr(self, name)) for name in OBJECT_DIMENSIONS if getattr(self, name)]
 
     def dimension_values(self):
         """(dimension, value) for every dimension, in DIMENSIONS order."""
@@ -77,8 +105,13 @@ class Filters:
 
     def as_dict(self) -> dict:
         """The `filters` object echoed back in API responses (key order matters
-        for byte-identical responses)."""
-        return {'start_date': self.start_date, 'end_date': self.end_date, **dict(self.dimension_values())}
+        for byte-identical responses). hour and the object filters only when
+        set, so responses without them are unchanged."""
+        echo = {'start_date': self.start_date, 'end_date': self.end_date, **dict(self.dimension_values())}
+        if self.hour is not None:
+            echo['hour'] = self.hour
+        echo.update(self.object_filters())
+        return echo
 
 
 @dataclass(frozen=True)
@@ -112,7 +145,8 @@ class AnalyticsBackend(Protocol):
 
     def toplist(self, f: Filters, dimension: str, metric: str, limit: int) -> list:
         """[{'name', 'value'}] ranked by metric ('count'|'objects'), at most
-        `limit`. OBJECT_DIMENSIONS: as for timeseries."""
+        `limit`. OBJECT_DIMENSIONS: as for timeseries. Object filters (metric
+        'objects' only) count just the matching objects, from the diffs."""
 
     def most_edited(self, f: Filters, days: int, limit: int) -> list:
         """The `limit` objects with the most edits (versions after the first)
@@ -141,7 +175,8 @@ class AnalyticsBackend(Protocol):
         """The `limit` largest changesets by 'objects' (changes_count) or
         'area' (bounding box, km²), as dicts: changeset_id, created_at, user,
         editor, changes_count, area_km2 (None without a bbox), country,
-        comment."""
+        comment. With object filters (by 'objects' only): ranked by the
+        matching objects instead, given as `objects` in each dict."""
 
     def geo_cells(self, f: Filters, prefix_len: int, bounds: Optional[tuple]) -> list:
         """[{'cell', 'lat', 'lon', 'count', 'objects'}] per geohash cell of

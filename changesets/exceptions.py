@@ -8,6 +8,10 @@ def api_exception_handler(exc, context):
     off by its time cap, falls through to Django's generic HTML error page.
     That breaks any caller expecting JSON (dashboard.js's fetch().json()
     included) and leaks a full traceback, so those get a real JSON error."""
+    from .api.params import BadParameter
+    if isinstance(exc, BadParameter):
+        return Response({'error': str(exc.detail)}, status=400)
+
     response = exception_handler(exc, context)
     if response is not None:
         return response

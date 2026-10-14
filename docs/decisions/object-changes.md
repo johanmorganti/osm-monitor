@@ -93,6 +93,36 @@ with the count tables, kept forever). Recomputing a stored day gave identical ro
 15,542). Days missing before the existing ones (coverage extended backward) are filled oldest
 first; one day per refresh keeps each insert a single block, so a day is fully in or not at all.
 
+## Object filters, the hour, and the Objects page drill-down (2026-10-14)
+
+To answer "who and which changesets are behind this spike?", `action`, `object_type` and
+`feature` are also **filters** on `timeseries`, `toplist` (`metric=objects`) and `largest`
+(`by=objects`): only the matching objects count, so `toplist?dimension=contributor&action=modify`
+ranks who modified the most, and `largest?by=objects&action=modify` ranks changesets by their
+modified objects (`objects`, next to the whole `changes_count`). `hour` (0-23, a one-day range)
+narrows any aggregate endpoint to one UTC hour, i.e. one point of an hourly timeseries. Both are
+parameters on the existing endpoint shapes, echoed in `filters` only when set, so responses
+without them are unchanged (24 fixed calls byte-identical before/after).
+
+`_object_rows` serves them all: labels are an object dimension, a changeset dimension or a total;
+the rollup answers object filters (its rows carry type, action and feature) whenever it answered
+the unfiltered question, plus editor/imagery/language/country labels without dimension filters.
+Contributors and hours are raw only (the join). Checked: rollup and raw identical on 158 of 162
+cases (the other 4: a 1-2 object difference in the `(none)` country bucket, which the existing
+API shows too, see the TODO); an action-filtered total equals that action's `group_by=action`
+series; 24 hourly answers add up to the day's.
+
+Measured: any panel query for one hour, 70-105 ms (the 2026-10-09 11:00 spike: 755,402 modified
+objects, 723,105 by one contributor in 73 JOSM changesets updating Taichung addresses to the new
+3+3 postal codes). Contributors over time with an action filter is raw only and grows with the
+range: 0.65 s for 7 days, 1.4 s for 30, 4.6 s for the 101 days covered so far (reading the count
+table itself is 1.4 s of that). A series' top names are ranked first and pushed into the series
+query, so only their changesets are read (was 7.3 s for 101 days with a second full pass).
+
+The Objects page uses it: a click on a point of any objects-over-time chart opens a panel scoped
+to that hour or day and series (largest changesets with OSM/OSMCha links, contributors, editors,
+features or actions); "Top Contributors Over Time" has All / Created / Modified / Deleted.
+
 ## Edits to existing objects: object_edits and the most edited objects (2026-10-03)
 
 `object_edits` (`schema/0006_object_edits.sql`) keeps every version after the first (modifies and

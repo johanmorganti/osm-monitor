@@ -20,7 +20,8 @@ The convention, and the current mapping for every dimension:
 | `country_code` | `country` | Country |
 
 Object dimensions (2026-10-03, `OBJECT_DIMENSIONS`; group_by / toplist dimension with
-`metric=objects` only, not filters), columns of the ClickHouse object tables
+`metric=objects` only; since 2026-10-14 also filters with the same names on `timeseries`, `toplist`
+and `largest`, counting only the matching objects), columns of the ClickHouse object tables
 ([object-changes.md](object-changes.md)):
 
 | DB column | API param | UI label |
