@@ -10,6 +10,11 @@ paths, observability) see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For ar
 working on the code start from [`CLAUDE.md`](CLAUDE.md). For known issues and deferred work, see
 [`TODO.md`](TODO.md). To run it, see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
+## Data & license
+
+Data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the
+Open Database License (ODbL). This applies to everything the site and its API/MCP serve.
+
 ## Features
 
 - **Overview dashboard** — changeset volume over time, top contributors/editors/imagery
