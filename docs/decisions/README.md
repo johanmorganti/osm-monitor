@@ -16,6 +16,7 @@ from them are summarized in [`../../CLAUDE.md`](../../CLAUDE.md); how the system
 
 - [Analytics backends](analytics-backends.md): the API asks, a backend answers; ClickHouse and its rollups.
 - [TimescaleDB and Postgres removed](timescale-removal.md): ClickHouse holds everything; the app's state is a SQLite file (tested on the shared folder first).
+- [Contributor filter](contributor-filter.md): matched on `lower(user)`, which is what `idx_user_lower` indexes; why case-sensitive matching wouldn't be faster.
 - [Design for full history](full-history.md): ~190M+ rows, 2005 to today; watermark on `created_at`.
 - [Old-dated rows in the replication stream are normal](old-dated-rows.md): comments resurface old changesets; why the 7-day refresh window is right.
 - [Location data computed at ingest](location-at-ingest.md): geohash and country in Python, identical for every backend.

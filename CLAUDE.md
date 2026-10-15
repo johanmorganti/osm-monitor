@@ -49,6 +49,9 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
 - **Design for full history** (~190M+ rows, 2005 to today): check new queries/jobs against the
   full row count; prefer incremental, watermarked designs, watermarked on `created_at`.
   → [full-history](docs/decisions/full-history.md)
+- **The contributor filter and its skip index share one expression, `lower(user)`**: change
+  them together, or the index silently stops being used.
+  → [contributor-filter](docs/decisions/contributor-filter.md)
 - **Old-dated rows in the replication stream are normal** (comments resurface old changesets).
   Don't "fix" them.
   → [old-dated-rows](docs/decisions/old-dated-rows.md)
