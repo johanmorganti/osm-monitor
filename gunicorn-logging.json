@@ -1,0 +1,13 @@
+{
+    "version": 1,
+    "disable_existing_loggers": false,
+    "formatters": {
+        "json": {"()": "osm_changeset_api.logging_json.JsonFormatter"}
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "json"}
+    },
+    "loggers": {
+        "gunicorn.error": {"handlers": ["console"], "level": "INFO", "propagate": false}
+    }
+}

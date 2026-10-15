@@ -38,7 +38,10 @@ if [ "$#" -eq 0 ]; then
     # (max_execution_time, changesets/analytics/clickhouse/backend.py) so
     # ClickHouse cancels a slow query cleanly, and the API answers 408,
     # before gunicorn would SIGKILL the worker out from under it.
-    exec $TRACE gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers 2 --threads 8 --timeout 40
+    # --log-config-json: gunicorn's own lines (booting, signals, worker
+    # exits) in the same JSON as Django's, with a level; as plain stderr text
+    # Datadog filed every one of them as an error.
+    exec $TRACE gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers 2 --threads 8 --timeout 40 --log-config-json gunicorn-logging.json
 fi
 
 exec $TRACE "$@"
