@@ -28,9 +28,14 @@ const INK_SECONDARY = '#52514e';
 const GRID_HAIRLINE = '#e1e0d9';
 const AXIS_BASELINE = '#c3c2b7';
 
-Chart.defaults.color = INK_SECONDARY;
-Chart.defaults.borderColor = GRID_HAIRLINE;
-Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+// Guarded: if the Chart.js CDN script didn't load (network, a blocker), a
+// throw here would stop this file before the consts below it (rumReady,
+// lazyObserver), and then every widget fails, not only the charts.
+if (window.Chart) {
+    Chart.defaults.color = INK_SECONDARY;
+    Chart.defaults.borderColor = GRID_HAIRLINE;
+    Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+}
 
 const MAX_SERIES = CATEGORICAL.length; // beyond this, fold into "Other" rather than generating more hues
 
@@ -929,14 +934,33 @@ function updateGeoLegend(legendDiv, cells, metric) {
     }).join('');
 }
 
+function hasWebGL2() {
+    try {
+        return !!document.createElement('canvas').getContext('webgl2');
+    } catch (e) {
+        return false;
+    }
+}
+
 function renderGeoMap(initialGeo) {
     const map = L.map('geoMap', { preferCanvas: true }).setView([20, 0], 2);
-    // OpenFreeMap's Positron style: free, no API key or usage limits, and a
-    // light, low-contrast base so the density cells stay the focus.
-    L.maplibreGL({
-        style: 'https://tiles.openfreemap.org/styles/positron',
-        attribution: '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> <a href="https://www.openmaptiles.org/" target="_blank">&copy; OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
-    }).addTo(map);
+    if (hasWebGL2()) {
+        // OpenFreeMap's Positron style: free, no API key or usage limits, and a
+        // light, low-contrast base so the density cells stay the focus.
+        L.maplibreGL({
+            style: 'https://tiles.openfreemap.org/styles/positron',
+            attribution: '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> <a href="https://www.openmaptiles.org/" target="_blank">&copy; OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
+        }).addTo(map);
+    } else {
+        // MapLibre needs WebGL 2. Without it the layer fails to create its map
+        // yet stays attached, and Leaflet then throws on every pan/zoom
+        // ("gl is undefined", 1,594 RUM errors from one session on
+        // 2026-10-15): OSM's raster tiles instead.
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors',
+        }).addTo(map);
+    }
 
     const coarseLayer = L.layerGroup().addTo(map);
     const fineLayer = L.layerGroup();
