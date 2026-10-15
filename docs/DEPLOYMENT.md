@@ -21,6 +21,11 @@ directories the rest is automatic: `migrate` creates the SQLite file and its tab
 the ClickHouse schema (`clickhouse_migrate`: tables, refreshable rollups, the optional Datadog
 user).
 
+On an existing ClickHouse, a skip index added by the schema (`ALTER TABLE ... ADD INDEX`) only
+covers data written after it; build it for existing rows once with
+`ALTER TABLE changesets MATERIALIZE INDEX <name>` (a background mutation, progress in
+`system.mutations`). `0007_user_index.sql` (`idx_user_lower`) needs this.
+
 The SQLite file and ClickHouse's data live in host directories (`SQLITE_DIR`,
 `CLICKHOUSE_DATA_DIR`, bind-mounted), not Docker volumes. If
 Docker runs inside a VM (Colima, Docker Desktop), that directory must be shared into the VM,

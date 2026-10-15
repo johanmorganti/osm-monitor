@@ -1,0 +1,17 @@
+-- Skip index for the contributor filter, which daily_rollup can't answer (it
+-- has one dimension per row), so a contributor over years reads the raw
+-- table. Without the index that is every row in the range: on 2026-10-14,
+-- contributor=wielandb over 2018-2026 read 127M rows per query (17-30 s
+-- each, several cancelled at the 30 s cap).
+--
+-- On lower(user) because the API filters case-insensitively
+-- (lower(user) = lower(...)); an index on plain user would never be used.
+-- Measured over 2018-10-14 to 2026-10-14 (15,681 granules): wielandb (30k
+-- changesets) is in 2,245 of them, Lumikeiju (10k) in 2,066, Hintersinne
+-- (293) in 72. Prolific contributors gain ~7x, occasional ones ~200x.
+--
+-- ADD INDEX only covers parts written or merged afterwards. Existing parts
+-- need a one-off `ALTER TABLE changesets MATERIALIZE INDEX idx_user_lower`
+-- (a mutation over the whole table: not run from here, or every deploy would
+-- start it again).
+ALTER TABLE changesets ADD INDEX IF NOT EXISTS idx_user_lower lower(user) TYPE bloom_filter(0.01) GRANULARITY 1;

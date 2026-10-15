@@ -17,9 +17,11 @@ def api_exception_handler(exc, context):
         return response
 
     if _is_clickhouse_timeout(exc):
+        # 408, not a 5xx: retrying the same request times out again, the
+        # caller has to ask for less.
         return Response(
             {'error': 'Query took too long and was cancelled — try a narrower date range or filter.'},
-            status=503,
+            status=408,
         )
     if _is_clickhouse_unavailable(exc):
         return Response({'error': 'Analytics database unavailable — try again in a minute.'}, status=503)

@@ -1,6 +1,7 @@
 -- The plain ClickHouse mirror of Postgres's changesets_changeset: same columns
 -- and NULL semantics, no query-specific tuning (no materialized views,
--- projections or skip indexes) until a measurement asks for one.
+-- projections or skip indexes) until a measurement asks for one (0007: the
+-- contributor filter).
 --
 -- ReplacingMergeTree(changes_count): the writer contract is "replace a stored
 -- changeset only if its changes_count grew". Rows with the same sort key are
