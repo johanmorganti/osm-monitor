@@ -16,7 +16,7 @@ from ..geo import GEOHASH_PREFIX_LENGTH, geohash_cell_size_degrees, geohash_prec
 from ..models import SequenceState
 from ..serializers import ChangesetSerializer
 from .params import resolve_filters, pick_interval, parse_bbox, parse_bound
-from .schema import DIMENSION_FILTER_PARAMS, FILTER_PARAMS, OBJECT_FILTER_PARAMS
+from .schema import DIMENSION_FILTER_PARAMS, FILTER_PARAMS, OBJECT_FILTER_PARAMS, TIMEOUT_RESPONSE
 from .sizes import distribution
 
 
@@ -58,7 +58,7 @@ class ChangesetQueryView(APIView):
             OpenApiParameter('page', OpenApiTypes.INT, description='Page number.'),
             OpenApiParameter('page_size', OpenApiTypes.INT, description='Results per page (default 100, max 1000).'),
         ],
-        responses=ChangesetSerializer(many=True),
+        responses={200: ChangesetSerializer(many=True), 408: TIMEOUT_RESPONSE},
     )
     def get(self, request):
         params = request.query_params
@@ -119,7 +119,7 @@ class TimeseriesView(APIView):
             OpenApiParameter('interval', OpenApiTypes.STR, enum=['hour', 'day'], description='Force the bucket width: hour or day. Omit to auto-pick based on range width (see description).'),
             OpenApiParameter('metric', OpenApiTypes.STR, enum=['count', 'objects'], description='count (changesets, default) or objects (objects changed). With group_by, also what the top 20 are ranked by.'),
         ],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
         examples=[OpenApiExample(
             'Narrow range — auto-picked hourly',
             value={
@@ -177,7 +177,7 @@ class SummaryView(APIView):
         summary='Changeset summary totals',
         description='total_changesets, total_objects, and avg_objects for a date range. Defaults to the last 7 days if no dates are given.',
         parameters=FILTER_PARAMS,
-        responses={200: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
         examples=[OpenApiExample(
             'Sample',
             value={
@@ -229,7 +229,7 @@ class ToplistView(APIView):
             OpenApiParameter('metric', OpenApiTypes.STR, enum=['count', 'objects'], description='count (changesets) or objects (objects changed). Defaults to count.'),
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of results (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
         ],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
         examples=[OpenApiExample(
             'Top editors by count',
             value={
@@ -316,7 +316,7 @@ class GeoView(APIView):
             OpenApiParameter('resolution', OpenApiTypes.STR, enum=['coarse', 'fine'], description='coarse (default, global) or fine (requires bbox below).'),
             OpenApiParameter('bbox', OpenApiTypes.STR, description='Viewport as "min_lon,min_lat,max_lon,max_lat". Required when resolution=fine.'),
         ],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
         examples=[OpenApiExample(
             'Grid cells for the default range',
             value={
@@ -374,7 +374,7 @@ class DistributionView(APIView):
             'fraction. Defaults to the last 7 days if no dates are given.'
         ),
         parameters=FILTER_PARAMS,
-        responses={200: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
         examples=[OpenApiExample(
             'Sample',
             value={
@@ -414,7 +414,7 @@ class SizeBreakdownView(APIView):
             OpenApiParameter('by', OpenApiTypes.STR, required=True, enum=list(BY), description='One of: contributor, editor, imagery, language, country, day.'),
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of names for a dimension (default {DEFAULT_LIMIT}, max {MAX_LIMIT}); ignored for day.'),
         ],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
         examples=[OpenApiExample(
             'Top editors',
             value={
@@ -471,7 +471,7 @@ class LargestView(APIView):
             OpenApiParameter('by', OpenApiTypes.STR, enum=['objects', 'area'], description='objects (default) or area.'),
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of changesets (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
         ],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
         examples=[OpenApiExample(
             'By objects',
             value={
@@ -527,7 +527,7 @@ class GeoCellView(APIView):
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Page size (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
             OpenApiParameter('offset', OpenApiTypes.INT, description='Changesets to skip (default 0).'),
         ],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
         examples=[OpenApiExample(
             'Sample',
             value={
@@ -585,7 +585,7 @@ class MostEditedObjectsView(APIView):
         parameters=DIMENSION_FILTER_PARAMS + [
             OpenApiParameter('limit', OpenApiTypes.INT, description=f'Number of objects (default {DEFAULT_LIMIT}, max {MAX_LIMIT}).'),
         ],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
         examples=[OpenApiExample(
             'Sample',
             value={
@@ -667,7 +667,7 @@ class AutocompleteView(APIView):
             OpenApiParameter('field', OpenApiTypes.STR, required=True, enum=list(DIMENSIONS), description='One of: contributor, editor, imagery, language, country.'),
             OpenApiParameter('q', OpenApiTypes.STR, description='Partial value to match (case-insensitive, substring).'),
         ],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
         examples=[OpenApiExample('Sample', value=['StreetComplete', 'StreetComplete GO'], response_only=True)],
     )
     def get(self, request):

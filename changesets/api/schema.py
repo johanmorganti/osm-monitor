@@ -1,5 +1,5 @@
-"""OpenAPI (drf-spectacular) parameter definitions shared by several endpoints."""
-from drf_spectacular.utils import OpenApiParameter, OpenApiTypes
+"""OpenAPI (drf-spectacular) parameter and response definitions shared by several endpoints."""
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes
 
 DIMENSION_FILTER_PARAMS = [
     OpenApiParameter('contributor', OpenApiTypes.STR, description='Restrict to one OSM username (case-insensitive).'),
@@ -34,3 +34,9 @@ OBJECT_FILTER_PARAMS = [
         "Count only objects of this feature: the object's main tag key as in dimension=feature "
         "(building, highway, addr, ...; untagged; unknown for deletes).")),
 ]
+
+# Every endpoint that queries ClickHouse: a query cut off at its time cap
+# (changesets/exceptions.py).
+TIMEOUT_RESPONSE = OpenApiResponse(OpenApiTypes.OBJECT, description=(
+    'The query took longer than 30 s and was cancelled ({"error": "..."}). Retrying the same '
+    'request times out again: narrow the date range or add a filter.'))
