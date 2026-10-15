@@ -36,7 +36,7 @@ if [ "$#" -eq 0 ]; then
     # widgets, not more slots.
     # --timeout 40: must stay comfortably above ClickHouse's 30 s query cap
     # (max_execution_time, changesets/analytics/clickhouse/backend.py) so
-    # ClickHouse cancels a slow query cleanly, and the API answers 503,
+    # ClickHouse cancels a slow query cleanly, and the API answers 408,
     # before gunicorn would SIGKILL the worker out from under it.
     exec $TRACE gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers 2 --threads 8 --timeout 40
 fi
