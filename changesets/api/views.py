@@ -49,7 +49,7 @@ class ChangesetQueryView(APIView):
         parameters=[
             OpenApiParameter('start_date', OpenApiTypes.STR, description='Only changesets created on/after this day (YYYY-MM-DD) or timestamp (ISO 8601, UTC unless an offset is given). Defaults to 24 hours before now.'),
             OpenApiParameter('end_date', OpenApiTypes.STR, description='Only changesets created on/before this day (YYYY-MM-DD, the whole day included) or before this timestamp (excluded). Defaults to now.'),
-            OpenApiParameter('user', OpenApiTypes.STR, description='Exact OSM username.'),
+            OpenApiParameter('user', OpenApiTypes.STR, description='OSM username (case-insensitive).'),
             OpenApiParameter('editor', OpenApiTypes.STR, description='Exact editor family (e.g. "StreetComplete", "iD").'),
             OpenApiParameter('hashtag', OpenApiTypes.STR, description='Hashtag the changeset must include (from its #hashtags tag).'),
             OpenApiParameter('imagery_raw', OpenApiTypes.STR, description='Exact raw imagery string as found in the changeset\'s imagery_used tag.'),

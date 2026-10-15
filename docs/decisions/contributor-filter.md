@@ -30,12 +30,14 @@ index: change both together.
 ## Limits found along the way
 
 - **ClickHouse's `lower()` only folds ASCII letters**: `lower('ÉMILE Ö')` is `'Émile Ö'`
-  (`lowerUTF8` gives `'émile ö'`). So the matching is case-insensitive for ASCII names only. Any
-  change here is a public-API behavior change (who matches `contributor=…`), decided on its own,
-  and it has to move the index expression with it.
-- **The raw list endpoint is inconsistent**: `/api/changesets/` (`ChangesetList`, backend.py
-  ~line 747) matches `user = {user:String}` exactly. It differs from every other endpoint and
-  doesn't use `idx_user_lower`.
+  (`lowerUTF8` gives `'émile ö'`). So the matching is case-insensitive for ASCII letters only.
+  **Decided 2026-10-15: keep it as it is** (case-insensitive, `lower()`), a public-API behavior
+  not worth changing. Moving to `lowerUTF8` would mean changing the index expression with it and
+  rematerializing.
+- **`/api/changesets/` now matches the same way** (2026-10-15): it used `user = {user:String}`
+  (exact, and not using the index); `ChangesetList` in backend.py now uses
+  `lower(user) = lower(…)` like every other endpoint, and its `user` parameter is documented as
+  case-insensitive. (Its `editor` filter is still exact, unlike the `editor` filter elsewhere.)
 - **Case-sensitive matching would not be faster**: what costs time is how many granules hold the
   contributor's rows, and the table is ordered by `created_at`, so a prolific contributor is in
   the same granules whether the comparison folds case or not. The bloom filter is as selective on

@@ -1,9 +1,7 @@
-# Contributor queries: ordering, consistency, case
+# Contributor queries: contributor-ordered data
 
 Follow-ups from [contributor-filter](../decisions/contributor-filter.md) (2026-10-15), where the
 `lower(user)` bloom index fixed the cancelled contributor-filtered requests.
-
-## 1. Contributor-ordered data (speed)
 
 Still slow: the unfiltered contributor ranking over long ranges (`toplist?dimension=contributor`,
 `timeseries?group_by=contributor`, 2005 to today: 19 s alone, cancelled at 30 s on 2026-10-14
@@ -36,16 +34,5 @@ resurface old changesets into old months. Old partitions receive few rows, so an
 `OPTIMIZE TABLE changesets PARTITION … FINAL` on them could keep them at one part and make
 `FINAL` cheaper there. Measure the gain and the merge cost before scheduling it.
 
-## 2. `/api/changesets/` matches the contributor exactly
-
-`ChangesetList` (backend.py ~line 747) uses `user = {user:String}`: case-sensitive, unlike every
-other endpoint, and it doesn't use `idx_user_lower`. Aligning it changes who matches on a public
-endpoint, so it goes with item 3.
-
-## 3. Case sensitivity (public-API decision)
-
-`lower()` folds only ASCII letters, so `contributor=émile` doesn't match `Émile`. Options:
-`lowerUTF8` everywhere (index on `lowerUTF8(user)`, rematerialized), exact match everywhere
-(consistent, but a breaking change for callers relying on case-insensitivity), or leave it.
-Neither choice changes the speed (see the decision file). Whatever is chosen, the filter
-expression and the index expression move together.
+Case sensitivity was decided separately (kept case-insensitive, `lower()`; `/api/changesets/`
+aligned): see the decision file.

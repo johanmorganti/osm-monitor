@@ -748,7 +748,9 @@ class _ChangesetPage:
             'end': end if isinstance(end, datetime) else _day_start(end),
         }
         if q.user:
-            self.query.add('user = {user:String}', user=q.user)
+            # Same expression as _Query's contributor filter: case-insensitive,
+            # and what idx_user_lower indexes (docs/decisions/contributor-filter.md).
+            self.query.add('lower(user) = lower({user:String})', user=q.user)
         if q.editor:
             self.query.add('created_by_family = {editor:String}', editor=q.editor)
         if q.hashtag:

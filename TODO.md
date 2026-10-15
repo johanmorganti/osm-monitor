@@ -8,7 +8,7 @@ history.
 
 ## Known issues (deferred)
 
-- [Contributor queries: ordering, consistency, case](docs/todo/contributor-queries.md) — the unfiltered contributor ranking over full history still takes ~19 s (a contributor-ordered rollup or projection, keyed on `user_id`; check projections under `FINAL` first); `/api/changesets/` matches the contributor exactly unlike the rest; `lower()` folds ASCII only.
+- [Contributor queries: contributor-ordered data](docs/todo/contributor-queries.md) — the unfiltered contributor ranking over full history still takes ~19 s (a contributor-ordered rollup or projection, keyed on `user_id`; check projections under `FINAL` first).
 - [Datadog: ingestion-drop monitor](docs/todo/ingestion-monitor.md) — the "Low number of changeset coming" monitor watches a retired service (`osm-to-datadog`) and is stuck in Alert; repoint it at the poller's `Processed sequence` logs, in the Datadog UI.
 - [Favicon](docs/todo/favicon.md) — the site has none; needs a design, then the icon files and a `<link rel="icon">` in the page templates.
 
