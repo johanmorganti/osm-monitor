@@ -25,6 +25,17 @@ Plan:
 3. Measure the full-history ranking before and after; snapshot the API calls and diff the OpenAPI
    schema (behavior-neutral).
 
+Where the 19 s goes (measured 2026-10-15, one query alone, `toplist?dimension=contributor` SQL
+over 2005 to today): 13.6 s with `FINAL`, 9.8 s without. So `FINAL` adds ~40%, and the rest is
+grouping 190.6M rows by 2.6M contributors. Dropping `FINAL` is not an option: 53,679 rows were
+waiting for a merge (0.03%, mostly recent open/closed pairs, i.e. the short ranges where a double
+count would show). The rollup pays for `FINAL` once per refresh instead of per request.
+
+Side idea, for every `FINAL` query: 112 of 259 monthly partitions had 2-5 parts, because comments
+resurface old changesets into old months. Old partitions receive few rows, so an occasional
+`OPTIMIZE TABLE changesets PARTITION … FINAL` on them could keep them at one part and make
+`FINAL` cheaper there. Measure the gain and the merge cost before scheduling it.
+
 ## 2. `/api/changesets/` matches the contributor exactly
 
 `ChangesetList` (backend.py ~line 747) uses `user = {user:String}`: case-sensitive, unlike every

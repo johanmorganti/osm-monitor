@@ -28,8 +28,11 @@ autocomplete reads this table's own values (Timescale read FilterValue, which
 also listed countries with no changesets yet).
 
 FINAL makes the ReplacingMergeTree return one version per changeset (an
-updated changeset can exist twice until a background merge); measured as
-almost free once the table is optimized. The ClickHouseRawBackend variant
+updated changeset can exist twice until a background merge). It is not
+free: comments resurface old changesets, so old monthly partitions keep
+gaining parts (112 of 259 had 2-5 on 2026-10-15, with 53,679 rows waiting
+to be collapsed), and the all-time contributor ranking took 13.6 s with
+FINAL against 9.8 s without. The ClickHouseRawBackend variant
 skips the rollups (plain SQL only), to measure what they buy.
 """
 import json
