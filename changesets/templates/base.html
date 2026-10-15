@@ -11,9 +11,21 @@
     {{ dd_rum_config|json_script:"dd-rum-config" }}
     <script src="{{ dd_rum_sdk_url }}"></script>
     <script>
+        // Errors raised by browser extensions and in-app browsers, not by the
+        // site: Firefox iOS's reader hooks, wallet injection, Dark Reader,
+        // extension scripts, and cross-origin "Script error." (no stack, nothing
+        // to act on). ~90 of the week's RUM errors on 2026-10-15.
+        const RUM_IGNORED_ERRORS = /__firefox__|window\.ethereum|DarkReader|^(Uncaught )?"?Script error\.?"?$/;
+        const RUM_EXTENSION_STACK = /(chrome|moz|safari(-web)?)-extension:\/\//;
         if (window.DD_RUM) {
             const config = JSON.parse(document.getElementById('dd-rum-config').textContent);
-            window.DD_RUM.init({ ...config, allowedTracingUrls: [window.location.origin] });
+            window.DD_RUM.init({
+                ...config,
+                allowedTracingUrls: [window.location.origin],
+                beforeSend: event => !(event.type === 'error' && (
+                    RUM_IGNORED_ERRORS.test(event.error.message || '')
+                    || RUM_EXTENSION_STACK.test(event.error.stack || ''))),
+            });
         }
     </script>
     {% endif %}
