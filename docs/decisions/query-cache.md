@@ -36,7 +36,7 @@ cheaper `FINAL` do ([TODO](../todo/contributor-queries.md)).
 - **Not Cloudflare (HTTP caching)**: it would need `Cache-Control` on API responses, a Cloudflare
   Cache Rule (JSON isn't cached by default) and dropping `Vary: Cookie`, for the same small share
   of repeats at this traffic. Worth revisiting if traffic grows, for ranges ending two or more days
-  ago, which barely change.
+  ago, which barely change: [TODO](../todo/cloudflare-cache.md).
 
 Limits (server defaults, `system.server_settings`): 1 GiB in total, 1 MiB per result (a larger
 result is just not cached), 1,024 entries.
