@@ -127,3 +127,13 @@ ClickHouse's query condition cache hid it on repeated views, so only `system.que
 `read_rows` showed it. The toplist hit the same trap with `name` (see its comment in `backend.py`).
 Never alias an expression with the name of a column the same query filters on; check `read_rows`,
 not only the duration, when a query should be using a key.
+
+**2026-10-16: fine mode from zoom 6, not 7.** At zoom 6 the coarse cells (precision 3, ~156km)
+were ~64px blocks, the step that made zooming in feel coarse. Fine mode there is precision 4
+(~16px cells): measured for a European viewport, 5.5K cells over 7 days, 8.4K over a year (3 s),
+8.5K over all time (6 s), drawn in 110-210 ms in headless Chromium. Zoom 5 would be 10-25K cells,
+the range where drawing stalled the page (lesson 3), and precision 5 at zoom 7 (to make cells finer
+there too) would be 17-77K: so the threshold moved, `FINE_TARGET_CELLS_ACROSS` did not. Any finer
+cells than this at those zooms need a cheaper renderer (e.g. a WebGL layer), not a new constant.
+With fine data now slower to arrive at zoom 6 over long ranges, the map keeps the coarse cells on
+screen until the first fine response lands, instead of drawing an empty layer.

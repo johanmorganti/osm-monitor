@@ -578,7 +578,11 @@ const GEO_COLOR_RAMP = ['#cde2fb', '#9ec5f4', '#5598e7', '#2a78d6', '#1c5cab', '
 // scheduleFineFetch's own comments for why a naive "fetch on every
 // moveend" was found to be sending far more DB queries than normal map
 // browsing needs.
-const GEO_FINE_ZOOM_THRESHOLD = 7;
+// 6, not 7 (2026-10-16): at zoom 6 the coarse ~156km cells are ~64px blocks,
+// while fine cells there (precision 4) are ~16px, at 5-9K cells for a
+// European viewport (3 s over a year). Zoom 5 would be 10-25K cells, where
+// drawing them starts to stall the page (geo-geohash.md, lesson 3).
+const GEO_FINE_ZOOM_THRESHOLD = 6;
 const GEO_FINE_FETCH_DEBOUNCE_MS = 600;
 // Fetch this much extra area beyond the visible viewport (as a fraction of
 // its own size, per Leaflet's LatLngBounds.pad) so a small pan/zoom-out
@@ -1082,6 +1086,7 @@ function renderGeoMap(initialGeo) {
                     fineFetchedBounds = fetchBounds;
                     fineFetchedZoom = currentZoom;
                     if (showingFine) redraw();
+                    else showLayerForZoom();
                 })
                 .catch(err => {
                     if (err.name !== 'AbortError') console.error('Failed to load fine-resolution geo data', err);
@@ -1089,15 +1094,21 @@ function renderGeoMap(initialGeo) {
         }, GEO_FINE_FETCH_DEBOUNCE_MS);
     }
 
-    map.on('zoomend moveend', () => {
-        const isFine = map.getZoom() >= GEO_FINE_ZOOM_THRESHOLD;
+    // The coarse cells stay on screen until the first fine response lands
+    // (up to several seconds over long ranges), rather than an empty map.
+    function showLayerForZoom() {
+        const isFine = map.getZoom() >= GEO_FINE_ZOOM_THRESHOLD && fineFetchedBounds !== null;
         if (isFine !== showingFine) {
             showingFine = isFine;
             if (showingFine) { coarseLayer.remove(); fineLayer.addTo(map); }
             else { fineLayer.remove(); coarseLayer.addTo(map); }
             redraw();
         }
-        if (showingFine) scheduleFineFetch();
+    }
+
+    map.on('zoomend moveend', () => {
+        showLayerForZoom();
+        if (map.getZoom() >= GEO_FINE_ZOOM_THRESHOLD) scheduleFineFetch();
     });
 
     map.invalidateSize(); // container was `hidden` (zero-size) at construction time
