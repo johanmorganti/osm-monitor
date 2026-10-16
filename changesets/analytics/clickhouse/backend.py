@@ -86,8 +86,17 @@ HASHTAG_JOIN = 'ARRAY JOIN arrayDistinct(arrayMap(x -> lower(x), hashtags)) AS h
 AREA_KM2 = ('40589732.5 * radians(max_lon - min_lon)'
             ' * (sin(radians(max_lat)) - sin(radians(min_lat)))')
 
-# Per-query time cap for API requests (under gunicorn's 40 s worker timeout).
-QUERY_SETTINGS = {'max_execution_time': 30}
+# Per-query time cap for API requests (under gunicorn's 40 s worker timeout),
+# and ClickHouse's query cache: an identical query (same SQL and parameter
+# values) within 5 minutes is answered from RAM, so API results can trail
+# ingestion by up to that long. Queries using now() are not cached. Parity
+# checks clear these settings, so they always compare fresh results.
+QUERY_SETTINGS = {
+    'max_execution_time': 30,
+    'use_query_cache': 1,
+    'query_cache_ttl': 300,
+    'query_cache_nondeterministic_function_handling': 'ignore',
+}
 
 RAW_FIELDS = (
     'changeset_id', 'created_at', 'closed_at', 'open', 'changes_count', 'user', 'user_id',
