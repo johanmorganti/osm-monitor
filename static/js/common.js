@@ -947,12 +947,21 @@ function hasWebGL2() {
 }
 
 function renderGeoMap(initialGeo) {
-    const map = L.map('geoMap', { preferCanvas: true }).setView([20, 0], 2);
+    // One copy of the world: zoomed out, the base map would otherwise repeat
+    // side by side (the cells are only drawn once, at -180..180), so neither
+    // base map wraps and panning stops at the antimeridian.
+    const map = L.map('geoMap', {
+        preferCanvas: true,
+        minZoom: 1,
+        maxBounds: [[-90, -180], [90, 180]],
+        maxBoundsViscosity: 1,
+    }).setView([20, 0], 2);
     if (hasWebGL2()) {
         // OpenFreeMap's Positron style: free, no API key or usage limits, and a
         // light, low-contrast base so the density cells stay the focus.
         L.maplibreGL({
             style: 'https://tiles.openfreemap.org/styles/positron',
+            renderWorldCopies: false,
             attribution: '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> <a href="https://www.openmaptiles.org/" target="_blank">&copy; OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
         }).addTo(map);
     } else {
@@ -962,6 +971,7 @@ function renderGeoMap(initialGeo) {
         // 2026-10-15): OSM's raster tiles instead.
         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
+            noWrap: true,
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors',
         }).addTo(map);
     }
