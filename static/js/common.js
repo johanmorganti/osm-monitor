@@ -946,6 +946,49 @@ function hasWebGL2() {
     }
 }
 
+// The map sits in a scrolling page, so a plain scroll (or a one-finger
+// swipe on a phone) scrolls the page instead of being captured by the map,
+// as with Google Maps embeds or MapLibre's cooperativeGestures. Zooming
+// takes a pinch (trackpad or touch), or ⌘/Ctrl + scroll; a hint says so.
+// Also stops a trackpad's scroll momentum from zooming the map.
+function cooperativeGestures(map) {
+    const container = map.getContainer();
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+    const hint = L.DomUtil.create('div', 'absolute inset-0 flex items-center justify-center pointer-events-none', container);
+    Object.assign(hint.style, { zIndex: 1000, background: 'rgba(0, 0, 0, 0.35)', opacity: 0, transition: 'opacity 0.3s' });
+    hint.innerHTML = '<span class="text-white text-lg font-medium px-4 text-center"></span>';
+    let hideTimer = null;
+    function showHint(text) {
+        hint.firstChild.textContent = text;
+        hint.style.opacity = 1;
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(hideHint, 1200);
+    }
+    function hideHint() {
+        clearTimeout(hideTimer);
+        hint.style.opacity = 0;
+    }
+
+    // Capture on the parent so it runs before Leaflet's listener on the
+    // container; not stopping it there leaves the default (page scroll) alone.
+    // A trackpad pinch arrives as a wheel event with ctrlKey set.
+    container.parentElement.addEventListener('wheel', e => {
+        if (!container.contains(e.target)) return;
+        if (e.ctrlKey || e.metaKey) { hideHint(); return; }
+        e.stopPropagation();
+        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+            showHint(isMac ? 'Pinch or use ⌘ + scroll to zoom the map' : 'Use Ctrl + scroll to zoom the map');
+        }
+    }, { capture: true, passive: true });
+
+    if (L.Browser.mobile) {
+        container.addEventListener('touchmove', e => {
+            if (e.touches.length === 1) showHint('Use two fingers to move the map');
+            else hideHint();
+        }, { passive: true });
+    }
+}
+
 function renderGeoMap(initialGeo) {
     // One copy of the world: zoomed out, the base map would otherwise repeat
     // side by side (the cells are only drawn once, at -180..180), so neither
@@ -955,7 +998,18 @@ function renderGeoMap(initialGeo) {
         minZoom: 1,
         maxBounds: [[-90, -180], [90, 180]],
         maxBoundsViscosity: 1,
+        // Zoom follows the wheel/pinch distance instead of whole levels:
+        // Leaflet rounds every 40 ms batch of wheel events *up* to the next
+        // zoomSnap step, so with the default 1 each batch of a macOS
+        // trackpad's momentum tail added a full level after the fingers
+        // lifted. The +/- buttons and keyboard still step one level.
+        zoomSnap: 0,
+        wheelPxPerZoomLevel: 120,
+        // On phones one finger scrolls the page; two fingers pan and pinch
+        // the map (Leaflet's touchZoom pans with the pinch midpoint).
+        dragging: !L.Browser.mobile,
     }).setView([20, 0], 2);
+    cooperativeGestures(map);
     if (hasWebGL2()) {
         // OpenFreeMap's Positron style: free, no API key or usage limits, and a
         // light, low-contrast base so the density cells stay the focus.
