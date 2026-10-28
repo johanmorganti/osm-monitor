@@ -113,25 +113,25 @@ docker compose up -d poller
 ```
 
 Then import the dump (https://planet.openstreetmap.org/planet/changesets-latest.osm.bz2, weekly,
-~8GB). A single `import_from_dump` process alternates between parsing and inserting, so it leaves
-both itself and ClickHouse half idle; for full history, decompress once and split the file between
-several workers with `--byte-range` (each snaps to changeset boundaries, so ranges neither overlap
-nor drop anything):
+~9GB). A single `import_from_dump` process is bound by its own parsing (one core; ~7,500
+changesets/s, ~7 h for full history), so split the file between several workers with
+`--byte-range`. On the `.bz2` the range is of the compressed file: the dump is ~90,000 independent
+bz2 streams, each worker decompresses only its own, and changesets spanning two ranges go to
+exactly one of them, so nothing needs decompressing to disk (~70 GB unpacked):
 
 ```bash
-# Parallel decompression (~8x larger than the .bz2)
-docker run --rm -v <dump dir>:/dump debian:bookworm-slim sh -c \
-  "apt-get update && apt-get install -y lbzip2 && lbzip2 -d -k /dump/changesets-YYMMDD.osm.bz2"
-
-# N workers over equal byte ranges of the .osm file
-SIZE=$(stat -f %z <dump dir>/changesets-YYMMDD.osm)   # GNU: stat -c %s
-N=4
+SIZE=$(stat -c %s <dump dir>/changesets-latest.osm.bz2)   # macOS: stat -f %z
+N=6
 for i in $(seq 0 $((N-1))); do
   docker compose run -d --name osm-import-$i --no-deps -v <dump dir>:/dump:ro web \
-    python manage.py import_from_dump /dump/changesets-YYMMDD.osm \
+    python manage.py import_from_dump /dump/changesets-latest.osm.bz2 \
       --byte-range $((SIZE*i/N)):$((SIZE*(i+1)/N)) --batch-size 2000
 done
 ```
+
+Measured 2026-10-26 on 8 vCPUs: 6 workers ~26,000 changesets/s together (each ~60% of a core,
+waiting on its inserts), with the diff poller's backfill running alongside. A decompressed `.osm`
+also works with the same flag (the range is then of the plain file).
 
 ClickHouse's rollups rebuild from the deduplicated table on their daily refresh, so nothing needs
 refreshing by hand afterwards (`SYSTEM REFRESH VIEW <view>` does it sooner).

@@ -1,10 +1,11 @@
 import bz2
 import logging
+import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone as dt_timezone
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 
 from changesets.ingest.writers import get_writers
 from changesets.osm_fetcher import import_changeset_batch
@@ -128,6 +129,139 @@ class _ByteRangeReader:
         return result
 
 
+# Start of a bz2 stream: the "BZh" + block-size header, then the first block's
+# magic. The dump's streams are byte-aligned and back-to-back (~100 KB each).
+_BZ2_STREAM_START = re.compile(rb'BZh[1-9]1AY&SY')
+
+
+def _find_bz2_stream(fileobj, offset, file_size, chunk_size=1024 * 1024):
+    """Offset of the first bz2 stream start at or after `offset`, or
+    file_size if there is none."""
+    pos = offset
+    overlap = 9  # len(magic) - 1
+    while pos < file_size:
+        fileobj.seek(pos)
+        match = _BZ2_STREAM_START.search(fileobj.read(chunk_size + overlap))
+        if match:
+            return pos + match.start()
+        pos += chunk_size
+    return file_size
+
+
+def _decompress_streams(fileobj, start, end, read_size=4 * 1024 * 1024):
+    """Decompressed bytes of the bz2 streams in [start, end) of fileobj, both
+    stream boundaries, as a sequence of chunks."""
+    fileobj.seek(start)
+    pos = start
+    decompressor = bz2.BZ2Decompressor()
+    while pos < end:
+        raw_chunk = fileobj.read(min(read_size, end - pos))
+        if not raw_chunk:
+            break
+        pos += len(raw_chunk)
+        pending = raw_chunk
+        while pending:
+            data = decompressor.decompress(pending)
+            if data:
+                yield data
+            if decompressor.eof:
+                pending = decompressor.unused_data
+                decompressor = bz2.BZ2Decompressor()
+            else:
+                pending = b''
+
+
+class _Bz2ByteRangeReader:
+    """Like _ByteRangeReader, but over a slice of the compressed .bz2 dump, so
+    several processes can split it without decompressing it to disk.
+
+    The range is snapped forward to bz2 stream starts at both ends, and only
+    those streams are decompressed ("own" output), plus whatever follows them
+    until the next changeset boundary. A changeset belongs to the range whose
+    own output holds the '\\n' of its _CHANGESET_LINE_MARKER: the same rule as
+    _ByteRangeReader's, so adjacent ranges neither overlap nor drop one, even
+    when a changeset (or its marker) spans two streams."""
+
+    def __init__(self, fileobj, start, end):
+        fileobj.seek(0, 2)
+        file_size = fileobj.tell()
+        self._fileobj = fileobj
+        self._file_size = file_size
+        self._own_start = _find_bz2_stream(fileobj, start, file_size)
+        self._own_end = max(self._own_start, _find_bz2_stream(fileobj, min(end, file_size), file_size))
+        self._body = self._body_chunks()
+        self._pending = bytearray(b'<osm>\n')
+        self._closed_root = False
+
+    def _chunks(self):
+        """(decompressed chunk, is own output) pairs; the empty chunk marks
+        the end of the own output."""
+        for data in _decompress_streams(self._fileobj, self._own_start, self._own_end):
+            yield data, True
+        yield b'', False
+        for data in _decompress_streams(self._fileobj, self._own_end, self._file_size):
+            yield data, False
+
+    def _body_chunks(self):
+        if self._own_start >= self._own_end:
+            return
+        keep = len(_CHANGESET_LINE_MARKER) - 1  # a marker may straddle chunks
+        buf = bytearray()
+        buf_offset = 0  # decompressed offset of buf[0]
+        total = 0
+        own_size = None  # decompressed size of the own output, once known
+        started = False
+        for data, own in self._chunks():
+            if not own and own_size is None:
+                own_size = total
+            buf.extend(data)
+            total += len(data)
+            if not started:
+                i = buf.find(_CHANGESET_LINE_MARKER)
+                if i != -1 and own_size is not None and buf_offset + i >= own_size:
+                    return  # no changeset starts in this range
+                if i == -1:
+                    if own_size is not None and total - keep >= own_size:
+                        return
+                    drop = max(0, len(buf) - keep)
+                    del buf[:drop]
+                    buf_offset += drop
+                    continue
+                del buf[:i + 1]  # skip the '\n': the body starts at ' <changeset'
+                buf_offset += i + 1
+                started = True
+            if own_size is not None:
+                j = buf.find(_CHANGESET_LINE_MARKER, max(0, own_size - buf_offset))
+                if j != -1:
+                    yield bytes(buf[:j])
+                    return
+            emit = max(0, len(buf) - keep)
+            if emit:
+                yield bytes(buf[:emit])
+                del buf[:emit]
+                buf_offset += emit
+        if started:
+            # Last range: stop before the dump's own closing tag, re-added in read().
+            closing = buf.rfind(b'</osm>')
+            yield bytes(buf[:closing] if closing != -1 else buf)
+
+    def read(self, size=-1):
+        if size is None or size < 0:
+            size = 1 << 62
+        while len(self._pending) < size:
+            data = next(self._body, None)
+            if data is not None:
+                self._pending.extend(data)
+            elif not self._closed_root:
+                self._pending.extend(b'\n</osm>\n')
+                self._closed_root = True
+            else:
+                break
+        result = bytes(self._pending[:size])
+        del self._pending[:size]
+        return result
+
+
 class Command(BaseCommand):
     help = (
         'Bulk-import changesets from the full OSM changesets planet dump '
@@ -164,10 +298,10 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--byte-range', type=str, default=None, metavar='START:END',
-            help='Only import changesets whose line starts in this byte range of a decompressed '
-                 '.osm dump (snapped to changeset boundaries), so several processes can split one '
-                 'dump between them. '
-                 'Not supported on .bz2 input.'
+            help='Only import changesets whose line starts in this byte range of the dump '
+                 '(snapped to changeset boundaries), so several processes can split one dump '
+                 'between them. On .bz2 input the range is of the compressed file (snapped to its '
+                 'bz2 streams), so the dump needs no decompressing to disk.'
         )
         parser.add_argument(
             '--skip-cagg-refresh', action='store_true',
@@ -207,10 +341,11 @@ class Command(BaseCommand):
 
         with open(dump_path, 'rb') as raw_file:
             if options['byte_range']:
-                if dump_path.endswith('.bz2'):
-                    raise CommandError('--byte-range needs a decompressed .osm dump, not .bz2')
                 range_start, range_end = (int(x) for x in options['byte_range'].split(':'))
-                reader = _ByteRangeReader(raw_file, range_start, range_end)
+                if dump_path.endswith('.bz2'):
+                    reader = _Bz2ByteRangeReader(raw_file, range_start, range_end)
+                else:
+                    reader = _ByteRangeReader(raw_file, range_start, range_end)
             elif dump_path.endswith('.bz2'):
                 reader = _MultiStreamBz2Reader(raw_file)
             else:
