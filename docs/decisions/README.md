@@ -11,6 +11,7 @@ from them are summarized in [`../../CLAUDE.md`](../../CLAUDE.md); how the system
 - [Dimension naming](dimension-naming.md): DB column vs. API param vs. UI label, and the mapping for every dimension.
 - [NULL tags get a "(none)" bucket](none-bucket.md): untagged volume is never silently excluded.
 - [MCP server](mcp-server.md): each tool calls its REST endpoint and is described by its OpenAPI annotations; stateless JSON over POST at `/mcp`, open like the API.
+- [Front-end code served from the site](self-hosted-assets.md): Tailwind compiled at build, libraries in `static/vendor/`, no scripts from CDNs.
 
 ## Analytics and storage
 

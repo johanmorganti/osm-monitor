@@ -4,9 +4,9 @@ db.sqlite3
 *.osm.gz
 output/
 .env
-tailwind*
-tailwind.config.js
-input.css
+# Tailwind CLI binary for `make css`, and its output (built in the Dockerfile)
+/tailwindcss
+static/css/site.css
 venv/
 __pycache__/
 *.pyc

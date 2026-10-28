@@ -1,10 +1,15 @@
 """HTML page shells. No database access: each page fetches its data
 client-side from the JSON API (changesets/api/views.py)."""
+from django.templatetags.static import static
 from django.views.generic import TemplateView
 from drf_spectacular.utils import extend_schema
 from drf_spectacular.views import SpectacularSwaggerView
 
 from .mcp.tools import public_tools
+
+# Swagger UI is served from static/vendor/ (see its README.md), not drf-spectacular's default
+# CDN URL (swagger-ui-dist@latest on jsDelivr: unpinned, so any new release ran on the page).
+SWAGGER_UI_VERSION_DIR = 'vendor/swagger-ui-dist-5.33.2'
 
 
 class DashboardView(TemplateView):
@@ -44,6 +49,16 @@ class ApiDocsView(SpectacularSwaggerView):
     generated REST reference (Swagger UI) inside the site's own layout."""
     template_name = 'changesets/api_docs.html'
     title = 'API / MCP'
+
+    # drf-spectacular builds the asset URLs in these two hooks (SWAGGER_UI_DIST would also work,
+    # but gives unhashed URLs, so browsers couldn't cache them for long).
+    @staticmethod
+    def _swagger_ui_resource(filename):
+        return static(f'{SWAGGER_UI_VERSION_DIR}/{filename}')
+
+    @staticmethod
+    def _swagger_ui_favicon():
+        return static(f'{SWAGGER_UI_VERSION_DIR}/favicon-32x32.png')
 
     @extend_schema(exclude=True)
     def get(self, request, *args, **kwargs):

@@ -30,6 +30,9 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
   everywhere.** Before adding or changing a label, grep the templates and JS for every existing
   string for that dimension. A public API param is never renamed or removed casually (breaking
   change). → [dimension-naming](docs/decisions/dimension-naming.md) (has the mapping table)
+- **No scripts or stylesheets from CDNs**: libraries go in `static/vendor/` (see its README), and
+  Tailwind is compiled at image build from the templates and `static/js`, so a class must appear
+  whole there (no `` `bg-${color}-500` ``). → [self-hosted-assets](docs/decisions/self-hosted-assets.md)
 - **Untagged volume goes in the `(none)` bucket (`NONE_BUCKET`), never silently excluded**; it
   filters to the NULL rows. → [none-bucket](docs/decisions/none-bucket.md)
 
@@ -109,7 +112,8 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
 | `changesets/templates/changesets/{dashboard,objects,editors,api_docs}.html` | Page HTML shells only (`_drilldown_panel.html`: the drill-down panel both Overview and Objects include) |
 | `static/js/common.js` | Shared chart factories (clickable points: `pointClickOptions`), `apiUrl`/`fetchJson`/`loadWidget` (lazy), geo map, drill-down panel (`openDrilldown`), autocomplete |
 | `static/js/{dashboard,objects,editors,api_docs}.js` | Page-specific widget wiring |
-| `static/output.css` | Compiled Tailwind CSS (poller status page only; the other pages use the Tailwind CDN) |
+| `tailwind/` | Tailwind config and input; compiled to `static/css/site.css` (every page) in the Dockerfile, or by `make css` |
+| `static/vendor/` | Front-end libraries (Chart.js, Leaflet, MapLibre, Swagger UI), one directory per package version; `README.md` has provenance and hashes |
 | `docs/decisions/` | Architecture decisions, one per file (index: `README.md`) |
 | `docs/ARCHITECTURE.md` | Pages and endpoints, data flow, observability |
 | `docs/DEPLOYMENT.md` | Running the Compose stack, optional Datadog overlay, full-history import |

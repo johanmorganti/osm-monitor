@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+{% load static %}<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}OSM Changeset Monitor{% endblock %}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="{% static 'css/site.css' %}">
     {% if dd_rum_config %}
     {# Datadog RUM (optional, see changesets/context_processors.py). The site's own #}
     {# origin is traced so RUM sessions link to the backend's APM traces. #}
