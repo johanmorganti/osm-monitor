@@ -51,15 +51,19 @@ sudo sh -c 'sysctl -w kern.maxfiles=524288 kern.maxfilesperproc=262144 && printf
 colima stop && colima start
 ```
 
-The VM has 8 GB (since 2026-10-05, was 13 GB with Postgres) on a 16 GB Mac. The services'
-`mem_limit`s in `docker-compose.yml` add up to about that: ClickHouse 5 GB (it sizes its own
-memory budget from it), the diff poller 1 GB, `web` and the changeset poller 512 MB each, the
-optional Datadog agent 1 GB. They're ceilings: in normal use the containers take ~2 GB, and the
-rest of the VM's memory is page cache for ClickHouse's data files, which is what makes repeated
-queries fast. Measured before the change: 1.8 GB used, 8.8 GB of cache, ClickHouse's largest query
-in two days 2.9 GB. If long-range pages get slower, 10 GB is the middle ground; adjust the limits
-together for a different machine. Changing the VM's memory needs `colima stop` then
-`colima start --memory <GB>` (the other settings are kept).
+**Memory.** The production host (since 2026-10-26) is a Linux server with 16 GB and 8 vCPUs,
+Docker running natively (no VM). The services' `mem_limit`s in `docker-compose.yml` are sized for
+it: ClickHouse 9 GB (it sizes its own memory budget from it), `web` 2 GB with 4 gunicorn workers
+(`GUNICORN_WORKERS`, one per two vCPUs, 8 threads each), the diff poller 1 GB, the changeset poller
+512 MB, plus a Datadog agent run outside this stack (~0.7 GB). They're ceilings: in normal use the
+containers take ~2 GB, and the rest of the memory is page cache for ClickHouse's data files, which
+is what makes repeated queries fast. ClickHouse's largest query in two days took 2.9 GB. There is
+no swap, so keep the limits' sum under the host's memory; adjust them together for a different
+machine.
+
+Before that it ran in an 8 GB Colima VM on a 16 GB Mac (ClickHouse 5 GB, `web` 512 MB with 2
+workers). Changing a Colima VM's memory needs `colima stop` then `colima start --memory <GB>` (the
+other settings are kept).
 
 **Object changes (`diff-poller`).** On its first start it follows the minutely diffs from the
 latest daily diff on, then backfills 92 days of daily diffs behind that, one per round (~3 min

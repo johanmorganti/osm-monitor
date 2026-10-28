@@ -34,6 +34,7 @@ if [ "$#" -eq 0 ]; then
     # slots exceed one page load. More threads would only add contention
     # for the same cores; the levers are cheaper queries and lazy-loading
     # widgets, not more slots.
+    # GUNICORN_WORKERS (docker-compose.yml) sizes it to the host's cores.
     # --timeout 40: must stay comfortably above ClickHouse's 30 s query cap
     # (max_execution_time, changesets/analytics/clickhouse/backend.py) so
     # ClickHouse cancels a slow query cleanly, and the API answers 408,
@@ -41,7 +42,7 @@ if [ "$#" -eq 0 ]; then
     # --log-config-json: gunicorn's own lines (booting, signals, worker
     # exits) in the same JSON as Django's, with a level; as plain stderr text
     # Datadog filed every one of them as an error.
-    exec $TRACE gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers 2 --threads 8 --timeout 40 --log-config-json gunicorn-logging.json
+    exec $TRACE gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers "${GUNICORN_WORKERS:-2}" --threads 8 --timeout 40 --log-config-json gunicorn-logging.json
 fi
 
 exec $TRACE "$@"

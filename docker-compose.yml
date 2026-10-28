@@ -28,10 +28,10 @@ services:
     ulimits:
       nofile: {soft: 262144, hard: 262144}
     # ClickHouse sizes its own memory budget from the container limit (90% by
-    # default). 5g in an 8 GB VM (2026-10-05): its largest query in two days
-    # took 2.9 GB, typical ones ~30 MB, and the rest of the VM's memory serves
-    # as page cache for its data files.
-    mem_limit: 5g
+    # default). 9g on a 16 GB / 8 vCPU host (2026-10-26; was 5g in an 8 GB
+    # VM): its largest query in two days took 2.9 GB, typical ones ~30 MB, and
+    # the rest of the host's memory serves as page cache for its data files.
+    mem_limit: 9g
     ports:
       - "127.0.0.1:8123:8123"   # HTTP interface, local only (benchmarks, manual queries)
     # Datadog ClickHouse check + Database Monitoring, used only when the
@@ -100,7 +100,11 @@ services:
       # Tracing off unless docker-compose.datadog.yml turns it on (ddtrace
       # is imported by the app, and would otherwise retry a missing agent).
       DD_TRACE_ENABLED: "false"
-    mem_limit: 512m
+      # gunicorn workers (x 8 threads each, see entrypoint.sh): one per two
+      # vCPUs on the 8 vCPU host. ~2g covers 4 workers' Django footprint
+      # with headroom (was 2 workers in 512m).
+      GUNICORN_WORKERS: "4"
+    mem_limit: 2g
     ports:
       - "5006:8000"
 
