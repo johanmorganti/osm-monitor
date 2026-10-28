@@ -617,7 +617,9 @@ function geoColorScale(cells, metric) {
 // here would misrepresent the true cell shape.
 // `onCellClick(cell)` (optional) makes cells clickable; `selectedCell` (a
 // cell's geohash) is outlined.
-const GeoCellsLayer = L.Canvas.extend({
+// Only the Overview loads Leaflet: unguarded, `L.Canvas` throws on the other pages and stops this
+// file before the consts below it (drilldown, ...), so their charts lose the click-through panel.
+const GeoCellsLayer = window.L && L.Canvas.extend({
     initialize(onCellClick) {
         L.Canvas.prototype.initialize.call(this);
         this._onCellClick = onCellClick;
