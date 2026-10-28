@@ -7,7 +7,10 @@
 #     DD_DOGSTATSD_SOCKET=/var/run/datadog/dsd.socket, that directory mounted
 #     from the host (DD_SOCKET_DIR below, default /var/run/datadog);
 #   - container log collection (DD_LOGS_ENABLED, DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL);
-#   - the docker socket, so it reads the ClickHouse label below (autodiscovery).
+#   - the docker socket, so it reads the ClickHouse label below (autodiscovery);
+#   - the shared `datadog` network (`networks: {datadog: {name: datadog}}` in its
+#     compose file), where it reaches ClickHouse: Docker isolates one compose
+#     project's network from another's.
 #
 # Enable it by adding to .env:
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.datadog.yml
@@ -20,14 +23,18 @@ services:
   clickhouse:
     # ClickHouse check + Database Monitoring, read by the agent from this label.
     # Connects as the least-privilege `datadog` user clickhouse_migrate creates
-    # from DD_CLICKHOUSE_PASSWORD.
+    # from DD_CLICKHOUSE_PASSWORD, at ClickHouse's address on the `datadog`
+    # network (%%host_datadog%%).
+    networks:
+      default:
+      datadog:
     labels:
       com.datadoghq.ad.checks: |
         {
           "clickhouse": {
             "instances": [
               {
-                "server": "%%host%%",
+                "server": "%%host_datadog%%",
                 "port": 8123,
                 "username": "datadog",
                 "password": "${DD_CLICKHOUSE_PASSWORD:-}",
@@ -72,3 +79,9 @@ services:
       <<: *app-dd-env
       DD_SERVICE: osm-monitor-diff-poller
     volumes: *dd-sockets
+
+networks:
+  # Shared with the agent's own compose project, hence the fixed name:
+  # whichever project starts first creates it.
+  datadog:
+    name: datadog
