@@ -42,7 +42,9 @@ if [ "$#" -eq 0 ]; then
     # --log-config-json: gunicorn's own lines (booting, signals, worker
     # exits) in the same JSON as Django's, with a level; as plain stderr text
     # Datadog filed every one of them as an error.
-    exec $TRACE gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers "${GUNICORN_WORKERS:-2}" --threads 8 --timeout 40 --log-config-json gunicorn-logging.json
+    # --no-control-socket: gunicorn (26) opens a runtime control socket by
+    # default; nothing here uses it, so it stays closed.
+    exec $TRACE gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers "${GUNICORN_WORKERS:-2}" --threads 8 --timeout 40 --no-control-socket --log-config-json gunicorn-logging.json
 fi
 
 exec $TRACE "$@"
