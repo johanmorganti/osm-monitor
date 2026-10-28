@@ -9,7 +9,6 @@ requests==2.34.2
 sqlparse==0.6.0
 typing_extensions==4.16.0
 urllib3==2.8.0
-python-dotenv==1.0.1
 gunicorn==26.2.0
 whitenoise==6.12.0
 drf-spectacular==0.30.0

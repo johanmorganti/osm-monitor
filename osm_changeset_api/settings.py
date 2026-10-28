@@ -12,18 +12,16 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 
-from dotenv import dotenv_values
 import os
+
+from .envfile import read_env_file
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load environment variables from .env file into a dictionary
-env_vars = dotenv_values(BASE_DIR / '.env')
-
-# Update the environment with the values from the .env file
-os.environ.update(env_vars)
+# Load environment variables from the .env file (its values win over the environment's)
+os.environ.update(read_env_file(BASE_DIR / '.env'))
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY')
