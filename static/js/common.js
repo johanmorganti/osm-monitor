@@ -946,47 +946,24 @@ function hasWebGL2() {
     }
 }
 
-// The map sits in a scrolling page, so a plain scroll (or a one-finger
-// swipe on a phone) scrolls the page instead of being captured by the map,
-// as with Google Maps embeds or MapLibre's cooperativeGestures. Zooming
-// takes a pinch (trackpad or touch), or ⌘/Ctrl + scroll; a hint says so.
-// Also stops a trackpad's scroll momentum from zooming the map.
-function cooperativeGestures(map) {
+// On phones one finger scrolls the page instead of being captured by the map
+// (two fingers pan and pinch it, see `dragging` in renderGeoMap); a hint says
+// so. On desktop the wheel zooms the map whenever the cursor is over it.
+function touchGestureHint(map) {
     const container = map.getContainer();
-    const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
     const hint = L.DomUtil.create('div', 'absolute inset-0 flex items-center justify-center pointer-events-none', container);
     Object.assign(hint.style, { zIndex: 1000, background: 'rgba(0, 0, 0, 0.35)', opacity: 0, transition: 'opacity 0.3s' });
-    hint.innerHTML = '<span class="text-white text-lg font-medium px-4 text-center"></span>';
+    hint.innerHTML = '<span class="text-white text-lg font-medium px-4 text-center">Use two fingers to move the map</span>';
     let hideTimer = null;
-    function showHint(text) {
-        hint.firstChild.textContent = text;
-        hint.style.opacity = 1;
+    container.addEventListener('touchmove', e => {
         clearTimeout(hideTimer);
-        hideTimer = setTimeout(hideHint, 1200);
-    }
-    function hideHint() {
-        clearTimeout(hideTimer);
-        hint.style.opacity = 0;
-    }
-
-    // Capture on the parent so it runs before Leaflet's listener on the
-    // container; not stopping it there leaves the default (page scroll) alone.
-    // A trackpad pinch arrives as a wheel event with ctrlKey set.
-    container.parentElement.addEventListener('wheel', e => {
-        if (!container.contains(e.target)) return;
-        if (e.ctrlKey || e.metaKey) { hideHint(); return; }
-        e.stopPropagation();
-        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-            showHint(isMac ? 'Pinch or use ⌘ + scroll to zoom the map' : 'Use Ctrl + scroll to zoom the map');
+        if (e.touches.length === 1) {
+            hint.style.opacity = 1;
+            hideTimer = setTimeout(() => { hint.style.opacity = 0; }, 1200);
+        } else {
+            hint.style.opacity = 0;
         }
-    }, { capture: true, passive: true });
-
-    if (L.Browser.mobile) {
-        container.addEventListener('touchmove', e => {
-            if (e.touches.length === 1) showHint('Use two fingers to move the map');
-            else hideHint();
-        }, { passive: true });
-    }
+    }, { passive: true });
 }
 
 function renderGeoMap(initialGeo) {
@@ -1004,12 +981,17 @@ function renderGeoMap(initialGeo) {
         // trackpad's momentum tail added a full level after the fingers
         // lifted. The +/- buttons and keyboard still step one level.
         zoomSnap: 0,
-        wheelPxPerZoomLevel: 120,
+        // ~1.4 levels per 100 px scrolled. Leaflet divides wheel pixels by
+        // 3 x devicePixelRatio on a Mac (2x elsewhere), so a fixed value
+        // zoomed half as fast on a Retina screen: dividing by the pixel
+        // ratio cancels that. (Fixed 120, 60, 40 and 25 all felt slow on a
+        // Retina Mac, 2026-10-28; 25 there was ~0.46 level per 100 px.)
+        wheelPxPerZoomLevel: 15 / (window.devicePixelRatio || 1),
         // On phones one finger scrolls the page; two fingers pan and pinch
         // the map (Leaflet's touchZoom pans with the pinch midpoint).
         dragging: !L.Browser.mobile,
     }).setView([20, 0], 2);
-    cooperativeGestures(map);
+    if (L.Browser.mobile) touchGestureHint(map);
     if (hasWebGL2()) {
         // OpenFreeMap's Positron style: free, no API key or usage limits, and a
         // light, low-contrast base so the density cells stay the focus.
