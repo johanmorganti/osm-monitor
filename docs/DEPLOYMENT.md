@@ -15,6 +15,11 @@ mkdir -p <SQLITE_DIR> <CLICKHOUSE_DATA_DIR>   # host directories named in .env
 
 The dashboard is on `http://localhost:5006/`, the API / MCP docs on `http://localhost:5006/api/docs/`, the MCP server on `http://localhost:5006/mcp`.
 
+When the site is public behind an HTTPS proxy (a Cloudflare Tunnel reaching `web` on the shared
+`cloudflare` network), set `HTTPS_ONLY=true` in `.env`: http is redirected to https, with HSTS
+and secure cookies (`osm_changeset_api/settings.py`). The port on 127.0.0.1 then redirects too,
+so local checks need `curl -H 'X-Forwarded-Proto: https' http://127.0.0.1:5006/...`.
+
 `deploy.sh` checks `.env` and the Docker daemon, stamps the build with the current git commit
 (`GIT_VERSION`), then runs `docker compose build && docker compose up -d`. On fresh data
 directories the rest is automatic: `migrate` creates the SQLite file and its tables, and applies

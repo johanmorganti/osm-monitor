@@ -37,6 +37,21 @@ ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS').split(' ')
 # is published on 127.0.0.1 only, so the proxy is the only outside client.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
+# HTTPS_ONLY=true (.env) when the site is served over HTTPS behind that proxy: redirect http to
+# https, HSTS, secure cookies (`manage.py check --deploy` clean). Off by default, so a local run
+# on http://localhost:5006 keeps working. When on, a request to the published port needs
+# `-H 'X-Forwarded-Proto: https'`. HSTS for one year and without preload (security.W021,
+# silenced: the preload list is close to permanent). A browser keeps HSTS for a year after its
+# last visit even once this is off, so plan a year ahead before serving the site over plain http.
+HTTPS_ONLY = os.getenv('HTTPS_ONLY', 'false').lower() in ['true', 't', '1']
+if HTTPS_ONLY:
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 365 * 24 * 3600
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SILENCED_SYSTEM_CHECKS = ['security.W021']
+
 # Application definition
 
 INSTALLED_APPS = [
