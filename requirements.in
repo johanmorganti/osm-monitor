@@ -1,0 +1,20 @@
+# Direct dependencies. After a change, regenerate the hash-locked requirements.txt and
+# requirements-datadog.txt (the command is in docs/DEPLOYMENT.md, "Dependencies").
+asgiref==3.12.1
+certifi==2026.7.22
+charset-normalizer==3.5.2
+Django==5.2.18
+djangorestframework==3.18.3
+idna==3.20
+PyYAML==6.0.1
+requests==2.34.2
+sqlparse==0.6.0
+typing_extensions==4.16.0
+urllib3==2.8.0
+gunicorn==26.2.0
+whitenoise==6.12.0
+drf-spectacular==0.30.0
+numpy==2.5.3
+shapely==2.1.2
+pyproj==3.8.0
+clickhouse-connect==1.9.0

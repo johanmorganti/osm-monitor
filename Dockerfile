@@ -30,10 +30,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# DATADOG=true (set by docker-compose.datadog.yml) adds ddtrace for APM tracing.
+# DATADOG=true (set by docker-compose.datadog.yml) adds ddtrace for APM tracing. Both files
+# lock every package, indirect ones included, to a version and its hashes: pip refuses anything
+# else (--require-hashes), and wheels only (no package builds code at install time).
 ARG DATADOG=false
 COPY requirements.txt requirements-datadog.txt ./
-RUN pip install --no-cache-dir -r "$([ "$DATADOG" = true ] && echo requirements-datadog.txt || echo requirements.txt)"
+RUN pip install --no-cache-dir --require-hashes --only-binary :all: --retries 10 --timeout 60 \
+    -r "$([ "$DATADOG" = true ] && echo requirements-datadog.txt || echo requirements.txt)"
 
 COPY . .
 COPY --from=css /site.css static/css/site.css

@@ -110,6 +110,24 @@ then `./deploy.sh`, which builds the images with `ddtrace` (`DATADOG=true`,
 least-privilege `datadog` user from `DD_CLICKHOUSE_PASSWORD`, and the ClickHouse container's
 autodiscovery label turns on the agent's ClickHouse check with Database Monitoring.
 
+## Dependencies
+
+`requirements.in` lists the direct dependencies, `requirements-datadog.in` adds `ddtrace`. The
+image installs from `requirements.txt` / `requirements-datadog.txt`, which pin every package,
+indirect ones included, with the hashes of all its files on PyPI (so builds for amd64 and arm64
+both verify): pip installs nothing else (`--require-hashes`) and only wheels. After changing a
+`.in` file, regenerate both locks (pip-tools; the Datadog one is constrained to the base one, so
+the two images share every version):
+
+```bash
+docker run --rm -v "$PWD":/w -w /w python:3.12.16-slim-trixie sh -c '
+  pip install -q pip-tools==7.4.1 &&
+  pip-compile -q --generate-hashes --allow-unsafe --strip-extras --no-header -o requirements.txt requirements.in &&
+  pip-compile -q --generate-hashes --allow-unsafe --strip-extras --no-header -o requirements-datadog.txt requirements-datadog.in'
+```
+
+Pick versions released at least two weeks ago.
+
 ## Full-history import on a fresh database
 
 The poller's first run defaults to a 365-day backfill of minutely sequences, which is redundant

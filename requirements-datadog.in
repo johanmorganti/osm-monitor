@@ -1,0 +1,5 @@
+# The image docker-compose.datadog.yml builds (Dockerfile DATADOG=true): APM tracing.
+# Constrained to requirements.txt, so both images share every other version.
+-r requirements.in
+-c requirements.txt
+ddtrace==4.14.0

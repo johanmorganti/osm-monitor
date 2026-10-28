@@ -113,7 +113,7 @@ It becomes two kinds of rows:
 ## Requirements
 
 ClickHouse (every changeset and object, answers the API) and a writable directory for the SQLite
-file holding the app's own state. Python 3.12, dependencies in `requirements.txt`.
+file holding the app's own state. Python 3.12, dependencies in `requirements.in` (hash-locked in `requirements.txt`).
 
 ## Getting data in
 
