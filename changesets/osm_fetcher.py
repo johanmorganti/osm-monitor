@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 import gzip
 from .ingest.locate import locate
 from .ingest.writers import get_writers
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 from django.utils import timezone
 from ddtrace import tracer
 import json
@@ -142,7 +142,7 @@ def _parse_changeset_element(changeset, log_extra):
                 value = float(value)
             elif column in ["created_at", "closed_at"]:
                 naive_datetime = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
-                value = timezone.make_aware(naive_datetime, timezone.utc) # prevents from RuntimeWarning about time zone
+                value = timezone.make_aware(naive_datetime, dt_timezone.utc) # prevents from RuntimeWarning about time zone
 
             changeset_to_add[column] = value
         elif attribute not in IGNORED_ATTRIBUTES:
