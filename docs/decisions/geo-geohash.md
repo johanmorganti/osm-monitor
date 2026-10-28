@@ -137,3 +137,17 @@ there too) would be 17-77K: so the threshold moved, `FINE_TARGET_CELLS_ACROSS` d
 cells than this at those zooms need a cheaper renderer (e.g. a WebGL layer), not a new constant.
 With fine data now slower to arrive at zoom 6 over long ranges, the map keeps the coarse cells on
 screen until the first fine response lands, instead of drawing an empty layer.
+
+**2026-10-28: one canvas for all cells, fine mode from zoom 5.** The cells were one `L.rectangle`
+each (with its own tooltip and click handler), which Leaflet re-projects and redraws on every zoom
+step: the reason fine mode stopped at zoom 6 above. `GeoCellsLayer` (`static/js/common.js`) extends
+`L.Canvas` for positioning, Retina scaling and redraw timing, draws every cell in one pass grouped
+by color, and finds the cell under the cursor by arithmetic (a response's cells share one geohash
+precision, i.e. one regular grid), so tooltips, click-to-list and the selected outline need no
+per-cell objects. Redraw after a pan/zoom, headless Chromium on the production host: the same cells
+3-5x cheaper (coarse, all time: 28.6 -> 9.2 ms; fine at zoom 6: 18.2 -> 6.7 ms), and ~21K fine
+cells at zoom 5 over all time in 21 ms, about what 7.5K rectangles took at zoom 6. Hence
+`GEO_FINE_ZOOM_THRESHOLD` 5: a European viewport is 9.5K cells over a week, 21.5K over all time
+(3.6 s, 1.7 MB). Zoom 4 would be 73K cells and 5.7 MB per response, too much whatever the renderer.
+`GEO_FINE_FETCH_DEBOUNCE_MS` went from 600 to 250 ms at the same time: the prefetch padding, not
+the delay, is what keeps browsing from sending a request per gesture.

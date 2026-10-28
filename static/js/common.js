@@ -549,7 +549,7 @@ function showChart(canvasId) {
 // interpolated blob layer — a heat blob only approximates a smooth surface
 // *between* cell centers, which reads as "imprecise" and gives zooming in
 // no real extra detail past the cell resolution. Rectangles show the true
-// (geohash-derived, not square — see drawGeoCells) cell boundary and color,
+// (geohash-derived, not square — see GeoCellsLayer) cell boundary and color,
 // and make it visually honest that this is the actual resolution of the
 // underlying data (see changesets/geo.py's GEOHASH_PREFIX_LENGTH if that
 // resolution itself needs to change — that's a data change, not a
@@ -559,9 +559,8 @@ function showChart(canvasId) {
 // palette.md) — quantized into GEO_COLOR_RAMP.length bins on a log scale:
 // raw counts are heavily skewed (a few dense urban cells vs. many sparse
 // ones), so equal-width bins on the raw count would put nearly every cell
-// in the lightest bucket. `preferCanvas` (set on the map, below) renders
-// the (potentially thousands of) rectangles on canvas instead of one SVG
-// element each, which matters once cell count climbs into the thousands.
+// in the lightest bucket. The (up to tens of thousands of) rectangles are
+// drawn on one canvas, see GeoCellsLayer.
 const GEO_COLOR_RAMP = ['#cde2fb', '#9ec5f4', '#5598e7', '#2a78d6', '#1c5cab', '#0d366b'];
 
 // Two resolutions, one metric choice — see GeoView/changesets/geo.py.
@@ -578,12 +577,16 @@ const GEO_COLOR_RAMP = ['#cde2fb', '#9ec5f4', '#5598e7', '#2a78d6', '#1c5cab', '
 // scheduleFineFetch's own comments for why a naive "fetch on every
 // moveend" was found to be sending far more DB queries than normal map
 // browsing needs.
-// 6, not 7 (2026-10-16): at zoom 6 the coarse ~156km cells are ~64px blocks,
-// while fine cells there (precision 4) are ~16px, at 5-9K cells for a
-// European viewport (3 s over a year). Zoom 5 would be 10-25K cells, where
-// drawing them starts to stall the page (geo-geohash.md, lesson 3).
-const GEO_FINE_ZOOM_THRESHOLD = 6;
-const GEO_FINE_FETCH_DEBOUNCE_MS = 600;
+// 5 (2026-10-28; 6 since 2026-10-16, 7 before): at zoom 5 the coarse ~156km
+// cells are ~32px blocks, fine ones (precision 4) ~8px, at 10-22K cells for
+// a European viewport (3.6 s over all time). That many needed GeoCellsLayer:
+// as one L.rectangle each they stalled the page (geo-geohash.md, lesson 3).
+// Zoom 4 would be up to 73K cells and 5.7 MB per response.
+const GEO_FINE_ZOOM_THRESHOLD = 5;
+// After the last pan/zoom settles. 600 until 2026-10-28: fine cells arrived
+// late; the prefetch padding below, not this delay, is what keeps browsing
+// from sending a request per gesture.
+const GEO_FINE_FETCH_DEBOUNCE_MS = 250;
 // Fetch this much extra area beyond the visible viewport (as a fraction of
 // its own size, per Leaflet's LatLngBounds.pad) so a small pan/zoom-out
 // within territory already covered needs no new request at all — reused
@@ -598,6 +601,15 @@ function geoColorScale(cells, metric) {
     return cell => GEO_COLOR_RAMP[Math.min(GEO_COLOR_RAMP.length - 1, Math.floor((Math.log1p(cell[metric]) / logMax) * GEO_COLOR_RAMP.length))];
 }
 
+// All cells on one canvas, drawn in one pass (grouped by color), instead of
+// one L.rectangle per cell with its own tooltip and click handler: Leaflet
+// re-projects and redraws every path on each zoom step, which stalled the
+// page from ~10K cells (geo-geohash.md, lesson 3). It extends L.Canvas for
+// what that already does (positioning during pans and zoom animations,
+// Retina scaling, redrawing on moveend) and only replaces the drawing. A
+// response's cells all share one geohash precision, i.e. one regular grid,
+// so the cell under the cursor (tooltip, click) is found by arithmetic.
+//
 // latSizeDegrees/lonSizeDegrees, not one square size: geohash cells aren't
 // square (a 6-char cell is ~1.2km wide x ~0.6km tall everywhere on Earth,
 // unlike the old fixed-degree grid which was square by construction) — see
@@ -605,25 +617,111 @@ function geoColorScale(cells, metric) {
 // here would misrepresent the true cell shape.
 // `onCellClick(cell)` (optional) makes cells clickable; `selectedCell` (a
 // cell's geohash) is outlined.
-function drawGeoCells(layerGroup, cells, latSizeDegrees, lonSizeDegrees, metric, onCellClick, selectedCell) {
-    layerGroup.clearLayers();
-    const halfLat = latSizeDegrees / 2;
-    const halfLon = lonSizeDegrees / 2;
-    const colorFor = geoColorScale(cells, metric);
-    cells.forEach(c => {
-        const selected = c.cell === selectedCell;
-        const rect = L.rectangle([[c.lat - halfLat, c.lon - halfLon], [c.lat + halfLat, c.lon + halfLon]], {
-            stroke: selected,
-            color: '#0d366b',
-            weight: 2,
-            fillColor: colorFor(c),
-            fillOpacity: 0.85,
-        })
-            .bindTooltip(`${c.count.toLocaleString()} changesets<br>${c.objects.toLocaleString()} objects${onCellClick ? '<br><i>Click to list them</i>' : ''}`, { sticky: true })
-            .addTo(layerGroup);
-        if (onCellClick) rect.on('click', () => onCellClick(c));
-    });
-}
+const GeoCellsLayer = L.Canvas.extend({
+    initialize(onCellClick) {
+        L.Canvas.prototype.initialize.call(this);
+        this._onCellClick = onCellClick;
+        this._cells = [];
+        this._byGridIndex = new Map();
+        this._tooltip = L.tooltip({ direction: 'top', offset: [0, -8] });
+    },
+
+    setCells(cells, latSizeDegrees, lonSizeDegrees, metric, selectedCell) {
+        this._cells = cells;
+        this._latSize = latSizeDegrees;
+        this._lonSize = lonSizeDegrees;
+        this._colorFor = geoColorScale(cells, metric);
+        this._selectedCell = selectedCell;
+        this._byGridIndex = new Map(cells.map(c => [this._gridIndex(c.lat, c.lon), c]));
+        this._hovered = null;
+        if (this._map) this._redraw();
+        return this;
+    },
+
+    _gridIndex(lat, lon) {
+        return `${Math.floor((lat + 90) / this._latSize)},${Math.floor((lon + 180) / this._lonSize)}`;
+    },
+
+    _cellAt(latlng) {
+        return this._latSize ? this._byGridIndex.get(this._gridIndex(latlng.lat, latlng.lng)) : undefined;
+    },
+
+    // Map events: the canvas itself passes mouse events through to the map
+    // (L.Canvas sets _leaflet_disable_events on it).
+    getEvents() {
+        const events = L.Canvas.prototype.getEvents.call(this);
+        events.mousemove = this._onCellHover;
+        events.mouseout = this._hideTooltip;
+        events.click = this._onCellClickEvent;
+        return events;
+    },
+
+    _onCellHover(e) {
+        const cell = this._cellAt(e.latlng);
+        if (!cell) { this._hideTooltip(); return; }
+        if (cell !== this._hovered) {
+            this._hovered = cell;
+            this._tooltip.setContent(`${cell.count.toLocaleString()} changesets<br>${cell.objects.toLocaleString()} objects${this._onCellClick ? '<br><i>Click to list them</i>' : ''}`);
+            this._map.getContainer().style.cursor = this._onCellClick ? 'pointer' : '';
+        }
+        this._tooltip.setLatLng(e.latlng);
+        if (!this._map.hasLayer(this._tooltip)) this._tooltip.addTo(this._map);
+    },
+
+    _hideTooltip() {
+        if (!this._hovered) return;
+        this._hovered = null;
+        this._map.getContainer().style.cursor = '';
+        this._tooltip.remove();
+    },
+
+    _onCellClickEvent(e) {
+        const cell = this._onCellClick && this._cellAt(e.latlng);
+        if (cell) this._onCellClick(cell);
+    },
+
+    _updatePaths() {
+        if (!this._postponeUpdatePaths) this._redraw();
+    },
+
+    // Called by L.Canvas's _redraw, with the context already translated to
+    // layer points and cleared; only cells within the canvas are drawn.
+    _draw() {
+        const map = this._map;
+        const b = this._bounds;
+        if (!this._cells.length || !b) return;
+        const halfLat = this._latSize / 2;
+        const halfLon = this._lonSize / 2;
+        const rectsByColor = new Map();
+        let selected = null;
+        for (const c of this._cells) {
+            const nw = map.latLngToLayerPoint([c.lat + halfLat, c.lon - halfLon]);
+            const se = map.latLngToLayerPoint([c.lat - halfLat, c.lon + halfLon]);
+            if (se.x < b.min.x || nw.x > b.max.x || se.y < b.min.y || nw.y > b.max.y) continue;
+            const rect = [nw.x, nw.y, se.x - nw.x, se.y - nw.y];
+            const color = this._colorFor(c);
+            if (!rectsByColor.has(color)) rectsByColor.set(color, []);
+            rectsByColor.get(color).push(rect);
+            if (c.cell === this._selectedCell) selected = rect;
+        }
+        const ctx = this._ctx;
+        ctx.save();
+        ctx.globalAlpha = 0.85;
+        for (const [color, rects] of rectsByColor) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            for (const r of rects) ctx.rect(r[0], r[1], r[2], r[3]);
+            ctx.fill();
+        }
+        if (selected) {
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = '#0d366b';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(selected[0], selected[1], selected[2], selected[3]);
+        }
+        ctx.restore();
+    },
+});
 
 // ── Map cell panel ───────────────────────────────────────────────────────────
 // Lists the changesets of a clicked map cell (/api/changesets/geo/cell/,
@@ -1012,8 +1110,6 @@ function renderGeoMap(initialGeo) {
         }).addTo(map);
     }
 
-    const coarseLayer = L.layerGroup().addTo(map);
-    const fineLayer = L.layerGroup();
     const coarseCells = initialGeo.cells;
     const coarseLatSize = initialGeo.lat_size_degrees;
     const coarseLonSize = initialGeo.lon_size_degrees;
@@ -1042,6 +1138,7 @@ function renderGeoMap(initialGeo) {
         redraw();
         openCellPanel(c);
     });
+    const cellsLayer = new GeoCellsLayer(onCellClick).addTo(map);
 
     let legendDiv;
     const legend = L.control({ position: 'bottomright' });
@@ -1055,7 +1152,7 @@ function renderGeoMap(initialGeo) {
         const cells = showingFine ? fineCells : coarseCells;
         const latSize = showingFine ? fineLatSize : coarseLatSize;
         const lonSize = showingFine ? fineLonSize : coarseLonSize;
-        drawGeoCells(showingFine ? fineLayer : coarseLayer, cells, latSize, lonSize, metric, onCellClick, selectedCell);
+        cellsLayer.setCells(cells, latSize, lonSize, metric, selectedCell);
         updateGeoLegend(legendDiv, cells, metric);
     }
 
@@ -1146,8 +1243,6 @@ function renderGeoMap(initialGeo) {
         const isFine = map.getZoom() >= GEO_FINE_ZOOM_THRESHOLD && fineFetchedBounds !== null;
         if (isFine !== showingFine) {
             showingFine = isFine;
-            if (showingFine) { coarseLayer.remove(); fineLayer.addTo(map); }
-            else { fineLayer.remove(); coarseLayer.addTo(map); }
             redraw();
         }
     }
