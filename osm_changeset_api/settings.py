@@ -33,6 +33,12 @@ DEBUG = os.getenv('DEBUG', '0').lower() in ['true', 't', '1']
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS').split(' ')
 
+# Behind a TLS-terminating proxy (Cloudflare Tunnel), requests reach gunicorn
+# as plain HTTP: trust the proxy's X-Forwarded-Proto so absolute URLs the API
+# builds (pagination `next`/`previous`) use https. Safe because the app's port
+# is published on 127.0.0.1 only, so the proxy is the only outside client.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 # Application definition
 
 INSTALLED_APPS = [
