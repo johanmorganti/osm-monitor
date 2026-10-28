@@ -105,8 +105,16 @@ services:
       # with headroom (was 2 workers in 512m).
       GUNICORN_WORKERS: "4"
     mem_limit: 2g
+    # Local only: the host has a public IP, and Docker's published ports
+    # bypass host firewall rules. Public traffic comes in via Cloudflare.
     ports:
-      - "5006:8000"
+      - "127.0.0.1:5006:8000"
+    # Also on the shared `cloudflare` network, where a Cloudflare Tunnel
+    # (its own compose project) reaches it as http://osm-monitor:8000.
+    networks:
+      default:
+      cloudflare:
+        aliases: [osm-monitor]
 
   poller:
     build: .
@@ -147,3 +155,9 @@ services:
     # docs/decisions/object-changes.md, Operations).
     mem_limit: 1g
     command: python manage.py poll_diffs --interval 60
+
+networks:
+  # Shared with other compose projects on the host (the tunnel), hence the
+  # fixed name: whichever project starts first creates it.
+  cloudflare:
+    name: cloudflare
