@@ -15,7 +15,7 @@ services:
   web:
     environment: &app-dd-env
       DD_TRACE_ENABLED: "true"
-      DD_ENV: production
+      DD_ENV: prod
       DD_TRACE_AGENT_URL: unix:///var/run/datadog/apm.socket
       DD_DOGSTATSD_URL: unix:///var/run/datadog/dsd.socket
       DD_LOGS_INJECTION: "true"
@@ -52,7 +52,7 @@ services:
       # Fixed name: the container's own hostname is a random ID that would
       # show up as a new host on every recreate.
       DD_HOSTNAME: osm-monitor
-      DD_ENV: production
+      DD_ENV: prod
       DD_APM_ENABLED: "true"
       # Unix sockets instead of TCP 8126/8125: no ports to publish.
       DD_APM_RECEIVER_SOCKET: /var/run/datadog/apm.socket

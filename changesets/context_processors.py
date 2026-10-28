@@ -20,7 +20,7 @@ def datadog_rum(request):
         'clientToken': client_token,
         'site': os.environ.get('DD_SITE', 'datadoghq.com'),
         'service': os.environ.get('DD_RUM_SERVICE', 'osm-monitor-frontend'),
-        'env': os.environ.get('DD_ENV', 'production'),
+        'env': os.environ.get('DD_ENV', 'prod'),
         'version': os.environ.get('DD_VERSION', 'unknown'),
         'sessionSampleRate': float(os.environ.get('DD_RUM_SESSION_SAMPLE_RATE', 100)),
         'sessionReplaySampleRate': float(os.environ.get('DD_RUM_SESSION_REPLAY_SAMPLE_RATE', 20)),
