@@ -17,11 +17,12 @@ for var in SECRET_KEY SQLITE_DIR CLICKHOUSE_PASSWORD CLICKHOUSE_DATA_DIR; do
     [ -n "$val" ] || fail "$var is not set in .env"
     case "$val" in *change-me*|*your-secret-key-here*|*/Users/you/*) fail "$var in .env still has its env.example placeholder" ;; esac
 done
-# Optional Datadog layer (docker-compose.datadog.yml, enabled via COMPOSE_FILE).
+# Optional Datadog layer (docker-compose.datadog.yml, enabled via COMPOSE_FILE);
+# the agent runs outside this stack, with its own configuration.
 case "$(env_val COMPOSE_FILE)" in *datadog*)
-    for var in DD_API_KEY DD_CLICKHOUSE_PASSWORD; do
-        [ -n "$(env_val "$var")" ] || fail "$var must be set in .env when docker-compose.datadog.yml is enabled"
-    done ;;
+    [ -n "$(env_val DD_CLICKHOUSE_PASSWORD)" ] || fail "DD_CLICKHOUSE_PASSWORD must be set in .env when docker-compose.datadog.yml is enabled"
+    dd_sockets=$(env_val DD_SOCKET_DIR); dd_sockets=${dd_sockets:-/var/run/datadog}
+    [ -S "$dd_sockets/apm.socket" ] || echo "deploy: warning: no agent socket at $dd_sockets/apm.socket, traces will be dropped until the agent runs" >&2 ;;
 esac
 for var in SQLITE_DIR CLICKHOUSE_DATA_DIR; do
     dir=$(env_val "$var")

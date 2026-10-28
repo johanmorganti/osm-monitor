@@ -34,28 +34,6 @@ services:
     mem_limit: 9g
     ports:
       - "127.0.0.1:8123:8123"   # HTTP interface, local only (benchmarks, manual queries)
-    # Datadog ClickHouse check + Database Monitoring, used only when the
-    # Datadog overlay's agent runs (otherwise inert). Connects as the
-    # least-privilege `datadog` user clickhouse_migrate creates from
-    # DD_CLICKHOUSE_PASSWORD.
-    labels:
-      com.datadoghq.ad.checks: |
-        {
-          "clickhouse": {
-            "instances": [
-              {
-                "server": "%%host%%",
-                "port": 8123,
-                "username": "datadog",
-                "password": "${DD_CLICKHOUSE_PASSWORD:-}",
-                "db": "${CLICKHOUSE_DB:-osm_monitor}",
-                "reported_hostname": "osm-monitor-clickhouse",
-                "tags": ["service:osm-monitor-clickhouse", "env:production"],
-                "dbm": true
-              }
-            ]
-          }
-        }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
       interval: 5s
@@ -76,7 +54,6 @@ services:
     <<: *sqlite
     environment:
       <<: *sqlite-env
-      DD_TRACE_ENABLED: "false"
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -97,9 +74,6 @@ services:
     <<: *sqlite
     environment:
       <<: *sqlite-env
-      # Tracing off unless docker-compose.datadog.yml turns it on (ddtrace
-      # is imported by the app, and would otherwise retry a missing agent).
-      DD_TRACE_ENABLED: "false"
       # gunicorn workers (x 8 threads each, see entrypoint.sh): one per two
       # vCPUs on the 8 vCPU host. ~2g covers 4 workers' Django footprint
       # with headroom (was 2 workers in 512m).
@@ -128,9 +102,6 @@ services:
     <<: *sqlite
     environment:
       <<: *sqlite-env
-      # Tracing off unless docker-compose.datadog.yml turns it on (ddtrace
-      # is imported by the app, and would otherwise retry a missing agent).
-      DD_TRACE_ENABLED: "false"
     mem_limit: 512m
     command: python manage.py poll_sequences --interval 60
 
@@ -149,7 +120,6 @@ services:
     <<: *sqlite
     environment:
       <<: *sqlite-env
-      DD_TRACE_ENABLED: "false"
     # Measured peak ~200 MB on the largest daily diff seen (2026-09-16, 7.5M
     # versions); 1g leaves room for bigger days (see
     # docs/decisions/object-changes.md, Operations).

@@ -124,22 +124,21 @@ authoritative reference, not this file or the README.
 
 ## Observability
 
-Datadog is optional. The base `docker-compose.yml` runs without it (tracing off); the
-`docker-compose.datadog.yml` override adds everything below, enabled by setting
-`COMPOSE_FILE=docker-compose.yml:docker-compose.datadog.yml` in `.env` along with `DD_API_KEY`
-and `DD_CLICKHOUSE_PASSWORD`.
+Datadog is optional. The base `docker-compose.yml` runs without it (no `ddtrace` in the image);
+the `docker-compose.datadog.yml` override adds everything below, enabled by setting
+`COMPOSE_FILE=docker-compose.yml:docker-compose.datadog.yml` in `.env` along with
+`DD_CLICKHOUSE_PASSWORD`.
 
-- **Agent**: the override adds a `datadog-agent` compose service. `web` and both pollers reach it
-  over unix sockets in the shared `datadog-sockets` volume (`apm.socket`, `dsd.socket`); it
-  discovers containers and tails their logs via the docker socket, and picks up the ClickHouse
-  check from the `clickhouse` service's `com.datadoghq.ad.checks` label.
-- **APM + structured logs**: with tracing enabled, `entrypoint.sh` wraps `web` (gunicorn) and
+- **Agent**: not part of this stack; it runs on the host with its own configuration. `web` and
+  both pollers reach it over unix sockets in a host directory mounted into them (`DD_SOCKET_DIR`,
+  default `/var/run/datadog`: `apm.socket`, `dsd.socket`); it discovers containers and tails
+  their logs via the docker socket, and picks up the ClickHouse check from the `clickhouse`
+  service's `com.datadoghq.ad.checks` label, which the override adds.
+- **APM + structured logs**: the override builds the images with `ddtrace`
+  (`requirements-datadog.txt`) and enables tracing; `entrypoint.sh` then wraps `web` (gunicorn) and
   the pollers in `ddtrace-run`; `osm_changeset_api/logging_json.py` emits structured JSON logs with
   `dd.trace_id`/`dd.span_id` injected (`DD_LOGS_INJECTION=true`), so a log line and the trace it
   happened during are correlated in Datadog.
-- **Live Processes**: the agent shares the host's PID namespace (`pid: host`) and collects every
-  process of the Docker VM, all containers' and the VM's own. Under Colima that's the Linux VM,
-  not macOS: the Mac's own processes would need an agent installed natively.
 - **Database Monitoring**: ClickHouse, through the `datadog` user `clickhouse_migrate` creates from
   `DD_CLICKHOUSE_PASSWORD` (read access to `system.*`, plus the app database so it can `EXPLAIN`
   the queries it captures).
@@ -161,7 +160,7 @@ and `DD_CLICKHOUSE_PASSWORD`.
   open, `ingest/reconcile.py`).
 - `diff-poller`: `poll_diffs`, the minutely/daily osmChange diffs into the object tables.
 
-`docker-compose.datadog.yml` optionally adds `datadog-agent` (see Observability). `deploy.sh`
+`docker-compose.datadog.yml` optionally adds Datadog tracing (see Observability). `deploy.sh`
 checks `.env`, stamps the build with the current git commit (`GIT_VERSION`, Datadog's
 `DD_VERSION` tag when enabled), then runs `docker compose build && up -d`; `entrypoint.sh` only
 collects static files and starts gunicorn (or the given command). Running it: `DEPLOYMENT.md`.

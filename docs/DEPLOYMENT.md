@@ -87,20 +87,23 @@ import is running.
 ## Observability (optional)
 
 Logs are structured JSON on stdout, so any log collector works. Datadog support (APM traces,
-log/trace correlation, container logs, ClickHouse Database Monitoring) is an optional overlay,
-`docker-compose.datadog.yml`. Without it, tracing is disabled and no agent runs. To enable it,
-set in `.env`:
+log/trace correlation, ClickHouse Database Monitoring) is an optional overlay,
+`docker-compose.datadog.yml`; without it the image has no `ddtrace` and nothing is traced. The
+Datadog agent is not part of this stack: run it on the host with its own configuration (API key,
+site, log collection). The overlay's header lists what it needs: APM and DogStatsD on unix
+sockets in a host directory, and the docker socket for autodiscovery. To enable the overlay, set
+in `.env`:
 
 ```bash
 COMPOSE_FILE=docker-compose.yml:docker-compose.datadog.yml
-DD_API_KEY=...
-DD_SITE=datadoghq.com
 DD_CLICKHOUSE_PASSWORD=...
+DD_SOCKET_DIR=/var/run/datadog   # the default; where the agent's apm.socket and dsd.socket are
 ```
 
-then `./deploy.sh`. `clickhouse_migrate` (run by the `migrate` step) creates a least-privilege `datadog` user from it,
-and the ClickHouse container's autodiscovery label turns on the agent's ClickHouse check with
-Database Monitoring.
+then `./deploy.sh`, which builds the images with `ddtrace` (`DATADOG=true`,
+`requirements-datadog.txt`). `clickhouse_migrate` (run by the `migrate` step) creates a
+least-privilege `datadog` user from `DD_CLICKHOUSE_PASSWORD`, and the ClickHouse container's
+autodiscovery label turns on the agent's ClickHouse check with Database Monitoring.
 
 ## Full-history import on a fresh database
 

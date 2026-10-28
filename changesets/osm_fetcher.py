@@ -8,13 +8,32 @@ from .ingest.locate import locate
 from .ingest.writers import get_writers
 from datetime import datetime, timezone as dt_timezone
 from django.utils import timezone
-from ddtrace import tracer
 import json
 import copy
 
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 30  # seconds; avoid hanging forever on a stalled connection
+
+# ddtrace is only installed in the Datadog image (requirements-datadog.txt, built by
+# docker-compose.datadog.yml); without it, spans are no-ops.
+try:
+    from ddtrace import tracer
+except ImportError:
+    tracer = None
+
+
+class _NoSpan:
+    def set_tag(self, key, value):
+        pass
+
+    set_metric = set_tag
+
+    def set_traceback(self):
+        pass
+
+    def finish(self):
+        pass
 
 COLUMNS_MAPPING = {
     "id": "changeset_id",
@@ -57,7 +76,7 @@ def get_sequence_min_max_changeset_id(sequence_number, locally=False):
 
 
 def process_sequence(sequence_number):
-    span = tracer.trace("osm.process_sequence", service="osm-monitor", resource="process_sequence")
+    span = tracer.trace("osm.process_sequence", service="osm-monitor", resource="process_sequence") if tracer else _NoSpan()
     span.set_tag("osm.sequence_number", sequence_number)
     try:
         _process_sequence_traced(sequence_number, span)

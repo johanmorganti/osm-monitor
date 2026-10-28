@@ -30,8 +30,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# DATADOG=true (set by docker-compose.datadog.yml) adds ddtrace for APM tracing.
+ARG DATADOG=false
+COPY requirements.txt requirements-datadog.txt ./
+RUN pip install --no-cache-dir -r "$([ "$DATADOG" = true ] && echo requirements-datadog.txt || echo requirements.txt)"
 
 COPY . .
 COPY --from=css /site.css static/css/site.css

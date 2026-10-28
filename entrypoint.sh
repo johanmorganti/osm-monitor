@@ -4,10 +4,15 @@ set -e
 python manage.py collectstatic --no-input
 
 # Datadog APM is optional: wrap the process in ddtrace-run only when tracing
-# is enabled (docker-compose.datadog.yml sets DD_TRACE_ENABLED=true).
+# is enabled (docker-compose.datadog.yml sets DD_TRACE_ENABLED=true, and builds
+# the image with ddtrace).
 TRACE=""
 if [ "${DD_TRACE_ENABLED:-false}" = "true" ]; then
-    TRACE="ddtrace-run"
+    if command -v ddtrace-run >/dev/null; then
+        TRACE="ddtrace-run"
+    else
+        echo "DD_TRACE_ENABLED=true but ddtrace isn't installed (image built without DATADOG=true): running untraced" >&2
+    fi
 fi
 
 # migrate is NOT run here — it's a separate one-shot `migrate` service in
