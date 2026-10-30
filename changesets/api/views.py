@@ -15,7 +15,7 @@ from ..analytics import DIMENSIONS, EDITOR_VERSION, HASHTAG, OBJECT_DIMENSIONS, 
 from ..geo import GEOHASH_PREFIX_LENGTH, geohash_cell_size_degrees, geohash_precision_for_bbox
 from ..models import SequenceState
 from ..serializers import ChangesetSerializer
-from .params import resolve_filters, pick_interval, parse_bbox, parse_bound
+from .params import BadParameter, resolve_filters, pick_interval, parse_bbox, parse_bound
 from .schema import DIMENSION_FILTER_PARAMS, FILTER_PARAMS, OBJECT_FILTER_PARAMS, TIMEOUT_RESPONSE
 from .sizes import distribution
 
@@ -24,6 +24,22 @@ class ChangesetPagination(PageNumberPagination):
     page_size = 100
     page_size_query_param = 'page_size'
     max_page_size = 1000
+    # Deepest row (offset) a page may start at. ORDER BY ... OFFSET reads and
+    # sorts every row before it: over a full-history range page 190000 read
+    # 191M rows and 4 GiB. Past this, narrow the date range.
+    max_offset = 10000
+
+    def paginate_queryset(self, queryset, request, view=None):
+        try:
+            page_number = int(request.query_params.get(self.page_query_param, 1))
+        except ValueError:
+            page_number = 1  # DRF answers 404 "Invalid page" below
+        if (page_number - 1) * self.get_page_size(request) >= self.max_offset:
+            raise BadParameter(
+                f'page too deep: pages start at most {self.max_offset} records in. '
+                'Narrow start_date/end_date (or add filters) to reach older records.'
+            )
+        return super().paginate_queryset(queryset, request, view)
 
 
 class ChangesetQueryView(APIView):
@@ -55,10 +71,10 @@ class ChangesetQueryView(APIView):
             OpenApiParameter('imagery_raw', OpenApiTypes.STR, description='Exact raw imagery string as found in the changeset\'s imagery_used tag.'),
             OpenApiParameter('imagery_family', OpenApiTypes.STR, description='Normalised imagery family (case-insensitive), e.g. "Bing".'),
             OpenApiParameter('bbox', OpenApiTypes.STR, description='Bounding box filter as "min_lon,min_lat,max_lon,max_lat".'),
-            OpenApiParameter('page', OpenApiTypes.INT, description='Page number.'),
+            OpenApiParameter('page', OpenApiTypes.INT, description='Page number. A page may start at most 10000 records in (page_size x (page - 1) < 10000): 400 beyond, narrow the date range instead.'),
             OpenApiParameter('page_size', OpenApiTypes.INT, description='Results per page (default 100, max 1000).'),
         ],
-        responses={200: ChangesetSerializer(many=True), 408: TIMEOUT_RESPONSE},
+        responses={200: ChangesetSerializer(many=True), 400: OpenApiTypes.OBJECT, 408: TIMEOUT_RESPONSE},
     )
     def get(self, request):
         params = request.query_params

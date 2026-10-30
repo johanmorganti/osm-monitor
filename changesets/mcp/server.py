@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Newest first; a client asking for another version gets the newest.
 PROTOCOL_VERSIONS = ('2025-11-25', '2025-06-18', '2025-03-26')
+MAX_BATCH = 10  # JSON-RPC messages per POST
 
 SERVER_INFO = {'name': 'osm-monitor', 'title': 'OSM Monitor', 'version': '1.0.0'}
 
@@ -73,6 +74,9 @@ def mcp_endpoint(request):
         return _cors(JsonResponse(_error(None, JSONRPC_PARSE_ERROR, 'Parse error')))
 
     if isinstance(payload, list):
+        # Each message may be a tool call running a query of up to 30 s, in this one request.
+        if not payload or len(payload) > MAX_BATCH:
+            return _cors(JsonResponse(_error(None, JSONRPC_INVALID_REQUEST, f'Batch must hold 1 to {MAX_BATCH} messages')))
         replies = [r for r in (_handle(request, m) for m in payload) if r is not None]
         return _cors(JsonResponse(replies, safe=False) if replies else HttpResponse(status=202))
     reply = _handle(request, payload)

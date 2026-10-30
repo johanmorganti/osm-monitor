@@ -1,4 +1,5 @@
 """Request parsing and the API-level rules shared by every analytics backend."""
+import math
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.utils import timezone
@@ -9,6 +10,7 @@ from ..analytics.base import OBJECT_VALUES
 
 TARGET_POINTS = 300
 MAX_EXPLICIT_POINTS = 5000  # only constrains an explicit interval=hour override, see pick_interval
+MIN_YEAR, MAX_YEAR = 2000, 2100  # OSM changesets start in 2004; outside this a date is a typo, not a range
 
 
 class BadParameter(APIException):
@@ -35,7 +37,10 @@ def resolve_filters(request, objects=False):
         today = timezone.now().date()
         end_date = today.strftime('%Y-%m-%d')
         start_date = (today - timedelta(days=7)).strftime('%Y-%m-%d')
-    elif len(start_date) > 10 or len(end_date) > 10:
+    elif len(start_date) <= 10 and len(end_date) <= 10:
+        parse_bound(start_date, 'start_date', end=False, day_only=True)
+        parse_bound(end_date, 'end_date', end=True, day_only=True)
+    else:
         start_time = parse_bound(start_date, 'start_date', end=False)
         end_time = parse_bound(end_date, 'end_date', end=True)
         if end_time <= start_time:
@@ -65,20 +70,26 @@ def resolve_filters(request, objects=False):
     )
 
 
-def parse_bound(raw, name, end):
+def parse_bound(raw, name, end, day_only=False):
     """One bound of a range, as a naive UTC datetime.
     A day (YYYY-MM-DD) is its midnight, or the next one for the end (the day
     is included); a timestamp is ISO 8601, with Z or an offset (converted to
-    UTC) or without (taken as UTC)."""
+    UTC) or without (taken as UTC). `day_only`: a day, parsed the way the
+    backends parse it later (strptime, so 2026-1-5 passes). Raises
+    BadParameter on anything else, and on a year outside MIN_YEAR..MAX_YEAR."""
     try:
-        if len(raw) == 10:
+        if day_only or len(raw) == 10:
             day = datetime.strptime(raw, '%Y-%m-%d')
-            return day + timedelta(days=1) if end else day
-        value = datetime.fromisoformat(raw)
-    except ValueError:
+            value = day + timedelta(days=1) if end else day
+        else:
+            value = datetime.fromisoformat(raw)
+            if value.tzinfo is not None:
+                value = value.astimezone(dt_timezone.utc).replace(tzinfo=None)
+        in_range = MIN_YEAR <= value.year <= MAX_YEAR
+    except (ValueError, OverflowError):
         raise BadParameter(f'{name} must be YYYY-MM-DD or an ISO 8601 timestamp, e.g. 2026-10-09T11:00:00Z')
-    if value.tzinfo is not None:
-        value = value.astimezone(dt_timezone.utc).replace(tzinfo=None)
+    if not in_range:
+        raise BadParameter(f'{name} must be between {MIN_YEAR} and {MAX_YEAR}')
     return value
 
 
@@ -110,6 +121,13 @@ def pick_interval(start_date, end_date, interval_param):
 
 def parse_bbox(raw):
     """(min_lon, min_lat, max_lon, max_lat) from "min_lon,min_lat,max_lon,max_lat";
-    raises ValueError/TypeError on malformed input."""
+    raises ValueError/TypeError on malformed input: not four finite numbers, or a
+    minimum above its maximum. Values past the world's edge are clamped to it
+    (the map sends a padded viewport that can reach beyond +/-180)."""
     min_lon, min_lat, max_lon, max_lat = [float(v) for v in raw.split(',')]
-    return min_lon, min_lat, max_lon, max_lat
+    if not all(math.isfinite(v) for v in (min_lon, min_lat, max_lon, max_lat)):
+        raise ValueError('bbox values must be finite')
+    if min_lon > max_lon or min_lat > max_lat:
+        raise ValueError('bbox minimum above maximum')
+    clamp = lambda v, limit: max(-limit, min(limit, v))
+    return clamp(min_lon, 180.0), clamp(min_lat, 90.0), clamp(max_lon, 180.0), clamp(max_lat, 90.0)

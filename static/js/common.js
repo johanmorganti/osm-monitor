@@ -1287,19 +1287,23 @@ function renderSuggestions(dropdownId, inputId, values) {
         dropdown.innerHTML = '';
         return;
     }
-    dropdown.innerHTML = values.map(v =>
-        `<button type="button" class="block w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100" data-value="${v.replace(/"/g, '&quot;')}">${v}</button>`
-    ).join('');
-    dropdown.classList.remove('hidden');
-    dropdown.querySelectorAll('button').forEach(btn => {
+    // The values are OSM names anyone can set: text only, never markup.
+    dropdown.replaceChildren(...values.map(v => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'block w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100';
+        btn.dataset.value = v;
+        btn.textContent = v;
         // mousedown, not click: fires before the input's blur handler would
         // otherwise hide this dropdown first and swallow the click.
         btn.addEventListener('mousedown', e => {
             e.preventDefault();
-            document.getElementById(inputId).value = btn.dataset.value;
+            document.getElementById(inputId).value = v;
             dropdown.classList.add('hidden');
         });
-    });
+        return btn;
+    }));
+    dropdown.classList.remove('hidden');
 }
 
 // Empty input (on focus, or cleared while typing): just the top 3 — a

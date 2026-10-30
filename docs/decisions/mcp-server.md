@@ -44,3 +44,7 @@ The data is public and the API has no key, so neither does the MCP server; CORS 
 origin (browser-based clients, the MCP Inspector). The cost of a call is the cost of the API call
 it makes, already bounded by the endpoints' limits and ClickHouse's 30 s cap. If abuse shows up,
 the lever is the same for both (rate limiting at the proxy), not a token on MCP alone.
+
+A batch holds at most 10 messages (`MAX_BATCH`; an empty or larger one gets one -32600 error). Before
+this cap (2026-10-30) one POST could run any number of tool calls, each up to 30 s, in a single
+web thread, and the proxy's rate limit counts the POST once.
