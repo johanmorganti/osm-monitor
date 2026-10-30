@@ -41,6 +41,10 @@ RUN pip install --no-cache-dir --require-hashes --only-binary :all: --retries 10
 COPY . .
 COPY --from=css /site.css static/css/site.css
 
+# Static files are collected here, once, so a manifest error fails the build instead of every
+# container at start. The settings only need these two to import; nothing is read from the .env.
+RUN SECRET_KEY=build ALLOWED_HOSTS=build python manage.py collectstatic --no-input
+
 RUN chmod +x entrypoint.sh
 
 EXPOSE 8000

@@ -32,11 +32,38 @@ docker info >/dev/null 2>&1 || fail "docker daemon not reachable"
 docker compose config -q
 
 GIT_VERSION=$(git rev-parse --short HEAD)
-if ! git diff --quiet || ! git diff --cached --quiet; then
+# Untracked files count: `COPY . .` puts them in the image like tracked ones.
+if [ -n "$(git status --porcelain)" ]; then
     GIT_VERSION="${GIT_VERSION}-dirty"
+    echo "deploy: working tree has uncommitted changes, the image gets them:" >&2
+    git status --short >&2
 fi
 export GIT_VERSION
 
 echo "Deploying version: ${GIT_VERSION}"
 docker compose build
-docker compose up -d
+# --wait: returns once web is healthy and the other services run, and fails (with the
+# containers' state) if one doesn't within the timeout, instead of exiting 0 on a crash loop.
+docker compose up -d --wait --wait-timeout 180 || {
+    docker compose ps >&2
+    docker compose logs --tail 20 web >&2
+    fail "the stack did not come up healthy"
+}
+# --wait only sees a service at the moment it checks: a poller that starts and crashes a few
+# seconds later (a bad import, a settings error) passes it. Give them a moment, then require
+# every long-running service to be up and not restarting.
+sleep 15
+unstable=$(docker compose ps -a --format '{{.Service}} {{.ID}}' | while read -r service id; do
+    [ "$service" = migrate ] && continue
+    # `docker compose run` leftovers (an import, a repair) are not part of the stack.
+    [ "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.oneoff"}}' "$id")" = True ] && continue
+    state=$(docker inspect -f '{{.State.Status}} restarts={{.RestartCount}}' "$id")
+    [ "$state" = "running restarts=0" ] || echo "$service: $state"
+done)
+if [ -n "$unstable" ]; then
+    echo "$unstable" >&2
+    docker compose logs --tail 20 >&2
+    fail "a service is not running steadily"
+fi
+echo "Deployed ${GIT_VERSION}: web healthy, services running"
+

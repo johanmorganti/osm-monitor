@@ -79,6 +79,23 @@ services:
       # with headroom (was 2 workers in 512m).
       GUNICORN_WORKERS: "4"
     mem_limit: 2g
+    # An answer from the app itself (SQLite only, so a ClickHouse restart doesn't
+    # fail it); deploy.sh waits for it. Host and proto headers: ALLOWED_HOSTS, and
+    # no redirect to https when HTTPS_ONLY is on.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import os, urllib.request
+          urllib.request.urlopen(urllib.request.Request(
+              'http://127.0.0.1:8000/api/batch-progress/',
+              headers={'Host': os.environ['ALLOWED_HOSTS'].split()[0], 'X-Forwarded-Proto': 'https'}), timeout=10)
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
     # Local only: the host has a public IP, and Docker's published ports
     # bypass host firewall rules. Public traffic comes in via Cloudflare.
     ports:
@@ -103,6 +120,9 @@ services:
     environment:
       <<: *sqlite-env
     mem_limit: 512m
+    # An init process as PID 1, so SIGTERM stops the poller at once instead of
+    # after docker's 10 s grace period and a SIGKILL (python as PID 1 ignores it).
+    init: true
     command: python manage.py poll_sequences --interval 60
 
   # Object changes: follows the minutely osmChange diffs into ClickHouse's
@@ -124,6 +144,7 @@ services:
     # versions); 1g leaves room for bigger days (see
     # docs/decisions/object-changes.md, Operations).
     mem_limit: 1g
+    init: true
     command: python manage.py poll_diffs --interval 60
 
 networks:

@@ -166,5 +166,6 @@ the `docker-compose.datadog.yml` override adds everything below, enabled by sett
 
 `docker-compose.datadog.yml` optionally adds Datadog tracing (see Observability). `deploy.sh`
 checks `.env`, stamps the build with the current git commit (`GIT_VERSION`, Datadog's
-`DD_VERSION` tag when enabled), then runs `docker compose build && up -d`; `entrypoint.sh` only
-collects static files and starts gunicorn (or the given command). Running it: `DEPLOYMENT.md`.
+`DD_VERSION` tag when enabled), then runs `docker compose build && up -d --wait` and checks the services stay up;
+static files are collected in the image build, and `entrypoint.sh` only starts gunicorn (or the given
+command). Running it: `DEPLOYMENT.md`.

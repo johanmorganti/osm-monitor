@@ -1,8 +1,6 @@
 #!/bin/sh
 set -e
 
-python manage.py collectstatic --no-input
-
 # Datadog APM is optional: wrap the process in ddtrace-run only when tracing
 # is enabled (docker-compose.datadog.yml sets DD_TRACE_ENABLED=true, and builds
 # the image with ddtrace).
@@ -47,9 +45,12 @@ if [ "$#" -eq 0 ]; then
     # --log-config-json: gunicorn's own lines (booting, signals, worker
     # exits) in the same JSON as Django's, with a level; as plain stderr text
     # Datadog filed every one of them as an error.
+    # --max-requests: a worker restarts after ~1000 requests (jittered), returning the
+    # memory big responses (a world map is 10-20 MB of JSON) left in its heap; the web
+    # container peaked at 1.93 of 2 GiB with workers that had never been recycled.
     # --no-control-socket: gunicorn (26) opens a runtime control socket by
     # default; nothing here uses it, so it stays closed.
-    exec $TRACE gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers "${GUNICORN_WORKERS:-2}" --threads 8 --timeout 40 --no-control-socket --log-config-json gunicorn-logging.json
+    exec $TRACE gunicorn osm_changeset_api.wsgi:application --bind "0.0.0.0:${PORT:-8000}" --worker-class gthread --workers "${GUNICORN_WORKERS:-2}" --threads 8 --timeout 40 --max-requests 1000 --max-requests-jitter 200 --no-control-socket --log-config-json gunicorn-logging.json
 fi
 
 exec $TRACE "$@"
