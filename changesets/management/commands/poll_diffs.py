@@ -9,10 +9,10 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
-import requests
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 
+from changesets.ingest.http import new_session
 from changesets.ingest.objects import OBJECT_VERSIONS_DAYS, DiffWriter
 from changesets.models import DiffState
 
@@ -32,8 +32,7 @@ class Replication:
     ~2.6 s to ~0.5 s (measured 2026-10-03)."""
 
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers['User-Agent'] = 'osm-monitor (https://github.com/johanmorganti/osm-monitor)'
+        self.session = new_session()
 
     def state(self, kind, sequence=None):
         """(sequence, timestamp) of the latest diff, or of `sequence`."""

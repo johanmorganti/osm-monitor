@@ -17,6 +17,7 @@ import requests
 
 from ..analytics.clickhouse.client import get_client
 from ..osm_fetcher import import_changeset_batch
+from .http import new_session
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,6 @@ PAUSE_SECONDS = 1.0      # between API requests
 # a row): wait and retry rather than give up the rest of the run.
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 RETRY_WAITS = (30, 60, 120)
-USER_AGENT = 'osm-monitor (https://github.com/johanmorganti/osm-monitor)'
 
 
 def stale_open_changesets(days, limit=None):
@@ -45,7 +45,9 @@ def stale_open_changesets(days, limit=None):
 
 def _get(session, chunk):
     for wait in (*RETRY_WAITS, None):
-        response = session.get(API_URL, params={'changesets': ','.join(map(str, chunk))}, timeout=60)
+        # (connect, read): an unreachable API fails after the session's few quick retries (~30 s)
+        # instead of holding the poller's loop for minutes; the poller logs it and tries again next hour.
+        response = session.get(API_URL, params={'changesets': ','.join(map(str, chunk))}, timeout=(10, 60))
         if response.status_code not in RETRY_STATUSES or wait is None:
             response.raise_for_status()
             return response
@@ -57,8 +59,7 @@ def _get(session, chunk):
 def reconcile(changeset_ids, session=None):
     """Re-fetch `changeset_ids` from the OSM API and write them. Returns
     (fetched, still_open)."""
-    session = session or requests.Session()
-    session.headers['User-Agent'] = USER_AGENT
+    session = session or new_session()
     fetched = still_open = 0
     for start in range(0, len(changeset_ids), BATCH):
         chunk = changeset_ids[start:start + BATCH]

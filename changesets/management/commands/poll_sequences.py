@@ -6,6 +6,7 @@ import yaml
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from changesets.models import SequenceState
+from changesets.ingest.http import new_session
 from changesets.ingest.reconcile import reconcile, stale_open_changesets
 from changesets.osm_fetcher import process_sequence
 
@@ -19,8 +20,11 @@ PLANET_STATE_URL = 'https://planet.osm.org/replication/changesets/state.yaml'
 SEQUENCES_PER_DAY_DEFAULT = 1440
 
 
+HTTP = new_session()
+
+
 def fetch_latest_sequence():
-    response = requests.get(PLANET_STATE_URL, stream=True, timeout=30)
+    response = HTTP.get(PLANET_STATE_URL, stream=True, timeout=30)
     response.raise_for_status()
     data = yaml.safe_load(response.raw.read())
     return int(data['sequence'])
@@ -182,7 +186,12 @@ class Command(BaseCommand):
                     last_reconcile = time.monotonic()
                     stale = stale_open_changesets(days=3)
                     if stale:
-                        reconcile(stale)
+                        try:
+                            reconcile(stale)
+                        except requests.RequestException:
+                            # The OSM API being unreachable is not a poller failure: the
+                            # next run is an hour away and picks these up again.
+                            logger.exception("Reconcile failed, will retry next interval")
 
                 if not did_work:
                     logger.info(

@@ -39,3 +39,11 @@ and retries (30 / 60 / 120 s) on 429 and 5xx.
 Not changed: TimescaleDB's continuous aggregates only refresh the last 7 days
 ([old-dated-rows.md](old-dated-rows.md)), so a corrected count older than that stays stale there
 (TimescaleDB is deprecated; ClickHouse's rollups are rebuilt from deduplicated data daily).
+
+**Unreachable API (2026-10-30):** from the 2026-10-26 host, `api.openstreetmap.org` (Fastly) timed out
+on TLS for days while `planet.osm.org` worked. All of the pollers' HTTP goes through
+`changesets/ingest/http.py` (our User-Agent; a dropped keep-alive connection, a refused or timed-out
+connect and a read timeout retried 3 times, GET only). Reconcile connects with a 10 s timeout, so an
+unreachable API fails the run in about 30 s, is logged by the poller, and is tried again the next
+hour; the backlog stays in the table and is picked up by `reconcile_open_changesets --days N` once the
+API answers (55,472 changesets from 2026-10-17 to 10-24 were waiting for that).

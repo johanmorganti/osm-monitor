@@ -4,6 +4,7 @@ from os import path
 import requests
 import xml.etree.ElementTree as ET
 import gzip
+from .ingest.http import new_session
 from .ingest.locate import locate
 from .ingest.writers import get_writers
 from datetime import datetime, timezone as dt_timezone
@@ -14,6 +15,7 @@ import copy
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 30  # seconds; avoid hanging forever on a stalled connection
+HTTP = new_session()  # keeps the connection to planet.osm.org between sequences
 
 # ddtrace is only installed in the Datadog image (requirements-datadog.txt, built by
 # docker-compose.datadog.yml); without it, spans are no-ops.
@@ -93,7 +95,9 @@ def _process_sequence_traced(sequence_number, span):
     if not path.isfile(sequence_path):
         sequence_was_fetched = True
         url_sequence = urlized_sequence_number(sequence_number)
-        xml_sequence_request = requests.get(url_sequence, stream=True, timeout=REQUEST_TIMEOUT).raw.read()
+        response = HTTP.get(url_sequence, stream=True, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()  # a 404/503 page is not gzip: say what the server said
+        xml_sequence_request = response.raw.read()
         xml_sequence = ET.fromstring(gzip.decompress(xml_sequence_request))
         os.makedirs(path.dirname(sequence_path), exist_ok=True)
         with open(sequence_path, 'wb') as sequence_file:
