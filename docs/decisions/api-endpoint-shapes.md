@@ -22,3 +22,10 @@ Overview, 10 to 2 on Objects, 28 to 10 on Editors (36 when fully scrolled). Use 
 only when a widget's response also fills something above the fold (the Objects KPIs). This, not
 more gunicorn threads, was the lever: measured with ClickHouse, a full Overview load is bound by
 ClickHouse CPU (each query uses all 4 cores), not by request slots (see `entrypoint.sh`).
+
+**Timeseries buckets are zero-filled (2026-10-30).** `TimeseriesView` gives every bucket of the
+range, up to the current one (`fill_buckets` in `api/params.py`), not just the ones with rows. The
+charts plot `dates` on a category axis that spaces points evenly, so a filtered series (`country=IS`
+returned 45 of 168 hours) squeezed the silent hours out and bent the trend. It lives in the API layer
+so every backend gets it; object series start at `objects_since`; an empty series stays empty; totals
+are unchanged. A range of more than 12,000 buckets is left unfilled.

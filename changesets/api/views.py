@@ -15,7 +15,7 @@ from ..analytics import DIMENSIONS, EDITOR_VERSION, HASHTAG, OBJECT_DIMENSIONS, 
 from ..geo import GEOHASH_PREFIX_LENGTH, geohash_cell_size_degrees, geohash_precision_for_bbox
 from ..models import SequenceState
 from ..serializers import ChangesetSerializer
-from .params import BadParameter, resolve_filters, pick_interval, parse_bbox, parse_bound
+from .params import BadParameter, resolve_filters, pick_interval, parse_bbox, parse_bound, fill_buckets
 from .schema import DIMENSION_FILTER_PARAMS, FILTER_PARAMS, OBJECT_FILTER_PARAMS, TIMEOUT_RESPONSE
 from .sizes import distribution
 
@@ -121,7 +121,8 @@ class TimeseriesView(APIView):
             '(hourly for ranges up to ~12.5 days, daily beyond that) — override with '
             'interval=hour|day. interval=hour on a range wide enough to blow past the point '
             'budget is rejected (400) rather than silently truncated. The grain actually used '
-            'is always reported back in the response\'s top-level interval field. Defaults to '
+            'is always reported back in the response\'s top-level interval field. Every bucket of the '
+            'range is present (zero where nothing happened), up to the current one. Defaults to '
             'the last 7 days if no dates are given. group_by=action|object_type|feature splits '
             'objects changed by what the replication diffs say about each object (requires '
             'metric=objects; objects count on their changeset\'s day, so the series add up to the '
@@ -179,8 +180,10 @@ class TimeseriesView(APIView):
 
         backend = backend_for(request)
         data = backend.timeseries(f, group_by, interval, metric)
+        since = None
         if group_by in OBJECT_DIMENSIONS or f.object_filters():
-            data['objects_since'] = backend.object_coverage()
+            since = data['objects_since'] = backend.object_coverage()
+        fill_buckets(data, f, interval, first_day=since)
         return Response({'filters': {**f.as_dict(), 'group_by': group_by, 'metric': metric}, **data})
 
 

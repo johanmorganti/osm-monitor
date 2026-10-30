@@ -6,10 +6,11 @@ from django.utils import timezone
 from rest_framework.exceptions import APIException
 
 from ..analytics import OBJECT_DIMENSIONS, Filters
-from ..analytics.base import OBJECT_VALUES
+from ..analytics.base import OBJECT_VALUES, format_bucket
 
 TARGET_POINTS = 300
 MAX_EXPLICIT_POINTS = 5000  # only constrains an explicit interval=hour override, see pick_interval
+MAX_FILLED_BUCKETS = 12000  # beyond this (a century of days) a timeseries is left unfilled
 MIN_YEAR, MAX_YEAR = 2000, 2100  # OSM changesets start in 2004; outside this a date is a typo, not a range
 
 
@@ -131,3 +132,35 @@ def parse_bbox(raw):
         raise ValueError('bbox minimum above maximum')
     clamp = lambda v, limit: max(-limit, min(limit, v))
     return clamp(min_lon, 180.0), clamp(min_lat, 90.0), clamp(max_lon, 180.0), clamp(max_lat, 90.0)
+
+
+def fill_buckets(data, f, interval, first_day=None, now=None):
+    """Give a timeseries every bucket of its range, with zeros where nothing
+    happened, so a quiet hour or day takes its place on the time axis (the
+    charts space points evenly, so a dropped bucket would squeeze the axis).
+    The range is cut at `now`'s bucket (no future zeros) and starts no earlier
+    than `first_day` (where object counts begin). Empty series are left alone,
+    as is a range too long to enumerate (MAX_FILLED_BUCKETS)."""
+    if not data['series']:
+        return data
+    step = timedelta(hours=1) if interval == 'hour' else timedelta(days=1)
+    start, end = f.start_at, min(f.end_at, now or datetime.utcnow())
+    if first_day:
+        start = max(start, datetime.combine(first_day, datetime.min.time()))
+    start = start.replace(minute=0, second=0, microsecond=0)
+    if interval == 'day':
+        start = start.replace(hour=0)
+    if end <= start or (end - start) / step > MAX_FILLED_BUCKETS:
+        return data
+    dates = []
+    while start < end:
+        dates.append(format_bucket(start, interval) if interval == 'hour' else start.date().isoformat())
+        start += step
+    have = set(data['dates'])
+    if have - set(dates):
+        return data  # a bucket outside the computed range: leave the backend's answer
+    index = {d: i for i, d in enumerate(data['dates'])}
+    data['series'] = [{**s, 'counts': [s['counts'][index[d]] if d in index else 0 for d in dates]}
+                      for s in data['series']]
+    data['dates'] = dates
+    return data

@@ -1,9 +1,11 @@
+from datetime import date, datetime
 from django.test import SimpleTestCase
 from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
-from changesets.api.params import BadParameter, parse_bbox, parse_bound, pick_interval, resolve_filters
+from changesets.api.params import BadParameter, parse_bbox, parse_bound, pick_interval, resolve_filters, fill_buckets
+from changesets.analytics import Filters
 from changesets.api.views import ChangesetPagination
 
 
@@ -109,3 +111,39 @@ class PaginationDepthTests(SimpleTestCase):
     def test_junk_page_numbers_keep_their_old_answer(self):
         with self.assertRaises(NotFound):
             self.paginate(page='abc')
+
+
+class FillBucketsTests(SimpleTestCase):
+    NOW = datetime(2026, 10, 30, 12, 30)
+
+    def filled(self, f, interval, counts, dates, **kw):
+        data = {'interval': interval, 'dates': dates, 'series': [{'name': 'x', 'counts': counts}]}
+        return fill_buckets(data, f, interval, now=self.NOW, **kw)
+
+    def test_hours_between_points_become_zeros(self):
+        f = Filters(start_date='2026-10-01', end_date='2026-10-01')
+        data = self.filled(f, 'hour', [5, 7], ['2026-10-01 03:00', '2026-10-01 05:00'])
+        self.assertEqual(len(data['dates']), 24)
+        self.assertEqual(data['series'][0]['counts'][3:6], [5, 0, 7])
+        self.assertEqual(sum(data['series'][0]['counts']), 12)
+
+    def test_days_and_the_current_bucket_ends_the_range(self):
+        f = Filters(start_date='2026-10-28', end_date='2026-10-31')
+        data = self.filled(f, 'day', [4], ['2026-10-29'])
+        self.assertEqual(data['dates'], ['2026-10-28', '2026-10-29', '2026-10-30'])
+        self.assertEqual(data['series'][0]['counts'], [0, 4, 0])
+        data = self.filled(f, 'hour', [1], ['2026-10-30 12:00'])
+        self.assertEqual(data['dates'][-1], '2026-10-30 12:00')
+
+    def test_empty_series_and_object_coverage_start(self):
+        f = Filters(start_date='2026-10-01', end_date='2026-10-03')
+        self.assertEqual(fill_buckets({'interval': 'day', 'dates': [], 'series': []}, f, 'day', now=self.NOW)['dates'], [])
+        data = self.filled(f, 'day', [3], ['2026-10-03'], first_day=date(2026, 10, 2))
+        self.assertEqual(data['dates'], ['2026-10-02', '2026-10-03'])
+
+    def test_every_series_is_aligned(self):
+        f = Filters(start_date='2026-10-01', end_date='2026-10-03')
+        data = {'interval': 'day', 'dates': ['2026-10-01', '2026-10-03'],
+                'series': [{'name': 'a', 'counts': [1, 2]}, {'name': 'b', 'counts': [0, 9]}]}
+        fill_buckets(data, f, 'day', now=self.NOW)
+        self.assertEqual([s['counts'] for s in data['series']], [[1, 0, 2], [0, 0, 9]])
