@@ -23,6 +23,8 @@ def api_exception_handler(exc, context):
             {'error': 'Query took too long and was cancelled — try a narrower date range or filter.'},
             status=408,
         )
+    if _is_clickhouse_overloaded(exc):
+        return Response({'error': 'Too much data or too many queries at once — narrow the range or try again.'}, status=503)
     if _is_clickhouse_unavailable(exc):
         return Response({'error': 'Analytics database unavailable — try again in a minute.'}, status=503)
     if isinstance(exc, NotImplementedError):
@@ -40,6 +42,18 @@ def _is_clickhouse_timeout(exc):
     except ImportError:
         return False
     return isinstance(exc, DatabaseError) and 'TIMEOUT_EXCEEDED' in str(exc)
+
+
+def _is_clickhouse_overloaded(exc):
+    """A query over its memory limit (code 241, MEMORY_LIMIT_EXCEEDED) or
+    refused for too many concurrent ones (202, TOO_MANY_SIMULTANEOUS_QUERIES):
+    a 503 JSON answer, not Django's HTML 500."""
+    try:
+        from clickhouse_connect.driver.exceptions import DatabaseError
+    except ImportError:
+        return False
+    return isinstance(exc, DatabaseError) and any(
+        name in str(exc) for name in ('MEMORY_LIMIT_EXCEEDED', 'TOO_MANY_SIMULTANEOUS_QUERIES'))
 
 
 def _is_clickhouse_unavailable(exc):

@@ -55,7 +55,6 @@ if HTTPS_ONLY:
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -220,6 +219,10 @@ REST_FRAMEWORK = {
         ['rest_framework.renderers.JSONRenderer', 'rest_framework.renderers.BrowsableAPIRenderer']
         if DEBUG else ['rest_framework.renderers.JSONRenderer']
     ),
+    # The API is public and anonymous: with DRF's default classes, any request
+    # carrying an `Authorization: Basic` header made Django hash the password
+    # (1M PBKDF2 iterations, ~250 ms of CPU) before answering 403.
+    'DEFAULT_AUTHENTICATION_CLASSES': [],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'EXCEPTION_HANDLER': 'changesets.exceptions.api_exception_handler',
 }

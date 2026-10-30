@@ -7,6 +7,15 @@ _SDK_REGIONS = {
 }
 
 
+def _float_env(name, default):
+    """A float from the environment; unset, empty (`NAME=` in .env) or not a
+    number all give the default, instead of a 500 on every page."""
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return float(default)
+
+
 def datadog_rum(request):
     """Datadog RUM browser-SDK settings for base.html, from the environment.
     Optional: RUM is only loaded when both the application ID and the client
@@ -22,8 +31,8 @@ def datadog_rum(request):
         'service': os.environ.get('DD_RUM_SERVICE', 'osm-monitor-frontend'),
         'env': os.environ.get('DD_ENV', 'prod'),
         'version': os.environ.get('DD_VERSION', 'unknown'),
-        'sessionSampleRate': float(os.environ.get('DD_RUM_SESSION_SAMPLE_RATE', 100)),
-        'sessionReplaySampleRate': float(os.environ.get('DD_RUM_SESSION_REPLAY_SAMPLE_RATE', 20)),
+        'sessionSampleRate': _float_env('DD_RUM_SESSION_SAMPLE_RATE', 100),
+        'sessionReplaySampleRate': _float_env('DD_RUM_SESSION_REPLAY_SAMPLE_RATE', 20),
         'trackResources': True,
         'trackUserInteractions': True,
         'trackLongTasks': True,

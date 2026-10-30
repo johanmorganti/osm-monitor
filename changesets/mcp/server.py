@@ -92,8 +92,13 @@ def _handle(request, message):
         return None
     msg_id = message.get('id')
     is_notification = 'id' not in message
+    method, params = message['method'], message.get('params') or {}
+    if not isinstance(method, str):
+        return None if is_notification else _error(msg_id, JSONRPC_INVALID_REQUEST, 'Invalid Request: method must be a string')
+    if not isinstance(params, dict):
+        return None if is_notification else _error(msg_id, JSONRPC_INVALID_PARAMS, 'params must be an object')
     try:
-        result = _dispatch(request, message['method'], message.get('params') or {})
+        result = _dispatch(request, method, params)
     except RpcError as e:
         return None if is_notification else _error(msg_id, e.code, e.message)
     return None if is_notification else {'jsonrpc': '2.0', 'id': msg_id, 'result': result}
