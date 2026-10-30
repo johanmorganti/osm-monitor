@@ -93,6 +93,14 @@ with the count tables, kept forever). Recomputing a stored day gave identical ro
 15,542). Days missing before the existing ones (coverage extended backward) are filled oldest
 first; one day per refresh keeps each insert a single block, so a day is fully in or not at all.
 
+**The rollup's watermark is the end of its first contiguous run of days (2026-10-30):** filling the
+oldest missing day first leaves holes: after the 2026-10-26 host rebuild coverage moved back to
+2026-07-26 while the days from 2026-09-29 on were still stored, so for about a day a range over
+them read the rollup and got nothing (toplist `dimension=action` for 2026-10-01..10-10 returned
+`[]`, `summary` 42M objects). `_watermark('object_daily_rollup')` now stops at the first absent
+day, and days after it read the raw tables. The other rollups are rebuilt whole and keep
+`max(day) + 1`.
+
 ## Object filters, time windows, and the Objects page drill-down (2026-10-14)
 
 To answer "who and which changesets are behind this spike?", `action`, `object_type` and

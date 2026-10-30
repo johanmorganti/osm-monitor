@@ -178,10 +178,20 @@ class ClickHouseBackend:
     # -- rollup routing ------------------------------------------------------
 
     def _watermark(self, table):
-        """First day a rollup table doesn't cover (None before its first refresh)."""
+        """First day a rollup table doesn't cover (None before its first refresh).
+        For object_daily_rollup, built one day at a time and oldest missing day
+        first, that is the end of the contiguous run of days from its first one:
+        days after a gap are not covered yet and are read from the raw tables."""
         checked, value = self._watermark_cache.get(table, (float('-inf'), None))
         if time.monotonic() - checked > WATERMARK_TTL_SECONDS:
-            (day,), = self._rows(f'SELECT max(day) FROM {ROLLUP_WATERMARKS[table]}', {})
+            source = ROLLUP_WATERMARKS[table]
+            if table == 'object_daily_rollup':
+                # The last day of the first run: the first day whose next day is absent.
+                sql = (f'SELECT min(day) FROM (SELECT DISTINCT day FROM {source}) '
+                       f'WHERE day + 1 NOT IN (SELECT day FROM {source})')
+            else:
+                sql = f'SELECT max(day) FROM {source}'
+            (day,), = self._rows(sql, {})
             value = day + timedelta(days=1) if day and day.year > 1970 else None
             self._watermark_cache[table] = (time.monotonic(), value)
         return value
