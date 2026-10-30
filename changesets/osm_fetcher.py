@@ -253,7 +253,8 @@ def _parse_changeset_element(changeset, log_extra):
                         # literal string 'None'", now in git history, and
                         # backfill_imagery_family_none.py for the one-off
                         # fix to already-imported rows).
-                        if family.strip().lower() in ('none', 'unknown', 'n/a', ''):
+                        # Checked on the raw value too: `n/a` is split at its slash above.
+                        if family.strip().lower() in ('none', 'unknown', 'n/a', '') or raw.strip().lower() in ('none', 'unknown', 'n/a'):
                             family = None
                         changeset_to_add['imagery_family'] = family or None
                 elif tag_key == 'host':

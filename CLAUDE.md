@@ -68,6 +68,9 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
   adapt to the request. → [geo-geohash](docs/decisions/geo-geohash.md)
 
 ### Operations
+- **Tests need no ClickHouse and no network** (`changesets/tests/`; a guard fails any test that reaches
+  it, as the container's environment points at production). `deploy.sh` runs them in the freshly built
+  image and stops on a failure. A fix to parsing, validation or an ingest rule gets a test with it.
 - **Several sessions share this checkout.** Stage only your own files (never `git add -A`), and
   remember `deploy.sh` builds whatever is in the working tree, others' work in progress included.
 
@@ -95,6 +98,7 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
 | `changesets/mcp/` | MCP server at `/mcp`: `server.py` (JSON-RPC over Streamable HTTP, instructions), `tools.py` (one tool per API endpoint, from the OpenAPI schema) |
 | `changesets/analytics/` | Analytics backend interface (`base.py`: `Filters`, `AnalyticsBackend`, `NONE_BUCKET`, `DIMENSIONS`) + `registry.py` (`ANALYTICS_BACKEND`) |
 | `changesets/analytics/clickhouse/` | ClickHouse backend (`backend.py`), client, schema (`schema/*.sql`, applied by `clickhouse_migrate`) |
+| `changesets/tests/` | Unit tests: API param parsing, MCP protocol, ingest rules (editor family, feature, osmChange), env reader; no ClickHouse |
 | `changesets/models.py` | `SequenceState`, `DiffState`: the pollers' positions, in SQLite (`SQLITE_PATH`, WAL mode set in `apps.py`) |
 | `changesets/serializers.py` | DRF serializer for raw changeset records (`/api/changesets/`) |
 | `changesets/urls.py` | API URL patterns (`/api/…`) |

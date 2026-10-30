@@ -42,6 +42,9 @@ export GIT_VERSION
 
 echo "Deploying version: ${GIT_VERSION}"
 docker compose build
+# The tests (changesets/tests/) run in the image just built, before anything is replaced; none
+# needs ClickHouse or the network.
+docker compose run --rm --no-deps web python manage.py test || fail "tests failed, nothing was deployed"
 # --wait: returns once web is healthy and the other services run, and fails (with the
 # containers' state) if one doesn't within the timeout, instead of exiting 0 on a crash loop.
 docker compose up -d --wait --wait-timeout 180 || {

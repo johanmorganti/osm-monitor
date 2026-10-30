@@ -22,7 +22,7 @@ so local checks need `curl -H 'X-Forwarded-Proto: https' http://127.0.0.1:5006/.
 
 `deploy.sh` checks `.env` and the Docker daemon, stamps the build with the current git commit
 (`GIT_VERSION`; `-dirty` when the working tree has uncommitted or untracked files, which are listed,
-since the image gets them), then runs `docker compose build && docker compose up -d --wait`. It
+since the image gets them), runs `docker compose build`, the tests in the new image (`manage.py test`; none needs ClickHouse), then `docker compose up -d --wait`. It
 fails, with the containers' state and logs, when web is not healthy within 3 minutes (the compose
 healthcheck: a request to `/api/batch-progress/` from inside the container) or when a service
 restarts or has stopped 15 s later. On fresh data directories the rest is automatic: `migrate` creates the SQLite file and its tables, and applies
