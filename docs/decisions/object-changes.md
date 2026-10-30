@@ -101,6 +101,18 @@ them read the rollup and got nothing (toplist `dimension=action` for 2026-10-01.
 day, and days after it read the raw tables. The other rollups are rebuilt whole and keep
 `max(day) + 1`.
 
+**The append waits for a day to be complete (2026-10-30):** the 2026-10-26 16:00 refresh, during the
+backfill after the host rebuild, stored 2026-10-18 with 127 objects (the real count: 4,004,637,
+the changesets were all there, the diffs not yet) and nothing rebuilds a stored day. Since
+`schema/0008` the view adds the oldest missing day only when its objects in `object_change_features`
+reach 99.9% of the sum of its changesets' `changes_count` (exactly equal on every normal day,
+checked on 90); until then nothing is appended and the next refresh tries again. A day that stays
+short therefore holds back the days after it: `manage.py check_object_rollup` names it and lists
+any stored day whose total disagrees with `daily_rollup` (exit 1). It does not catch missing
+*changesets* when the diffs for them are complete (both sides shrink together); the repair for a bad
+day is `DELETE FROM object_daily_rollup WHERE day = '...'`, the append rebuilds it. A rewrite of
+changeset dimensions (`recompute_locations`) needs the same delete for the affected days.
+
 ## Object filters, time windows, and the Objects page drill-down (2026-10-14)
 
 To answer "who and which changesets are behind this spike?", `action`, `object_type` and
