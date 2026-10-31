@@ -23,8 +23,20 @@ class GeohashTests(SimpleTestCase):
     def test_precision_grows_as_the_viewport_shrinks(self):
         world = geohash_precision_for_bbox(-90, -180, 90, 180)
         city = geohash_precision_for_bbox(48.8, 2.2, 48.9, 2.5)
-        self.assertEqual(world, 4)   # FINE_MIN_PRECISION
         self.assertGreater(city, world)
+
+    def test_a_very_wide_viewport_gets_a_coarser_grid(self):
+        # The world at precision 4 is 2M grid cells (an 18 MB response); the
+        # grid over any bbox stays within the budget.
+        self.assertEqual(geohash_precision_for_bbox(-90, -180, 90, 180), 3)
+        for box in [(-90, -180, 90, 180), (-60, -120, 60, 120), (0, 0, 40, 40)]:
+            p = geohash_precision_for_bbox(*box)
+            lat, lon = geohash_cell_size_degrees(p)
+            self.assertLessEqual((box[2] - box[0]) / lat * ((box[3] - box[1]) / lon), 500_000)
+
+    def test_a_dashboard_sized_viewport_keeps_its_precision(self):
+        # ~3400 km across (the padded viewport fine mode starts at): precision 4.
+        self.assertEqual(geohash_precision_for_bbox(35, -10, 65, 20), 4)
 
     def test_cover_contains_the_points_and_is_bounded(self):
         prefixes = geohash_bbox_cover(48.8, 2.2, 48.9, 2.5)

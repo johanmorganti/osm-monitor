@@ -60,6 +60,12 @@ GEOHASH_PREFIX_LENGTH = {'coarse': 3}
 # this needs to move with it: target = 15 * (1 + 2 * GEO_FINE_PREFETCH_PAD).
 FINE_TARGET_CELLS_ACROSS = 30
 FINE_MIN_PRECISION = 4
+# Upper bound on the grid cells a fine request's bbox spans (every cell of the
+# grid inside it, occupied or not), so a very wide bbox gets a coarser grid
+# instead of a response of tens of MB: the world at precision 4 is 2M grid cells
+# and answered with 18.5 MB (measured 2026-10-31). The dashboard's padded
+# viewport at the zoom fine mode starts at spans ~60K.
+FINE_MAX_GRID_CELLS = 500_000
 
 _GEOHASH_BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz"
 
@@ -104,8 +110,19 @@ def geohash_precision_for_bbox(min_lat, min_lon, max_lat, max_lon,
     for p in range(min_precision, max_precision + 1):
         lat_size, lon_size = geohash_cell_size_degrees(p)
         if min(lat_span / lat_size, lon_span / lon_size) >= target_cells_across:
-            return p
-    return max_precision
+            return _within_grid_budget(p, lat_span, lon_span)
+    return _within_grid_budget(max_precision, lat_span, lon_span)
+
+
+def _within_grid_budget(precision, lat_span, lon_span):
+    """`precision`, or the finest coarser one whose grid over the bbox has at
+    most FINE_MAX_GRID_CELLS cells (never below 1)."""
+    while precision > 1:
+        lat_size, lon_size = geohash_cell_size_degrees(precision)
+        if (lat_span / lat_size) * (lon_span / lon_size) <= FINE_MAX_GRID_CELLS:
+            break
+        precision -= 1
+    return precision
 
 
 def geohash_decode_center(geohash):

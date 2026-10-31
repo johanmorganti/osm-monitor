@@ -151,3 +151,10 @@ cells at zoom 5 over all time in 21 ms, about what 7.5K rectangles took at zoom 
 (3.6 s, 1.7 MB). Zoom 4 would be 73K cells and 5.7 MB per response, too much whatever the renderer.
 `GEO_FINE_FETCH_DEBOUNCE_MS` went from 600 to 250 ms at the same time: the prefetch padding, not
 the delay, is what keeps browsing from sending a request per gesture.
+
+**Fine grid has a cell budget (2026-10-31).** `resolution=fine` with a world-sized `bbox` picked
+precision 4 (`FINE_MIN_PRECISION`), 2M grid cells, and answered up to 18.5 MB from one request.
+`geohash_precision_for_bbox` now steps the precision down until the grid over the bbox has at most
+`FINE_MAX_GRID_CELLS` (500,000) cells; the world gets precision 3 (the coarse grid). The dashboard's
+padded viewport at the zoom fine mode starts at is ~60K cells, so it is untouched: responses for it
+and for a city were byte-identical before and after.
