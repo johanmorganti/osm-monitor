@@ -9,8 +9,6 @@ from .ingest.locate import locate
 from .ingest.writers import get_writers
 from datetime import datetime, timezone as dt_timezone
 from django.utils import timezone
-import json
-import copy
 
 logger = logging.getLogger(__name__)
 
@@ -62,19 +60,6 @@ def urlized_sequence_number(sequence_number):
     # returns url of the form https://planet.osm.org/replication/changesets/123/456/789.osm.gz
     sequence_number_adjusted = str(sequence_number).rjust(9, "0")
     return f"https://planet.osm.org/replication/changesets/{sequence_number_adjusted[0:3]}/{sequence_number_adjusted[3:6]}/{sequence_number_adjusted[6:9]}.osm.gz"
-
-
-def get_sequence_min_max_changeset_id(sequence_number, locally=False):
-    # returns min and max values of changeset ids 
-    if locally:
-        sequence_path = "./source/" + str(sequence_number) + ".osm.gz"
-        with open(sequence_path, 'rb') as sequence_file:
-            xml_sequence = ET.fromstring(gzip.decompress(sequence_file.read()))
-    else:
-        url_sequence = urlized_sequence_number(sequence_number)
-        xml_sequence_request = requests.get(url_sequence, stream=True, timeout=REQUEST_TIMEOUT).raw.read()
-        xml_sequence = ET.fromstring(gzip.decompress(xml_sequence_request))
-    return min(xml_sequence, key=lambda x: x.attrib['id']).attrib['id'], max(xml_sequence, key=lambda x: x.attrib['id']).attrib['id']
 
 
 def process_sequence(sequence_number):
@@ -313,50 +298,3 @@ def import_changeset_batch(changeset_elements, log_extra):
     results = [writer.write(records, log_extra) for writer in get_writers()]
     primary = results[0]
     return primary.created, primary.skipped, primary.updated
-
-
-def fetch_and_process_changesets(seq_start, seq_end, on_progress=None):
-    if seq_start > seq_end:
-        seq_start, seq_end = seq_end, seq_start
-
-    for sequence_number in range(seq_start, seq_end + 1):
-        process_sequence(sequence_number)
-        if on_progress:
-            on_progress(sequence_number)
-
-    # get min and max values of changeset ids
-    min_changesets = get_sequence_min_max_changeset_id(seq_start)[0]
-    max_changesets = get_sequence_min_max_changeset_id(seq_end)[1]
-
-    return min_changesets, max_changesets
-
-
-###### TESTING ######
-# this is for debugging/testing
-def duration_info(sequence_number):
-    sequence_path = "./source/" + str(sequence_number) + ".osm.gz"
-    if not path.isfile(sequence_path):
-        url_sequence = urlized_sequence_number(sequence_number)
-        xml_sequence_request = requests.get(url_sequence, stream=True, timeout=REQUEST_TIMEOUT).raw.read()
-        xml_sequence = ET.fromstring(gzip.decompress(xml_sequence_request))
-        with open(sequence_path, 'wb') as sequence_file:
-            sequence_file.write(xml_sequence_request)
-    else:
-        with open(sequence_path, 'rb') as sequence_file:
-            xml_sequence = ET.fromstring(gzip.decompress(sequence_file.read()))
-
-    data = []
-    for changeset in xml_sequence:
-        changeset_data = {}
-        for attribute, value in changeset.attrib.items():
-            if attribute == "created_at":
-                changeset_data['created_at'] = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
-        data.append(changeset_data)
-
-    min_created_at = min(data, key=lambda x: x['created_at'])['created_at']
-    max_created_at = max(data, key=lambda x: x['created_at'])['created_at']
-    duration = max_created_at - min_created_at
-    print('max created at : ' + str(max_created_at))
-    print('min created at : ' + str(min_created_at))
-    print("Duration : " + str(duration))
-    return duration

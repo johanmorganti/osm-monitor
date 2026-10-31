@@ -58,7 +58,7 @@ Two independent processes ingest changesets and safely converge:
   automatically once it reaches the floor and continues live-only.
 - **`manage.py import_from_dump`** streams OSM's full changesets planet dump (the whole history
   since 2005, as one very large XML file, optionally bz2-compressed in multiple concatenated
-  streams — `import_from_dump.py`'s `_MultiStreamBz2Reader` handles that transparently). Use this
+  streams — `bz2.open` reads them as one). Use this
   for bulk historical backfill — it's dramatically faster than replaying years of minutely diffs
   through the poller.
 

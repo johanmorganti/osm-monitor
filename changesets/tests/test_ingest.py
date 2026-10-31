@@ -142,3 +142,15 @@ class OsmChangeParserTests(SimpleTestCase):
         self.assertEqual((relation.members, relation.feature), ([('way', 2, 'outer')], 'multipolygon'))
         self.assertEqual(deleted.feature, UNKNOWN)
         self.assertEqual(node.timestamp.isoformat(), '2026-10-20T10:00:00+00:00')
+
+
+class DumpReaderTests(SimpleTestCase):
+    def test_bz2_open_reads_the_dumps_concatenated_streams_as_one(self):
+        # The planet dump is many bz2 streams back to back; import_from_dump reads it with bz2.open.
+        import bz2
+        import io
+        import xml.etree.ElementTree as ET
+        parts = [b'<osm>\n', *(f' <changeset id="{i}"/>\n'.encode() for i in range(1, 2001)), b'</osm>\n']
+        blob = b''.join(bz2.compress(b''.join(parts[i:i + 300])) for i in range(0, len(parts), 300))
+        ids = [e.get('id') for _, e in ET.iterparse(bz2.open(io.BytesIO(blob))) if e.tag == 'changeset']
+        self.assertEqual(ids, [str(i) for i in range(1, 2001)])

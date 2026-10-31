@@ -13,59 +13,6 @@ from changesets.osm_fetcher import import_changeset_batch
 logger = logging.getLogger(__name__)
 
 
-class _MultiStreamBz2Reader:
-    """File-like adapter that transparently decompresses a sequence of
-    independent, concatenated bz2 streams into one continuous byte stream.
-
-    The OSM changesets planet dump is written as thousands of separate bz2
-    streams back-to-back (rather than one continuous stream), which
-    Python's low-level bz2.BZ2Decompressor does not follow past the first
-    one on its own — it needs a fresh BZ2Decompressor() per stream, fed
-    with any unused_data left over from the previous one."""
-
-    def __init__(self, fileobj, read_size=4 * 1024 * 1024):
-        self._fileobj = fileobj
-        self._read_size = read_size
-        self._decompressor = bz2.BZ2Decompressor()
-        self._buffer = bytearray()
-        self._exhausted = False
-
-    def _fill(self, target_size):
-        while len(self._buffer) < target_size and not self._exhausted:
-            raw_chunk = self._fileobj.read(self._read_size)
-            if not raw_chunk:
-                self._exhausted = True
-                break
-            pending = raw_chunk
-            while pending:
-                self._buffer.extend(self._decompressor.decompress(pending))
-                if self._decompressor.eof:
-                    pending = self._decompressor.unused_data
-                    if not pending:
-                        break
-                    self._decompressor = bz2.BZ2Decompressor()
-                else:
-                    pending = b''
-
-    def read(self, size=-1):
-        if size is None or size < 0:
-            while not self._exhausted:
-                self._fill(len(self._buffer) + self._read_size)
-            result = bytes(self._buffer)
-            self._buffer.clear()
-            return result
-        self._fill(size)
-        result = bytes(self._buffer[:size])
-        del self._buffer[:size]
-        return result
-
-
-# Every top-level element in the dump starts on its own line with exactly one
-# space of indent; nested <tag>/<discussion> children are indented deeper, so
-# this marker only ever matches a real top-level <changeset> boundary.
-_CHANGESET_LINE_MARKER = b'\n <changeset '
-
-
 def _find_marker(fileobj, offset, file_size, chunk_size=1024 * 1024):
     """Offset of the first _CHANGESET_LINE_MARKER at or after `offset`, or
     file_size if there is none."""
@@ -347,7 +294,7 @@ class Command(BaseCommand):
                 else:
                     reader = _ByteRangeReader(raw_file, range_start, range_end)
             elif dump_path.endswith('.bz2'):
-                reader = _MultiStreamBz2Reader(raw_file)
+                reader = bz2.open(raw_file)  # reads the dump's concatenated streams as one
             else:
                 reader = raw_file
             context = ET.iterparse(reader, events=('start', 'end'))
