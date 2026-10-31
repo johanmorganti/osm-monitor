@@ -15,8 +15,8 @@ this file directly. (Until 2026-10-05 `load_country_boundaries` also loaded it i
 - **Processing** (2026-09-18, see git history for the exact commands): loaded
   as-is, then `ST_SimplifyPreserveTopology(geom, 0.02)` — country-level
   aggregation doesn't need survey-grade borders, and this cuts total vertex
-  count from ~547K to ~122K (~4.5x), which matters for GiST index size and
-  per-row point-in-polygon cost across 17M+ changesets.
+  count from ~547K to ~122K (~4.5x), which matters for the
+  per-row point-in-polygon cost at ingest.
 - **ISO code corrections** applied before loading (the source data has known
   gaps for these three): France and Norway were missing `ISO3166-1-Alpha-2`
   entirely (`-99`); Taiwan carried a non-standard `CN-TW` label instead of
@@ -28,4 +28,4 @@ this file directly. (Until 2026-10-05 `load_country_boundaries` also loaded it i
   Cyprus, Kosovo, Bir Tawil, Siachen Glacier, and similar — see git history
   for the full list). A changeset whose centroid falls in one of these
   resolves to no country match, same as one falling in international waters
-  — both are the `(unknown)` bucket, not a silent misassignment.
+  — both are the `(none)` bucket (`NONE_BUCKET`, filtering to the NULL country), not a silent misassignment.

@@ -1,8 +1,9 @@
 # Front-end code is served from the site, not from CDNs
 
 Decided 2026-10-28. Every script and stylesheet the pages load comes from the site's own static
-files. The one exception is the Datadog RUM SDK, loaded through the first-party RUM proxy when
-`DD_RUM_PROXY_URL` is set (`changesets/context_processors.py`). Map tiles and styles still come
+files. The one exception is the Datadog RUM SDK (optional, off unless configured): through the first-party
+RUM proxy when `DD_RUM_PROXY_URL` is set, otherwise from Datadog's own CDN
+(`www.datadoghq-browser-agent.com`, unpinned) (`changesets/context_processors.py`). Map tiles and styles still come
 from OpenFreeMap and openstreetmap.org: they are data, not code.
 
 ## What changed

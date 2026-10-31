@@ -1,5 +1,5 @@
 """ClickHouse analytics backend: SQL over the raw `changesets` table, plus one
-daily rollup where measurements asked for it.
+daily rollups where measurements asked for it.
 
 Most questions scan the raw table for the date range, reading only the
 columns they need. The ones where TimescaleDB's continuous aggregates won by

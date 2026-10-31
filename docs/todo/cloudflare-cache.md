@@ -4,7 +4,7 @@ Deferred 2026-10-16, when the ClickHouse query cache was added instead
 ([query-cache](../decisions/query-cache.md), which has the traffic replay behind the decision).
 
 Today every API response goes through Cloudflare uncached (`cf-cache-status: DYNAMIC`): no
-`Cache-Control` header, and `Vary: Cookie`. Only the hashed static files are cached there (one
+`Cache-Control` header (`Vary: Cookie` was dropped on 2026-10-30, step 2 below). Only the hashed static files are cached there (one
 year, `immutable`, already `HIT`).
 
 ## When it becomes worth it
@@ -15,8 +15,8 @@ add value when:
 
 - traffic grows enough that repeats of the same URL from different visitors are common (the
   default dashboard view, popular contributors or countries), or
-- the 4G uplink is the bottleneck: a Cloudflare hit never crosses the tunnel, so it is immune to
-  the overnight drops seen on 2026-10-15 and saves upload bandwidth. Geo responses are 0.2-2 MB.
+- the tunnel's bandwidth is the bottleneck: a Cloudflare hit never crosses the tunnel, so it is
+  immune to tunnel drops (seen overnight on 2026-10-15) and saves upload bandwidth. Geo responses are 0.2-2 MB.
 
 ## Design
 

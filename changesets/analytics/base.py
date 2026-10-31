@@ -14,13 +14,13 @@ from datetime import date, datetime, timedelta
 from typing import Optional, Protocol, Sequence
 
 # Changesets with no imagery/language/country tag are grouped and filtered
-# under this literal name, never silently excluded (see CLAUDE.md's
-# "NULL-tag volume gets its own '(none)' bucket" section). Part of the public
+# under this literal name, never silently excluded (see
+# docs/decisions/none-bucket.md). Part of the public
 # API contract: filtering by it must match the NULL rows.
 NONE_BUCKET = '(none)'
 
 # The five public dimension names (API params, group_by/dimension values).
-# See CLAUDE.md's dimension-naming table for how they map to DB columns.
+# See docs/decisions/dimension-naming.md for how they map to DB columns.
 DIMENSIONS = ('contributor', 'editor', 'imagery', 'language', 'country')
 
 # Toplist-only dimension: exact editor version within one editor family.

@@ -29,8 +29,8 @@ class ObjectsView(TemplateView):
 
 
 class EditorsView(TemplateView):
-    """Editors page: one column per top-10 editor family for the selected range
-    (default: last year), plus an "Other editor families" column, each with its
+    """Editors page: one column per family of a fixed list (TOP_FAMILIES in editors.js, the
+    same for any range; default range: last year), plus an "Other editor families" column, each with its
     own version drill-down toplist (dimension=editor_version) and volume graph.
     Family names aren't known at render time, so the columns are built
     client-side (static/js/editors.js)."""

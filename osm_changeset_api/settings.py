@@ -231,8 +231,10 @@ SPECTACULAR_SETTINGS = {
     'TITLE': 'OSM Monitor API',
     'DESCRIPTION': (
         'Public read API for OSM changeset data ingested by osm-monitor: raw '
-        'changeset records, aggregated stats, and the poller/import job status '
-        'endpoints that back the dashboard.'
+        'changeset records, aggregated stats (time series, summaries, top-N '
+        'rankings, geo density, size distribution), object changes from the '
+        'replication diffs, and the poller\'s batch-progress endpoint. The same '
+        'endpoints are available as MCP tools at /mcp.'
     ),
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,

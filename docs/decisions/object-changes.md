@@ -152,7 +152,7 @@ features or actions); "Top Contributors Over Time" has All / Created / Modified 
 
 `object_edits` (`schema/0006_object_edits.sql`) keeps every version after the first (modifies and
 deletes; creations are ~70% of versions and left out), narrow (time, type, id, version,
-changeset, contributor), **for all time**: ~3 bytes per edit, ~1.1 GB a year, so edit statistics
+changeset, contributor), **for all time**: ~6 bytes per edit (3 at the first measurement; 610 MiB for 112.8M rows on 2026-10-29), ~2.5 GB a year at ~35M edits a month, so edit statistics
 don't stop at `object_versions`' 92 days. `poll_diffs` writes it next to `object_versions`; the
 days loaded before it existed were copied from `object_versions` (84M edits).
 

@@ -3,8 +3,8 @@
 -- (changesets/ingest/objects.py) next to object_versions, which keeps
 -- everything but only for 92 days. See docs/decisions/object-changes.md.
 --
--- ~3 bytes per edit compressed (measured: 75.6M edits, 67 days, 228 MB), so
--- ~1.1 GB a year. Most versions are creations (3.5M of 5.1M a day), which
+-- ~3 bytes per edit compressed at first (75.6M edits, 67 days, 228 MB), ~6 by
+-- 2026-10-29 (112.8M rows, 610 MiB), so ~2.5 GB a year. Most versions are creations (3.5M of 5.1M a day), which
 -- this leaves out. Ordered by time: a date range reads only its rows, and
 -- ranking objects over a week takes ~1 s. Over long ranges the cost is the
 -- grouping itself (tens of millions of distinct objects: 27 s for 67 days).

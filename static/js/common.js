@@ -1,10 +1,11 @@
-// ── Shared dashboard/editors-page helpers ───────────────────────────────────
+// ── Shared page helpers ───────────────────────────────────
 // Extracted from dashboard.js (pure extraction, no behavior change) so the
 // Editors page can reuse the same chart factories, filter/URL helpers, and
 // geo map without duplicating ~140 lines of renderGeoMap plus every chart
-// factory into a second file. Loaded before dashboard.js/editors.js — no
-// bundler in this project, so script-tag order is what enforces this
-// dependency (both page-specific files reference these as plain globals).
+// factory into a second file. Loaded before every page's own file
+// (dashboard.js, objects.js, editors.js, api_docs.js) — no bundler in this
+// project, so script-tag order is what enforces this dependency (they reference
+// these as plain globals).
 
 // ── Design tokens ────────────────────────────────────────────────────────────
 // Validated categorical palette (fixed hue order, never cycled — see the
@@ -28,7 +29,7 @@ const INK_SECONDARY = '#52514e';
 const GRID_HAIRLINE = '#e1e0d9';
 const AXIS_BASELINE = '#c3c2b7';
 
-// Guarded: if the Chart.js CDN script didn't load (network, a blocker), a
+// Guarded: if the vendored Chart.js script didn't load (network, a blocker), a
 // throw here would stop this file before the consts below it (rumReady,
 // lazyObserver), and then every widget fails, not only the charts.
 if (window.Chart) {
@@ -42,7 +43,7 @@ const MAX_SERIES = CATEGORICAL.length; // beyond this, fold into "Other" rather 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // String-sliced rather than Date-parsed — the API's date labels ("2026-09-02"
-// or "2026-09-02 0:00") aren't full ISO 8601 (no "T"), which native Date
+// or "2026-09-02 00:00") aren't full ISO 8601 (no "T"), which native Date
 // parsing handles inconsistently across browsers. Only used for axis tick
 // display; tooltips still show the original full label.
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

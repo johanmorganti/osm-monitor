@@ -35,7 +35,7 @@ index: change both together.
   not worth changing. Moving to `lowerUTF8` would mean changing the index expression with it and
   rematerializing.
 - **`/api/changesets/` now matches the same way** (2026-10-15): it used `user = {user:String}`
-  (exact, and not using the index); `ChangesetList` in backend.py now uses
+  (exact, and not using the index); `_ChangesetPage` in backend.py now uses
   `lower(user) = lower(…)` like every other endpoint, and its `user` parameter is documented as
   case-insensitive. (Its `editor` filter is still exact, unlike the `editor` filter elsewhere.)
 - **Case-sensitive matching would not be faster**: what costs time is how many granules hold the

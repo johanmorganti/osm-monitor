@@ -10,7 +10,7 @@ history.
 
 - [Contributor queries: contributor-ordered data](docs/todo/contributor-queries.md) — the unfiltered contributor ranking over full history still takes ~19 s (a contributor-ordered rollup or projection, keyed on `user_id`; check projections under `FINAL` first).
 - [Datadog: ingestion-drop monitor](docs/todo/ingestion-monitor.md) — the "Low number of changeset coming" monitor watches a retired service (`osm-to-datadog`) and is stuck in Alert; repoint it at the poller's `Processed sequence` logs, in the Datadog UI.
-- [API: HTTP caching at Cloudflare](docs/todo/cloudflare-cache.md) — API responses pass through Cloudflare uncached (`DYNAMIC`, `Vary: Cookie`); cache ranges ending 2+ days ago once traffic or the 4G uplink makes it worth it (ClickHouse's query cache covers repeats for now).
+- [API: HTTP caching at Cloudflare](docs/todo/cloudflare-cache.md) — API responses pass through Cloudflare uncached (`DYNAMIC`); cache ranges ending 2+ days ago once traffic or the tunnel's bandwidth makes it worth it (ClickHouse's query cache covers repeats for now).
 - [Favicon](docs/todo/favicon.md) — the site has none; needs a design, then the icon files and a `<link rel="icon">` in the page templates.
 
 ## Planned work

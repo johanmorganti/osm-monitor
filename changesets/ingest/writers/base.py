@@ -7,9 +7,10 @@ stores them its own way, with these semantics:
 - Upsert keyed by changeset_id: a changeset not stored yet is inserted; one
   already stored is replaced if its changes_count grew (a changeset can keep
   growing while open, up to 24h) or if it closed with the same count (the
-  stored copy is open, the incoming one closed), and left alone otherwise
-  (e.g. it resurfaced in the replication feed because someone commented on
-  it).
+  stored copy is open, the incoming one closed). A record with a smaller
+  count never replaces one; at an equal count the newest record wins, so a
+  changeset that resurfaced in the replication feed because someone commented
+  on it takes the new row (the aggregates do not change).
 - Idempotent: writing the same records twice leaves the same data, so a
   batch that failed on one writer can simply be retried on all of them.
 """

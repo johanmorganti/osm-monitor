@@ -22,7 +22,7 @@ fi
 if [ "$#" -eq 0 ]; then
     # gthread, not plain sync workers: this workload is almost entirely
     # I/O-bound (waiting on the database), and a single dashboard page load
-    # fires ~10 parallel API calls (dashboard.js's Promise.all) — with only
+    # fires ~10 parallel API calls (the page's widgets, loaded lazily by loadWidget) — with only
     # 2 sync workers, one page load alone can saturate both and queue every
     # other request behind it (observed: a trivial ~50ms query taking 38-158s
     # wall-clock under concurrent dashboard load, all queueing, not query

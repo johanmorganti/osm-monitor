@@ -5,7 +5,7 @@ instantly and reads only `{{ request.GET.xxx }}` for filter-input defaults. All 
 initialisation lives in `static/js/dashboard.js`.
 
 **Contract:** `dashboard.js` fetches from `/api/changesets/timeseries/`, `/summary/`, and
-`/toplist/` (in parallel, several calls — one per chart/KPI group; see the file's `Promise.all`)
+`/toplist/` (in parallel, several calls — one per chart/KPI group; see `loadWidget` in `common.js`)
 and renders the JSON responses into the KPI numbers and charts. Those endpoints are standalone,
 public JSON APIs (same query params the dashboard UI uses: `start_date`, `end_date`,
 `contributor`, `editor`, `imagery`, plus `group_by`/`dimension`/`metric` depending on the

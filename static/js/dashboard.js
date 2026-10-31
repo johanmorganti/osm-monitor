@@ -2,7 +2,7 @@
 // Generic chart factories / apiUrl/fetchJson/loadWidget / renderGeoMap /
 // autocomplete helpers now live in common.js (loaded before this file) —
 // this file only wires this page's specific DOM ids to specific API calls.
-// See CLAUDE.md's "Template/JS separation" architecture note.
+// See docs/decisions/template-js-separation.md.
 
 // Drill-down panel (openDrilldown, common.js): what's behind a point of a
 // changesets-over-time chart, counted in changesets.

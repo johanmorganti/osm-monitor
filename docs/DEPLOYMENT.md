@@ -99,7 +99,9 @@ log/trace correlation, ClickHouse Database Monitoring) is an optional overlay,
 `docker-compose.datadog.yml`; without it the image has no `ddtrace` and nothing is traced. The
 Datadog agent is not part of this stack: run it on the host with its own configuration (API key,
 site, log collection). The overlay's header lists what it needs: APM and DogStatsD on unix
-sockets in a host directory, and the docker socket for autodiscovery. To enable the overlay, set
+sockets in a host directory, the docker socket for autodiscovery, and the agent joining the
+`datadog` network (`networks: {datadog: {name: datadog}}` in the agent's compose file) that
+ClickHouse is on, which the database check connects through. To enable the overlay, set
 in `.env`:
 
 ```bash
@@ -137,6 +139,7 @@ The poller's first run defaults to a 365-day backfill of minutely sequences, whi
 once the full dump is imported. Point it at the dump's date instead:
 
 ```bash
+docker compose stop poller   # deploy.sh already started it; a running poller would overwrite --reset
 docker compose run --rm --no-deps web python manage.py poll_sequences --reset --backfill-days <days since the dump + 1>
 docker compose up -d poller
 ```

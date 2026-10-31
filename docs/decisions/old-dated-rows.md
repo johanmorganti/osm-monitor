@@ -31,8 +31,9 @@ not be widened to "cover" those old rows:
 - The only aggregate-relevant field that can change after insert is `changes_count`, and that can
   only grow while the changeset is still *open* — bounded by OSM's 24h max open time / 1h idle
   timeout. 7 days is a generous margin over 24h, not an arbitrary guess.
-- A comment-only reappearance of a changeset we already have writes nothing at all:
-  `import_changeset_batch` (`osm_fetcher.py`) skips it unless `changes_count` actually grew.
+- A comment-only reappearance of a changeset we already have is inserted again with the same
+  `changes_count`; the stored row takes the newest record at an equal count (ClickHouse writer, see
+  the note at the end of this file). It changes no aggregate.
 - Widening the window would force a rescan of months of already-final buckets every 30-60 minutes,
   to correct nothing.
 
@@ -48,3 +49,9 @@ up, so it isn't a reason to widen the refresh window or to add coverage reportin
 window and need an explicit refresh over the imported range: `import_from_dump` does it itself at
 the end, and `refresh_caggs <start> <end>` covers runs with `--skip-cagg-refresh` (parallel
 `--byte-range` workers) or any other bulk write.
+
+**Note (2026-10-31): a reappearance replaces the row.** Earlier text here said a comment-only
+reappearance writes nothing. With ClickHouse as the only writer it does not: the writer inserts every
+record and, at an equal `changes_count`, the last insert wins, so the stored row takes the newest
+record (new comments count, tags). This is why insert order matters, and it is harmless to the
+aggregates, which only depend on `changes_count`, the dates and the dimensions.

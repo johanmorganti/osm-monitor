@@ -13,7 +13,7 @@ hashed against a user table) and `django.contrib.admin` is not installed, so the
 
 - `/` → `DashboardView` (Overview: map, changeset activity, rankings; a click on a changesets-over-time point or bar opens the drill-down panel, counted in changesets)
 - `/objects/` → `ObjectsView` (objects changed, changeset sizes, largest changesets, rankings by objects incl. hashtags, top contributors over time; a click on an objects-over-time point opens a drill-down panel for that hour or day)
-- `/editors/` → `EditorsView` (one column per top-10 editor family for the selected range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph; a Changesets / Objects changed switch, `metric` in the page URL, sets what those count)
+- `/editors/` → `EditorsView` (one column per family of a fixed list (`TOP_FAMILIES` in `editors.js`), the same for any range — default last year — plus an "Other editor families" column; each column has its own version drill-down toplist via `dimension=editor_version` and its own volume-over-time graph; a Changesets / Objects changed switch, `metric` in the page URL, sets what those count)
 - `/changeset_import/` → `APILandingPageView` (poller status page — live catch-up batch progress)
 - `/api/changesets/` → `ChangesetQueryView` (raw changeset records, filterable; defaults to the last 24 hours, no unfiltered "everything" mode)
 - `/api/changesets/timeseries/` → `TimeseriesView` (volume over time, optionally grouped, `metric=count|objects`; with `metric=objects` also `group_by=action|object_type|feature` and the `action`/`object_type`/`feature` filters, from the object tables)
@@ -137,7 +137,8 @@ the `docker-compose.datadog.yml` override adds everything below, enabled by sett
   both pollers reach it over unix sockets in a host directory mounted into them (`DD_SOCKET_DIR`,
   default `/var/run/datadog`: `apm.socket`, `dsd.socket`); it discovers containers and tails
   their logs via the docker socket, and picks up the ClickHouse check from the `clickhouse`
-  service's `com.datadoghq.ad.checks` label, which the override adds.
+  service's `com.datadoghq.ad.checks` label, which the override adds. That check connects to ClickHouse on the shared `datadog` network, so the agent's own
+  compose project must join it (`networks: {datadog: {name: datadog}}`).
 - **APM + structured logs**: the override builds the images with `ddtrace`
   (`requirements-datadog.txt`) and enables tracing; `entrypoint.sh` then wraps `web` (gunicorn) and
   the pollers in `ddtrace-run`; `osm_changeset_api/logging_json.py` emits structured JSON logs with
@@ -146,8 +147,8 @@ the `docker-compose.datadog.yml` override adds everything below, enabled by sett
 - **Database Monitoring**: ClickHouse, through the `datadog` user `clickhouse_migrate` creates from
   `DD_CLICKHOUSE_PASSWORD` (read access to `system.*`, plus the app database so it can `EXPLAIN`
   the queries it captures).
-- **Resource limits**: every service has a `mem_limit` (ClickHouse sizes its own memory budget
-  from its own), so one heavy query or import can't starve everything else running alongside it.
+- **Resource limits**: `clickhouse`, `web` and both pollers have a `mem_limit` (ClickHouse sizes its
+  own memory budget from its own), so one heavy query or import can't starve everything else running alongside it.
 
 ## Deployment
 
@@ -158,14 +159,15 @@ the `docker-compose.datadog.yml` override adds everything below, enabled by sett
 - `migrate`: one-shot, runs before the others start: Django migrations (SQLite),
   `clickhouse_migrate` (the ClickHouse schema and refreshable rollups). A separate service so two
   containers never run migrations concurrently.
-- `web`: gunicorn, 2 `gthread` workers × 8 threads (`entrypoint.sh` has the measurement behind
-  that number), behind ClickHouse's 30 s query cap.
+- `web`: gunicorn, `GUNICORN_WORKERS` `gthread` workers (4 in `docker-compose.yml`) × 8 threads
+  (`entrypoint.sh` has the measurement behind the thread count), behind ClickHouse's 30 s query cap.
+  Workers are recycled (`--max-requests`), and the compose healthcheck asks `/api/batch-progress/`.
 - `poller`: `poll_sequences`, the changeset feed (plus the hourly re-fetch of changesets left
   open, `ingest/reconcile.py`).
 - `diff-poller`: `poll_diffs`, the minutely/daily osmChange diffs into the object tables.
 
 `docker-compose.datadog.yml` optionally adds Datadog tracing (see Observability). `deploy.sh`
-checks `.env`, stamps the build with the current git commit (`GIT_VERSION`, Datadog's
-`DD_VERSION` tag when enabled), then runs `docker compose build && up -d --wait` and checks the services stay up;
+checks `.env` and a clean tree, stamps the build with the current git commit (`GIT_VERSION`, Datadog's
+`DD_VERSION` tag when enabled), builds, runs the unit tests in the new image, then `up -d --wait` and checks the services stay up;
 static files are collected in the image build, and `entrypoint.sh` only starts gunicorn (or the given
 command). Running it: `DEPLOYMENT.md`.

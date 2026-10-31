@@ -21,6 +21,8 @@ Open Database License (ODbL). This applies to everything the site and its API/MC
   providers/countries, objects changed, and a changeset density map, with date-range and
   per-dimension filters. The page shell renders instantly and fetches its data client-side from
   the API below.
+- **Objects page** — objects changed over time by action, type and feature (from the replication
+  diffs), the most edited objects of the week, and a drill-down into any point.
 - **Editors page** — one column per top editor family, each with its own version breakdown and
   volume-over-time graph.
 - **Public REST API** — filterable raw changeset records, plus a small set of aggregate
@@ -60,10 +62,9 @@ which objects:
 | 189905881 | 2026-10-03 01:14:04 | mapper_a | StreetComplete 63.4 | 2 | Specify whether there are cycleways | AddCycleway | JP | xn0mk3 |
 | 189905882 | 2026-10-03 01:14:06 | mapper_a | StreetComplete 63.4 | 2 | Specify whether roads have lane markings | AddLaneMarkings | JP | xn0mk3 |
 
-**Since 2026-10-03, with the 92 days before backfilled: the objects themselves**, from the
-replication osmChange diffs (`poll_diffs`; see
-[`docs/decisions/object-changes.md`](docs/decisions/object-changes.md)). Not shown on the
-dashboard yet. The diff for that minute contains:
+**The objects themselves**, from the replication osmChange diffs (`poll_diffs`; see
+[`docs/decisions/object-changes.md`](docs/decisions/object-changes.md)), shown on the Objects
+page. The diff for that minute contains:
 
 ```xml
 <modify>
@@ -107,7 +108,7 @@ It becomes two kinds of rows:
   also in the window.
 
 - **Edits to existing objects, kept for all time** (`object_edits`): just time, object, version,
-  changeset and contributor for every version after the first, ~3 bytes each. It feeds the
+  changeset and contributor for every version after the first, ~6 bytes each. It feeds the
   Objects page's "Most Edited Objects last week" (`/api/objects/most-edited/`).
 
 ## Requirements
@@ -163,8 +164,10 @@ All the aggregate endpoints share the same filters (`start_date`, `end_date`, `c
 ```
 changesets/
   models.py                      # Poller state (SequenceState, DiffState), in SQLite
-  views.py                       # HTML page shells (Overview, Objects, Editors, poller status)
+  views.py                       # HTML page shells (Overview, Objects, Editors, API / MCP, poller status)
   api/                           # Public JSON API: endpoints, parameter parsing, OpenAPI annotations
+  mcp/                           # MCP server at /mcp: one tool per API endpoint
+  tests/                         # Unit tests (no ClickHouse, no network); deploy.sh runs them
   analytics/                     # Analytics backend interface + the ClickHouse implementation
   analytics/clickhouse/schema/   # ClickHouse tables and refreshable rollups (applied by clickhouse_migrate)
   ingest/locate.py               # geohash + country for each changeset, computed at ingest
@@ -190,10 +193,12 @@ changesets/
     dashboard.html               # Overview page HTML shell only — no server-rendered data
     objects.html                 # Objects page HTML shell only
     editors.html                 # Editors page HTML shell only
+    api_docs.html                # API / MCP page (Swagger UI)
+    _drilldown_panel.html        # Drill-down panel shared by Overview and Objects
     changesets.html              # Poller status page (/changeset_import/)
 static/js/
   common.js                      # Shared chart/map/autocomplete helpers
-  dashboard.js, objects.js, editors.js  # Per-page widget wiring; fetch from the API above
+  dashboard.js, objects.js, editors.js, api_docs.js  # Per-page widget wiring; fetch from the API above
 osm_changeset_api/
   urls.py, settings.py, logging_json.py
 docs/
