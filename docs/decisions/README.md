@@ -12,6 +12,7 @@ from them are summarized in [`../../CLAUDE.md`](../../CLAUDE.md); how the system
 - [NULL tags get a "(none)" bucket](none-bucket.md): untagged volume is never silently excluded.
 - [MCP server](mcp-server.md): each tool calls its REST endpoint and is described by its OpenAPI annotations; stateless JSON over POST at `/mcp`, open like the API.
 - [Front-end code served from the site](self-hosted-assets.md): Tailwind compiled at build, libraries in `static/vendor/`, no scripts from CDNs.
+- [No Content-Security-Policy](no-csp.md): considered and declined (2026-10-31); reopen if the site gets logins or user content.
 
 ## Analytics and storage
 
