@@ -65,3 +65,12 @@ backend; how a backend gets the numbers stays inside that backend. The refactor 
 this split was verified by snapshotting 46 fixed API calls before and after (all byte-identical)
 and diffing the OpenAPI schema (identical). Do the same for any change meant to be
 behavior-neutral.
+
+**Parity covers the rollup/raw boundary and objects (2026-10-31).** `check_backend_parity` used to end
+every range on 2026-09-30, while the rollups reach the live edge, so in every hybrid query the raw
+half was empty and a split off by a day, or a day counted twice, could not show. Now half of the cases
+that read a rollup (`--split-share`) get the rollup watermarks forced to a random day inside the range
+(`forced_watermark`; the rollups hold the same numbers beyond it, so the answer must not change), and a
+new `objects` operation compares objects-changed timeseries and toplists, with changeset and object
+filters, over 2 to 5 day windows inside the object rollup. Checked by breaking the split by one day on
+purpose: 12 of 20 cases then differ. Clean on 120 cases (seed 11).

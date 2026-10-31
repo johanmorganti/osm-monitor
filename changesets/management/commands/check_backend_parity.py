@@ -10,16 +10,26 @@ without its rollups (clickhouse_raw) against ClickHouse with them: the proof
 that a rollup answers exactly like the raw table.
 
     python manage.py check_backend_parity --a clickhouse_raw --b clickhouse --cases 200
+
+Two things keep it honest about the rollups. Half of the cases that read a
+rollup get its watermark forced to a random day inside their range
+(--split-share), so the rollup half and the raw half of a hybrid query are
+both exercised and a split off by a day, or counted twice, shows up. And the
+`objects` operation asks for objects changed (timeseries and toplists, with
+changeset and object filters) over short windows inside the object rollup,
+which the other operations never touch.
 """
 import json
 import random
 import time
 from collections import Counter
+from contextlib import contextmanager, nullcontext
 from datetime import date, timedelta
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
-from changesets.analytics import DIMENSIONS, EDITOR_VERSION, NONE_BUCKET, ChangesetQuery, Filters, get_backend
+from changesets.analytics import DIMENSIONS, EDITOR_VERSION, NONE_BUCKET, OBJECT_DIMENSIONS, ChangesetQuery, Filters, get_backend
+from changesets.analytics.clickhouse.backend import ROLLUP_WATERMARKS
 from changesets.api.params import pick_interval
 from changesets.geo import GEOHASH_PREFIX_LENGTH, geohash_precision_for_bbox
 
@@ -32,6 +42,34 @@ BBOXES = {  # (min_lon, min_lat, max_lon, max_lat)
     'nyc': (-74.1, 40.6, -73.8, 40.9), 'lagos': (3.2, 6.4, 3.6, 6.7), 'europe': (-10.0, 35.0, 30.0, 60.0),
 }
 NONE_DIMENSIONS = {'imagery', 'language', 'country'}
+OBJECT_DAYS = (2, 5)  # window length of an `objects` case; the raw side reads every object in it
+
+
+@contextmanager
+def forced_watermark(backend, day):
+    """Make every rollup of `backend` look refreshed up to (not including)
+    `day`, so a query over a range containing it splits there. Rollups hold
+    the same numbers beyond it, so the answer must not change."""
+    cache = backend._watermark_cache
+    saved = {table: cache.get(table) for table in ROLLUP_WATERMARKS}
+    for table in ROLLUP_WATERMARKS:
+        cache[table] = (time.monotonic() + 1e9, day)
+    try:
+        yield
+    finally:
+        for table, value in saved.items():
+            if value is None:
+                cache.pop(table, None)
+            else:
+                cache[table] = value
+
+
+def split_inside(rng, f):
+    """A day strictly inside f's whole-day range (None if it is a single day)."""
+    days = (f.end_exclusive - date.fromisoformat(f.start_date)).days
+    if days < 2:
+        return None
+    return date.fromisoformat(f.start_date) + timedelta(days=rng.randint(1, days - 1))
 
 
 def date_range(rng, kind):
@@ -152,6 +190,8 @@ class Command(BaseCommand):
         parser.add_argument('--cases', type=int, default=200)
         parser.add_argument('--seed', type=int, default=1)
         parser.add_argument('--json', help='write every case and result here')
+        parser.add_argument('--split-share', type=float, default=0.5,
+                            help='share of rollup-readable cases whose rollup watermark is forced inside the range')
         parser.add_argument('--ops', help='comma-separated operations to test (default: all), e.g. geo')
 
     def handle(self, *args, **options):
@@ -171,9 +211,23 @@ class Command(BaseCommand):
             dims = rng.sample(DIMENSIONS, rng.randint(0, max_filters))
             return with_filters(f, **{d: rng.choice(values[d]) for d in dims}), dims
 
-        weights = {'summary': 3, 'timeseries': 4, 'toplist': 5, 'geo': 3, 'changesets': 2, 'autocomplete': 1}
+        # Object cases need a window the object rollup covers; without one skip them.
+        coverage, rollup_start, rollup_end = b.object_coverage(), b._object_rollup_start(), b._watermark('object_daily_rollup')
+        object_lo = max(coverage, rollup_start) if coverage and rollup_start else None
+        object_hi = rollup_end - timedelta(days=1) if rollup_end else None
+        have_objects = bool(object_lo and object_hi and (object_hi - object_lo).days >= OBJECT_DAYS[1])
+        if have_objects:
+            window = Filters(object_lo.isoformat(), object_hi.isoformat())
+            object_values = {d: [r['name'] for r in b.toplist(window, d, 'objects', 8) if r['name'] != NONE_BUCKET]
+                             for d in ('contributor', 'editor', 'country', *OBJECT_DIMENSIONS)}
+        weights = {'summary': 3, 'timeseries': 4, 'toplist': 5, 'geo': 3, 'changesets': 2, 'autocomplete': 1,
+                   'objects': 3 if have_objects else 0}
         if options['ops']:
             weights = {op: weights[op] for op in options['ops'].split(',')}
+        if not have_objects:
+            weights.pop('objects', None)
+            if not weights:
+                raise CommandError('no object rollup window to test')
         cases = []
         for i in range(options['cases']):
             op = rng.choices(list(weights), weights=list(weights.values()))[0]
@@ -203,6 +257,21 @@ class Command(BaseCommand):
                                           'bounds': (min_lat, max_lat, min_lon, max_lon), 'where': name}))
                 else:
                     cases.append((op, f, {'prefix_len': GEOHASH_PREFIX_LENGTH['coarse'], 'bounds': None}))
+            elif op == 'objects':
+                length = rng.randint(*OBJECT_DAYS)
+                end = object_hi - timedelta(days=rng.randrange(0, (object_hi - object_lo).days - length + 1))
+                start = end - timedelta(days=length - 1)
+                picked = {d: rng.choice(object_values[d]) for d in rng.sample(['contributor', 'editor', 'country'], rng.randint(0, 1))
+                          if object_values[d]}
+                picked.update({d: rng.choice(object_values[d]) for d in rng.sample(list(OBJECT_DIMENSIONS), rng.randint(0, 1))
+                               if object_values[d]})
+                f = Filters(start.isoformat(), end.isoformat(), **picked)
+                if rng.random() < 0.5:
+                    group_by = rng.choice([None, 'contributor', 'editor', *OBJECT_DIMENSIONS])
+                    cases.append((op, f, {'kind': 'timeseries', 'group_by': group_by, 'interval': 'day', 'metric': 'objects'}))
+                else:
+                    cases.append((op, f, {'kind': 'toplist', 'dimension': rng.choice(['contributor', 'editor', 'country', *OBJECT_DIMENSIONS]),
+                                          'metric': 'objects', 'limit': rng.choice([10, 20])}))
             elif op == 'changesets':
                 f = date_range(rng, 'week')
                 kw = rng.choice([{}, {'editor': rng.choice(values['editor'])}, {'user': rng.choice(values['contributor'])},
@@ -213,11 +282,19 @@ class Command(BaseCommand):
             else:
                 cases.append((op, None, {'field': rng.choice(DIMENSIONS), 'q': rng.choice(['jo', 'ma', 'de', 'st', 'fr', 'e'])}))
 
+        for op, f, kw in cases:  # force a rollup/raw split inside some of the ranges that read a rollup
+            if op in ('summary', 'timeseries', 'toplist', 'geo', 'objects') and rng.random() < options['split_share']:
+                if op == 'timeseries' and kw['interval'] != 'day':
+                    continue
+                split = split_inside(rng, f)
+                if split:
+                    kw['split'] = split
+
         def run(backend, op, f, kw):
             if op == 'summary':
                 return backend.summary(f)
             if op == 'timeseries':
-                return backend.timeseries(f, kw['group_by'], kw['interval'])
+                return backend.timeseries(f, kw['group_by'], kw['interval'], kw.get('metric', 'count'))
             if op == 'toplist':
                 return backend.toplist(f, kw['dimension'], kw['metric'], kw['limit'])
             if op == 'geo':
@@ -230,10 +307,12 @@ class Command(BaseCommand):
         for n, (op, f, kw) in enumerate(cases, 1):
             record = {'op': op, 'filters': getattr(f, '__dict__', None) and {k: v for k, v in vars(f).items() if v},
                       **{k: v for k, v in kw.items()}}
+            real = kw.get('kind', op)
             try:
-                t = time.perf_counter(); ra = run(a, op, f, kw); ta = time.perf_counter() - t
-                t = time.perf_counter(); rb = run(b, op, f, kw); tb = time.perf_counter() - t
-                same, why = compare(op, ra, rb)
+                t = time.perf_counter(); ra = run(a, real, f, kw); ta = time.perf_counter() - t
+                with forced_watermark(b, kw['split']) if 'split' in kw else nullcontext():
+                    t = time.perf_counter(); rb = run(b, real, f, kw); tb = time.perf_counter() - t
+                same, why = compare(real, ra, rb)
                 status = ('autocomplete-' if op == 'autocomplete' else '') + ('same' if same else 'DIFF')
                 if not same and involves_country(f, kw):
                     status = 'DIFF-country'
