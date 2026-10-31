@@ -35,10 +35,19 @@ def resolve_filters(request, objects=False):
     end_date = params.get('end_date')
     start_time = end_time = None
     if not start_date or not end_date:
-        today = timezone.now().date()
-        end_date = today.strftime('%Y-%m-%d')
-        start_date = (today - timedelta(days=7)).strftime('%Y-%m-%d')
-    elif len(start_date) <= 10 and len(end_date) <= 10:
+        # Each missing bound is defaulted on its own: end to today, start to
+        # 7 days before the end (as documented), whichever form the end has.
+        if not end_date:
+            end_date = timezone.now().date().strftime('%Y-%m-%d')
+        if not start_date:
+            if len(end_date) <= 10:
+                try:
+                    start_date = (datetime.strptime(end_date, '%Y-%m-%d') - timedelta(days=7)).strftime('%Y-%m-%d')
+                except ValueError:
+                    raise BadParameter('end_date must be YYYY-MM-DD or an ISO 8601 timestamp, e.g. 2026-10-09T11:00:00Z')
+            else:
+                start_date = (parse_bound(end_date, 'end_date', end=True) - timedelta(days=7)).isoformat()
+    if len(start_date) <= 10 and len(end_date) <= 10:
         parse_bound(start_date, 'start_date', end=False, day_only=True)
         parse_bound(end_date, 'end_date', end=True, day_only=True)
     else:
@@ -164,3 +173,13 @@ def fill_buckets(data, f, interval, first_day=None, now=None):
                       for s in data['series']]
     data['dates'] = dates
     return data
+
+
+def param_with_alias(params, preferred, legacy):
+    """A parameter that has an older name too: the value of either, a
+    BadParameter (400) if both are given and differ (case-insensitively, as
+    both are matched)."""
+    new, old = params.get(preferred) or '', params.get(legacy) or ''
+    if new and old and new.lower() != old.lower():
+        raise BadParameter(f'{preferred} and {legacy} are the same parameter; give one of them')
+    return new or old

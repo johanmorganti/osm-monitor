@@ -4,7 +4,7 @@ from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
-from changesets.api.params import BadParameter, parse_bbox, parse_bound, pick_interval, resolve_filters, fill_buckets
+from changesets.api.params import BadParameter, parse_bbox, parse_bound, pick_interval, resolve_filters, fill_buckets, param_with_alias
 from changesets.analytics import Filters
 from changesets.api.views import ChangesetPagination
 
@@ -27,8 +27,7 @@ class ResolveFiltersTests(SimpleTestCase):
     def test_missing_bound_defaults_to_last_week(self):
         f = resolve_filters(request())
         self.assertEqual((f.end_date > f.start_date), True)
-        # A lone bound is replaced too (documented defaults say otherwise: review item 6).
-        self.assertEqual(resolve_filters(request(start_date='2026-10-01')).start_date, f.start_date)
+        # A lone bound is kept and the other defaulted (LoneBoundTests).
 
     def test_timestamps_give_an_exact_window(self):
         f = resolve_filters(request(start_date='2026-10-09T11:00:00Z', end_date='2026-10-09T12:00:00Z'))
@@ -147,3 +146,34 @@ class FillBucketsTests(SimpleTestCase):
                 'series': [{'name': 'a', 'counts': [1, 2]}, {'name': 'b', 'counts': [0, 9]}]}
         fill_buckets(data, f, 'day', now=self.NOW)
         self.assertEqual([s['counts'] for s in data['series']], [[1, 0, 2], [0, 0, 9]])
+
+
+class LoneBoundTests(SimpleTestCase):
+    def test_a_lone_end_keeps_the_end_and_starts_a_week_before(self):
+        f = resolve_filters(request(end_date='2026-01-31'))
+        self.assertEqual((f.start_date, f.end_date), ('2026-01-24', '2026-01-31'))
+
+    def test_a_lone_start_keeps_the_start_and_ends_today(self):
+        f = resolve_filters(request(start_date='2026-10-01'))
+        self.assertEqual(f.start_date, '2026-10-01')
+        self.assertGreater(f.end_date, '2026-10-01')
+
+    def test_a_lone_timestamp_end_defaults_the_start_as_a_timestamp(self):
+        f = resolve_filters(request(end_date='2026-10-09T11:00:00Z'))
+        self.assertEqual(f.end_time, datetime(2026, 10, 9, 11))
+        self.assertEqual(f.start_time, datetime(2026, 10, 2, 11))
+
+    def test_a_bad_lone_end_is_a_400(self):
+        with self.assertRaises(BadParameter):
+            resolve_filters(request(end_date='2026-13-45'))
+
+
+class ParamAliasTests(SimpleTestCase):
+    def test_either_name_works_and_conflicts_are_rejected(self):
+        get = lambda **q: param_with_alias(request(**q).query_params, 'contributor', 'user')
+        self.assertEqual(get(contributor='Ann'), 'Ann')
+        self.assertEqual(get(user='Ann'), 'Ann')
+        self.assertEqual(get(contributor='Ann', user='ann'), 'Ann')
+        self.assertEqual(get(), '')
+        with self.assertRaises(BadParameter):
+            get(contributor='Ann', user='Bob')

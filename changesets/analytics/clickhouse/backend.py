@@ -771,9 +771,9 @@ class _ChangesetPage:
             # and what idx_user_lower indexes (docs/decisions/contributor-filter.md).
             self.query.add('lower(user) = lower({user:String})', user=q.user)
         if q.editor:
-            self.query.add('created_by_family = {editor:String}', editor=q.editor)
+            self.query.add('lower(created_by_family) = lower({editor:String})', editor=q.editor)
         if q.hashtag:
-            self.query.add('has(hashtags, {hashtag:String})', hashtag=q.hashtag)
+            self.query.add('has(arrayMap(x -> lower(x), hashtags), lower({hashtag:String}))', hashtag=q.hashtag)
         if q.imagery_raw:
             self.query.add('has(imagery_used, {imagery_raw:String})', imagery_raw=q.imagery_raw)
         if q.imagery_family:

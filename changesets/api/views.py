@@ -15,7 +15,7 @@ from ..analytics import DIMENSIONS, EDITOR_VERSION, HASHTAG, OBJECT_DIMENSIONS, 
 from ..geo import GEOHASH_PREFIX_LENGTH, geohash_cell_size_degrees, geohash_precision_for_bbox
 from ..models import SequenceState
 from ..serializers import ChangesetSerializer
-from .params import BadParameter, resolve_filters, pick_interval, parse_bbox, parse_bound, fill_buckets
+from .params import BadParameter, resolve_filters, pick_interval, parse_bbox, parse_bound, fill_buckets, param_with_alias
 from .schema import DIMENSION_FILTER_PARAMS, FILTER_PARAMS, OBJECT_FILTER_PARAMS, TIMEOUT_RESPONSE
 from .sizes import distribution
 
@@ -65,11 +65,13 @@ class ChangesetQueryView(APIView):
         parameters=[
             OpenApiParameter('start_date', OpenApiTypes.STR, description='Only changesets created on/after this day (YYYY-MM-DD) or timestamp (ISO 8601, UTC unless an offset is given). Defaults to 24 hours before now.'),
             OpenApiParameter('end_date', OpenApiTypes.STR, description='Only changesets created on/before this day (YYYY-MM-DD, the whole day included) or before this timestamp (excluded). Defaults to now.'),
-            OpenApiParameter('user', OpenApiTypes.STR, description='OSM username (case-insensitive).'),
-            OpenApiParameter('editor', OpenApiTypes.STR, description='Exact editor family (e.g. "StreetComplete", "iD").'),
-            OpenApiParameter('hashtag', OpenApiTypes.STR, description='Hashtag the changeset must include (from its #hashtags tag).'),
+            OpenApiParameter('contributor', OpenApiTypes.STR, description='OSM username (case-insensitive). Same name as on the other endpoints; `user` is the older name for it.'),
+            OpenApiParameter('user', OpenApiTypes.STR, deprecated=True, description='Older name for `contributor`. Giving both with different values is a 400.'),
+            OpenApiParameter('editor', OpenApiTypes.STR, description='Editor family (case-insensitive, e.g. "StreetComplete", "iD").'),
+            OpenApiParameter('hashtag', OpenApiTypes.STR, description='Hashtag the changeset must include (case-insensitive, a leading # is ignored).'),
             OpenApiParameter('imagery_raw', OpenApiTypes.STR, description='Exact raw imagery string as found in the changeset\'s imagery_used tag.'),
-            OpenApiParameter('imagery_family', OpenApiTypes.STR, description='Normalised imagery family (case-insensitive), e.g. "Bing".'),
+            OpenApiParameter('imagery', OpenApiTypes.STR, description='Normalised imagery family (case-insensitive), e.g. "Bing". Same name as on the other endpoints; `imagery_family` is the older name for it.'),
+            OpenApiParameter('imagery_family', OpenApiTypes.STR, deprecated=True, description='Older name for `imagery`. Giving both with different values is a 400.'),
             OpenApiParameter('bbox', OpenApiTypes.STR, description='Bounding box filter as "min_lon,min_lat,max_lon,max_lat".'),
             OpenApiParameter('page', OpenApiTypes.INT, description='Page number. A page may start at most 10000 records in (page_size x (page - 1) < 10000): 400 beyond, narrow the date range instead.'),
             OpenApiParameter('page_size', OpenApiTypes.INT, description='Results per page (default 100, max 1000).'),
@@ -97,8 +99,9 @@ class ChangesetQueryView(APIView):
 
         query = ChangesetQuery(
             start=start_dt, end_exclusive=end_dt,
-            user=params.get('user') or '', editor=params.get('editor') or '', hashtag=params.get('hashtag') or '',
-            imagery_raw=params.get('imagery_raw') or '', imagery_family=params.get('imagery_family') or '',
+            user=param_with_alias(params, 'contributor', 'user'), editor=params.get('editor') or '',
+            hashtag=(params.get('hashtag') or '').lstrip('#'),
+            imagery_raw=params.get('imagery_raw') or '', imagery_family=param_with_alias(params, 'imagery', 'imagery_family'),
             bbox=bbox,
         )
         paginator = ChangesetPagination()
