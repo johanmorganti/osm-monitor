@@ -26,6 +26,17 @@ class Command(BaseCommand):
                     client.command(statement)
             self.stdout.write(f'applied {path.name}')
 
+        # The web service's login: it only reads, so it can only SELECT. A bug or a
+        # compromise there can then not change or drop data.
+        web_password = os.environ.get('CLICKHOUSE_WEB_PASSWORD')
+        if web_password:
+            web_user = os.environ.get('CLICKHOUSE_WEB_USER', 'osm_monitor_web')
+            quoted = "'" + web_password.replace('\\', '\\\\').replace("'", "\\'") + "'"
+            client.command(f'CREATE USER IF NOT EXISTS {web_user} IDENTIFIED BY {quoted}')
+            client.command(f'ALTER USER {web_user} IDENTIFIED BY {quoted}')
+            client.command(f"GRANT SELECT ON {settings.CLICKHOUSE['database']}.* TO {web_user}")
+            self.stdout.write(f'{web_user} read-only user ready')
+
         # Least-privilege monitoring user for the Datadog ClickHouse check + DBM
         # (system tables only), when Datadog is configured.
         password = os.environ.get('DD_CLICKHOUSE_PASSWORD')

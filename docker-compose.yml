@@ -78,6 +78,8 @@ services:
       # vCPUs on the 8 vCPU host. ~2g covers 4 workers' Django footprint
       # with headroom (was 2 workers in 512m).
       GUNICORN_WORKERS: "4"
+      # Reads ClickHouse as the SELECT-only user (CLICKHOUSE_WEB_PASSWORD in .env).
+      CLICKHOUSE_READ_ONLY: "1"
     mem_limit: 2g
     # An answer from the app itself (SQLite only, so a ClickHouse restart doesn't
     # fail it); deploy.sh waits for it. Host and proto headers: ALLOWED_HOSTS, and

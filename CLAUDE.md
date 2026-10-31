@@ -71,6 +71,9 @@ ClickHouse, and serves a Chart.js dashboard plus a public JSON API from it. The 
 - **Tests need no ClickHouse and no network** (`changesets/tests/`; a guard fails any test that reaches
   it, as the container's environment points at production). `deploy.sh` runs them in the freshly built
   image and stops on a failure. A fix to parsing, validation or an ingest rule gets a test with it.
+- **`web` reads ClickHouse as a SELECT-only user** (`CLICKHOUSE_WEB_PASSWORD`); code on a web path
+  never writes to it, and commands that write run in the `poller` service, not `web`.
+  → [analytics-backends](docs/decisions/analytics-backends.md)
 - **Several sessions share this checkout.** Stage only your own files (never `git add -A`), and
   remember `deploy.sh` builds whatever is in the working tree, others' work in progress included.
 

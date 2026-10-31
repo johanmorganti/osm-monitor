@@ -74,3 +74,14 @@ that read a rollup (`--split-share`) get the rollup watermarks forced to a rando
 new `objects` operation compares objects-changed timeseries and toplists, with changeset and object
 filters, over 2 to 5 day windows inside the object rollup. Checked by breaking the split by one day on
 purpose: 12 of 20 cases then differ. Clean on 120 cases (seed 11).
+
+**The web service reads ClickHouse as a SELECT-only user (2026-10-31).** Only `web` serves requests,
+and its code paths never write (no inserts, no DDL, no system tables), so `clickhouse_migrate`
+creates `osm_monitor_web` with `GRANT SELECT ON <db>.*` from `CLICKHOUSE_WEB_PASSWORD`, and the web
+service connects as it (`CLICKHOUSE_READ_ONLY=1` in the compose file; `clickhouse_credentials` in
+settings). A bug or a compromise in the web process can then not change or drop data; the pollers,
+`migrate` and the writing commands keep the owner login. Without the password web falls back to
+the owner login. Checked: truncate, alter, insert, drop and rename all `ACCESS_DENIED` on a
+throwaway table; the 49 fixed API calls are byte-identical as that user. It does not stop reads,
+heavy queries, or what the web container can reach on the network, so it is defence in depth,
+not a boundary: a low-priority measure for a public-data app.

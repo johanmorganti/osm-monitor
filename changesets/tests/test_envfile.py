@@ -41,3 +41,22 @@ class EnvFileTests(SimpleTestCase):
         # The file operators copy: every active line must read back as written.
         values = read_env_file(Path(__file__).resolve().parents[2] / 'env.example')
         self.assertIn('SECRET_KEY', values)
+
+
+class ClickHouseCredentialsTests(SimpleTestCase):
+    OWNER = {'CLICKHOUSE_USER': 'owner', 'CLICKHOUSE_PASSWORD': 'p1'}
+
+    def creds(self, **extra):
+        from osm_changeset_api.settings import clickhouse_credentials
+        return clickhouse_credentials({**self.OWNER, **extra})
+
+    def test_everything_but_web_uses_the_owner_login(self):
+        self.assertEqual(self.creds(), ('owner', 'p1'))
+        self.assertEqual(self.creds(CLICKHOUSE_WEB_PASSWORD='w'), ('owner', 'p1'))   # not flagged read-only
+
+    def test_web_uses_the_select_only_login(self):
+        self.assertEqual(self.creds(CLICKHOUSE_READ_ONLY='1', CLICKHOUSE_WEB_PASSWORD='w'), ('osm_monitor_web', 'w'))
+        self.assertEqual(self.creds(CLICKHOUSE_READ_ONLY='1', CLICKHOUSE_WEB_PASSWORD='w', CLICKHOUSE_WEB_USER='ro'), ('ro', 'w'))
+
+    def test_web_without_the_password_keeps_working_on_the_owner_login(self):
+        self.assertEqual(self.creds(CLICKHOUSE_READ_ONLY='1'), ('owner', 'p1'))

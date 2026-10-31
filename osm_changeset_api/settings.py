@@ -199,12 +199,24 @@ ANALYTICS_OVERRIDE_TOKEN = os.environ.get('ANALYTICS_OVERRIDE_TOKEN', '')
 # Storage writers ingestion feeds, primary first (see changesets/ingest/writers/).
 INGEST_BACKENDS = [b.strip() for b in os.environ.get('INGEST_BACKENDS', 'clickhouse').split(',') if b.strip()]
 
+def clickhouse_credentials(environ):
+    """(user, password) for ClickHouse. The web service sets CLICKHOUSE_READ_ONLY
+    and connects as the SELECT-only user clickhouse_migrate creates from
+    CLICKHOUSE_WEB_PASSWORD; without that password it keeps using the owner
+    login, so a deploy without it still works. Pollers and commands always use
+    the owner login."""
+    if environ.get('CLICKHOUSE_READ_ONLY') and environ.get('CLICKHOUSE_WEB_PASSWORD'):
+        return environ.get('CLICKHOUSE_WEB_USER', 'osm_monitor_web'), environ['CLICKHOUSE_WEB_PASSWORD']
+    return environ.get('CLICKHOUSE_USER', 'osm_monitor'), environ.get('CLICKHOUSE_PASSWORD', '')
+
+
 # ClickHouse connection (the `clickhouse` service in docker-compose.yml).
+_ch_user, _ch_password = clickhouse_credentials(os.environ)
 CLICKHOUSE = {
     'host': os.environ.get('CLICKHOUSE_HOST', 'clickhouse'),
     'port': int(os.environ.get('CLICKHOUSE_PORT', '8123')),
-    'username': os.environ.get('CLICKHOUSE_USER', 'osm_monitor'),
-    'password': os.environ.get('CLICKHOUSE_PASSWORD', ''),
+    'username': _ch_user,
+    'password': _ch_password,
     'database': os.environ.get('CLICKHOUSE_DB', 'osm_monitor'),
 }
 

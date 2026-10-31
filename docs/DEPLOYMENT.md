@@ -92,6 +92,17 @@ ClickHouse's own config don't restart it.
 both pollers; ClickHouse only when one of its own values changes) — don't redeploy while a long
 import is running.
 
+## ClickHouse logins
+
+`CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD` is the owner login: the pollers, `migrate` and every
+command that writes (`import_from_dump`, `recompute_locations`, `reconcile_open_changesets`) use
+it. The `web` service reads only, so give it a SELECT-only login: set `CLICKHOUSE_WEB_PASSWORD` in
+`.env` (`CLICKHOUSE_WEB_USER` to rename it, default `osm_monitor_web`); `clickhouse_migrate` creates
+the user on the next deploy and `web` connects as it (`CLICKHOUSE_READ_ONLY` in the compose file).
+Unset, `web` keeps using the owner login. Run commands that write with `docker compose run … poller`,
+not `web`, which would be refused (`ACCESS_DENIED`). Rotating the password: change it in `.env`
+and deploy.
+
 ## Observability (optional)
 
 Logs are structured JSON on stdout, so any log collector works. Datadog support (APM traces,
@@ -155,7 +166,7 @@ exactly one of them, so nothing needs decompressing to disk (~70 GB unpacked):
 SIZE=$(stat -c %s <dump dir>/changesets-latest.osm.bz2)   # macOS: stat -f %z
 N=6
 for i in $(seq 0 $((N-1))); do
-  docker compose run -d --name osm-import-$i --no-deps -v <dump dir>:/dump:ro web \
+  docker compose run -d --name osm-import-$i --no-deps -v <dump dir>:/dump:ro poller \
     python manage.py import_from_dump /dump/changesets-latest.osm.bz2 \
       --byte-range $((SIZE*i/N)):$((SIZE*(i+1)/N)) --batch-size 2000
 done
